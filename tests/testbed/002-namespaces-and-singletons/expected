@@ -1,0 +1,9 @@
+# `module A; module B` and `module A::B` name the same namespace, and contour
+# says so: only Ruby's constant *lookup* distinguishes them, which is a
+# question contour does not ask (see `ruby::owner_path`).
+#
+# `module_function` emits two units from one `def` — a private instance method
+# and a public singleton one — on the same source line. Pinned because
+# anything that groups units by body must dedupe on span or it will report
+# this pair as a duplicate of itself.
+symbols app.rb  Alpha::Beta#run,Alpha::Gamma#run,Delta.helper,Delta#helper

@@ -1,0 +1,7 @@
+# Rails macros define real methods. A search that cannot find `Widget#name`
+# because it came from `attr_reader` is a search with a hole in it — so macro
+# expansion is part of extraction, not an enrichment step.
+#
+# `delegate` is expanded from its literal name only; the extractor refuses
+# rather than guessing when the name is computed.
+symbols app.rb  Widget#name,Widget#size,Widget#size=,Widget#price,Widget#save,Widget.find,Widget.build
