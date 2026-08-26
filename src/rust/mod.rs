@@ -43,6 +43,10 @@ pub fn units(src: &[u8]) -> Blob {
     walk(&tree.root_node(), src, "", &mut units);
     Blob {
         units,
+        // Rust stays on the exact tier only. Shingling the token stream would
+        // be the degraded analogue of a subtree signature, and DEC-012's rule
+        // applies: build it if dogfooding shows the need, not for parity.
+        signatures: std::collections::HashMap::new(),
         lines: count_lines(src),
         // tree-sitter recovers rather than failing, so an ERROR node is the
         // only signal that something did not parse.

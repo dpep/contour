@@ -40,8 +40,20 @@ pub struct QueryLabel {
 pub struct PairLabel {
     pub a: String,
     pub b: String,
-    pub duplicate: bool,
+    pub verdict: Verdict,
     pub provisional: bool,
+}
+
+/// What a labeled pair should be found by.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Verdict {
+    /// The exact tier must group it.
+    Duplicate,
+    /// The near tier must find it, and the exact tier must not.
+    Near,
+    /// Neither tier may report it. These are the sharp labels: each is a pair
+    /// a looser normalization or a lower threshold would wrongly merge.
+    Distinct,
 }
 
 #[derive(Debug, Default)]
@@ -78,17 +90,18 @@ pub fn load(dir: &Path) -> Result<Labels> {
         let mut fields = line.split('\t').map(str::trim);
         let (Some(a), Some(b), Some(verdict)) = (fields.next(), fields.next(), fields.next())
         else {
-            bail!("pairs.tsv:{line_no}: expected `a<TAB>b<TAB>duplicate|distinct`");
+            bail!("pairs.tsv:{line_no}: expected `a<TAB>b<TAB>duplicate|near|distinct`");
         };
-        let duplicate = match verdict {
-            "duplicate" => true,
-            "distinct" => false,
-            other => bail!("pairs.tsv:{line_no}: `{other}` is not duplicate or distinct"),
+        let verdict = match verdict {
+            "duplicate" => Verdict::Duplicate,
+            "near" => Verdict::Near,
+            "distinct" => Verdict::Distinct,
+            other => bail!("pairs.tsv:{line_no}: `{other}` is not duplicate, near, or distinct"),
         };
         labels.pairs.push(PairLabel {
             a: a.to_string(),
             b: b.to_string(),
-            duplicate,
+            verdict,
             provisional: fields.next() == Some("provisional"),
         });
     }
@@ -197,6 +210,9 @@ pub struct Report {
     pub summarizable: usize,
     pub rankings: Vec<Ranking>,
     pub dupes: Dupes,
+    /// The near tier, scored on its own labels. Separate from `dupes` because
+    /// the two answer different questions and share no threshold.
+    pub near: Dupes,
     pub calibration: Calibration,
     pub provisional_queries: usize,
     pub provisional_pairs: usize,
@@ -300,6 +316,7 @@ pub fn run(
     )?);
 
     let dupes = score_dupes(store, &root_str, labels, min_lines)?;
+    let near = score_near(store, &root_str, labels, min_lines)?;
     Ok(Report {
         corpus: root_str,
         embedder: embedder.kind(),
@@ -308,6 +325,7 @@ pub fn run(
         summarizable,
         rankings,
         dupes,
+        near,
         calibration: Calibration {
             sweep: sweep(&answer_cosines, &distractor_cosines),
             answers: Distribution::of(&answer_cosines),
@@ -428,7 +446,9 @@ fn score_dupes(store: &Store, root: &str, labels: &Labels, min_lines: u32) -> Re
             continue;
         }
         let collides = reported.get(&(pair.a.as_str(), pair.b.as_str())).copied();
-        match (pair.duplicate, collides) {
+        // A `near` label must NOT be reported by the exact tier, so it scores
+        // here as a distinct pair does.
+        match (pair.verdict == Verdict::Duplicate, collides) {
             (true, Some(lines)) if lines >= min_lines => {
                 out.true_positives += 1;
                 out.smallest_true = Some(out.smallest_true.map_or(lines, |m: u32| m.min(lines)));
@@ -440,6 +460,58 @@ fn score_dupes(store: &Store, root: &str, labels: &Labels, min_lines: u32) -> Re
                 out.largest_false = Some(out.largest_false.map_or(lines, |m: u32| m.max(lines)));
             }
             (false, _) => {}
+        }
+    }
+    Ok(out)
+}
+
+/// The near tier against its own labels.
+///
+/// Both edges are asserted, which is what makes the threshold calibrated
+/// rather than chosen: a `near` label below it is a false negative, and a
+/// `distinct` label above it is a false positive. The `super` pairs
+/// (DEC-017) are the negatives that matter — they score 0.63 and 0.67, and
+/// the threshold has to stay clear of them.
+fn score_near(store: &Store, root: &str, labels: &Labels, min_lines: u32) -> Result<Dupes> {
+    let (groups, _) =
+        crate::dupes::find_near(store, root, None, min_lines, crate::near::NEAR_THRESHOLD)?;
+    let mut reported: HashMap<(&str, &str), u32> = HashMap::new();
+    for group in &groups {
+        let (a, b) = (&group.members[0], &group.members[1]);
+        let lines = group.lines;
+        reported.insert((a.id.as_str(), b.id.as_str()), lines);
+        reported.insert((b.id.as_str(), a.id.as_str()), lines);
+    }
+
+    let known: std::collections::HashSet<String> =
+        store.units(root)?.iter().map(|u| u.unit.id()).collect();
+    let mut out = Dupes {
+        min_lines,
+        ..Dupes::default()
+    };
+    for pair in &labels.pairs {
+        // A `duplicate` label is the exact tier's business; the near tier is
+        // scored only on what it is responsible for.
+        if pair.verdict == Verdict::Duplicate {
+            continue;
+        }
+        if !known.contains(&pair.a) || !known.contains(&pair.b) {
+            out.unknown += 1;
+            continue;
+        }
+        let found = reported.get(&(pair.a.as_str(), pair.b.as_str())).copied();
+        match (pair.verdict, found) {
+            (Verdict::Near, Some(lines)) => {
+                out.true_positives += 1;
+                out.smallest_true = Some(out.smallest_true.map_or(lines, |m: u32| m.min(lines)));
+            }
+            (Verdict::Near, None) => out.false_negatives += 1,
+            (Verdict::Distinct, Some(lines)) => {
+                out.false_positives += 1;
+                out.largest_false = Some(out.largest_false.map_or(lines, |m: u32| m.max(lines)));
+            }
+            (Verdict::Distinct, None) => {}
+            (Verdict::Duplicate, _) => unreachable!("skipped above"),
         }
     }
     Ok(out)
@@ -521,6 +593,21 @@ pub fn render(report: &Report) {
     }
 
     let c = &report.calibration;
+    let n = &report.near;
+    println!(
+        "\nnear-structural (jaccard >= {:.2})",
+        crate::near::NEAR_THRESHOLD
+    );
+    println!(
+        "  precision {:.2} ({}/{})   recall {:.2} ({}/{})",
+        rate(n.true_positives, n.true_positives + n.false_positives),
+        n.true_positives,
+        n.true_positives + n.false_positives,
+        rate(n.true_positives, n.true_positives + n.false_negatives),
+        n.true_positives,
+        n.true_positives + n.false_negatives
+    );
+
     println!("\ncalibration");
     println!(
         "  answers      n {:<4} min {:.2}  mean {:.2}  max {:.2}",

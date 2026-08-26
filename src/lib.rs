@@ -16,7 +16,9 @@
 //! - [`store`] — units keyed by blob OID (no paths), plus the path map beside
 //!   it. N worktrees of one repo cost one index (DEC-003).
 //! - [`index`] — the three above, wired together.
-//! - [`dupes`] — the first product, and a group-by over one column.
+//! - [`dupes`] — the exact tier: a group-by over one column.
+//! - [`near`] — the near-structural tier: Jaccard over subtree signatures,
+//!   with an inverted index so nothing is compared pairwise.
 //! - [`summary`] — the expensive layer, and the first one that leaves the
 //!   machine. Behind a trait, so tests replay canned answers (DEC-006).
 //! - [`embed`] — summaries → vectors, behind a trait (DEC-005).
@@ -31,6 +33,7 @@ pub mod embed;
 pub mod eval;
 pub(crate) mod hash;
 pub mod index;
+pub mod near;
 pub mod paths;
 pub mod ruby;
 pub mod rust;

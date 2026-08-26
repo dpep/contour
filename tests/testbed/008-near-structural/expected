@@ -1,0 +1,14 @@
+# The near tier, and the two things it has to get right at once.
+#
+# `Beta#render` is `Alpha#render` with one more call in the chain — the
+# copy-paste-then-tweak that the exact tier cannot see and the semantic tier
+# would need a paid summary to guess at. It must be found.
+#
+# `Gamma#render` reuses several of the same method names but does different
+# work. It must not be. Without a control like this, a threshold low enough to
+# catch Beta looks identical to a threshold that catches everything.
+#
+# The `dupes` verb asserts the WHOLE report, exact and near tiers together, so
+# this also pins that Beta is reported ONCE — as near-structural — and not
+# again by the exact tier.
+dupes  Alpha#render+Beta#render

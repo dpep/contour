@@ -62,6 +62,13 @@ enum Command {
         /// Ignore bodies shorter than this, `def` through `end`.
         #[arg(long, value_name = "N", default_value_t = DEFAULT_MIN_LINES)]
         min_lines: u32,
+        /// Also report bodies that are nearly the same shape, with the
+        /// measured similarity on each.
+        #[arg(long)]
+        near: bool,
+        /// Jaccard at or above which two bodies count as near-structural.
+        #[arg(long, value_name = "J", default_value_t = crate::near::NEAR_THRESHOLD)]
+        near_threshold: f32,
     },
     /// Summarize callables with an LLM, up to a budget.
     Summarize {
@@ -181,9 +188,16 @@ fn dispatch(cli: &Cli) -> Result<i32> {
 
     match (&cli.command, &cli.symbols, cli.status) {
         (Some(Command::Index { path }), _, _) => index(path.as_deref(), format),
-        (Some(Command::Dupes { scope, min_lines }), _, _) => {
-            dupes(scope.as_deref(), *min_lines, format)
-        }
+        (
+            Some(Command::Dupes {
+                scope,
+                min_lines,
+                near,
+                near_threshold,
+            }),
+            _,
+            _,
+        ) => dupes(scope.as_deref(), *min_lines, *near, *near_threshold, format),
         (
             Some(Command::Summarize {
                 scope,
@@ -259,11 +273,29 @@ fn scoped(scope: Option<&std::path::Path>) -> Result<(PathBuf, Option<String>)> 
     Ok((root, relative))
 }
 
-fn dupes(scope: Option<&std::path::Path>, min_lines: u32, format: Format) -> Result<i32> {
+fn dupes(
+    scope: Option<&std::path::Path>,
+    min_lines: u32,
+    near: bool,
+    near_threshold: f32,
+    format: Format,
+) -> Result<i32> {
     let (root, relative) = scoped(scope)?;
     let store = crate::store::open_default()?;
     let root = root.to_string_lossy().into_owned();
-    let groups = crate::dupes::find(&store, &root, relative.as_deref(), min_lines)?;
+    let mut groups = crate::dupes::find(&store, &root, relative.as_deref(), min_lines)?;
+    let mut stats = None;
+    if near {
+        let (near_groups, found) = crate::dupes::find_near(
+            &store,
+            &root,
+            relative.as_deref(),
+            min_lines,
+            near_threshold,
+        )?;
+        groups.extend(near_groups);
+        stats = Some(found);
+    }
 
     match format {
         Format::Human => {
@@ -289,6 +321,23 @@ fn dupes(scope: Option<&std::path::Path>, min_lines: u32, format: Format) -> Res
             }
         }
         _ => emit(format, &groups)?,
+    }
+    // Diagnostics, so stderr in every format — stdout stays the groups, and
+    // `-J` stays one result per line. The scale claim is stated rather than
+    // asserted: pairs actually compared against pairs a full scan would need.
+    if let Some(stats) = &stats {
+        eprintln!(
+            "contour: near tier compared {} candidate pair(s) of {} possible \
+             ({} bodies, {} sub-shapes, {} too common to use)",
+            stats.candidates, stats.exhaustive, stats.bodies, stats.subtrees, stats.dropped_common
+        );
+        if stats.uncovered > 0 {
+            eprintln!(
+                "contour: {} body/bodies skipped — the near tier is Ruby-only, \
+                 because a Rust token hash has no sub-shapes to compare (DEC-012)",
+                stats.uncovered
+            );
+        }
     }
     Ok(if groups.is_empty() { MISS } else { HIT })
 }

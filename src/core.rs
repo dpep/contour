@@ -197,6 +197,12 @@ impl ParamKind {
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
 pub struct Blob {
     pub units: Vec<Unit>,
+    /// The sub-shapes inside each normalized body, keyed by its `norm_hash`.
+    ///
+    /// Keyed by the hash rather than carried on each [`Unit`] because it is a
+    /// pure function of the body: a clone at ten call sites is one signature,
+    /// stored once. This is what the near-structural tier compares.
+    pub signatures: std::collections::HashMap<u64, Vec<u64>>,
     pub lines: usize,
     /// Syntax errors the parser reported; the units above are what survived.
     pub parse_errors: usize,

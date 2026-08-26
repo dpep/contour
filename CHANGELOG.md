@@ -57,6 +57,21 @@ Initial skeleton — nothing has been released, so everything below is new.
 - Rust normalization is a deliberately degraded tier: a comment-stripped token
   stream, disclosed as `token_hash` and never as `structural`. Reformatting
   and re-commenting collide; a renamed local does not, where Ruby's would.
+- **`contour dupes --near`** reports bodies that are nearly the same shape,
+  with the measured Jaccard on each. Similarity is computed over subtree
+  signatures collected during normalization; candidates come from an inverted
+  index, so nothing is compared pairwise — on rails that is 56,706 pairs
+  scored out of 206,075,451 possible, in 0.7s.
+- `contour similar` gains its missing `near_structural` tier, between exact
+  identity and meaning.
+- The near threshold (jaccard 0.80) is **the first threshold measured on
+  contour's own corpus** rather than inherited: labeled distinct pairs top out
+  at 0.667, labeled near-duplicates bottom out at 0.905, and it sits in the
+  gap. The eval asserts both edges.
+- Ruby only. Rust stays on the exact tier, and `--near` says so rather than
+  returning a silence that looks like "nothing found".
+- **Forces a reindex**: signatures are new, and the fold that produces
+  `norm_hash` changed shape to compute them.
 - `contour eval <SET>` scores a checkout against a labeled set: search hit-rate
   (top-1 / top-5 / found) for contour and two baselines, duplicate precision
   and recall, and the cosine distributions that say where the relevance floor

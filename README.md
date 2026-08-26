@@ -22,7 +22,7 @@ is a deliberately degraded tier (a comment-stripped token stream, disclosed as
 
 ```sh
 contour index [PATH]     # scan a checkout, index every callable in it
-contour dupes [SCOPE]    # units whose normalized bodies are identical
+contour dupes [SCOPE]    # identical bodies; --near for nearly-identical ones
 contour summarize [SCOPE] --budget N   # fill LLM summaries, on demand
 contour search "english query"         # rank by name match + meaning match
 contour similar Owner#method           # nearest neighbours, tier disclosed

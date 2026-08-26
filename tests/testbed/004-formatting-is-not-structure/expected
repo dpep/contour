@@ -5,4 +5,11 @@
 #
 # `Gamma#render` is the boundary: a different string *value* is a different
 # method. Normalization removes spelling, not meaning.
-dupes  Alpha#render+Beta#render
+#
+# It is also where the two tiers visibly do different jobs on one input. The
+# exact tier keeps Gamma out, because the literal really did change. The near
+# tier reports it, because the shape is otherwise identical — which is exactly
+# the judgement a person wants when deciding whether two methods are worth
+# merging. Only one near pair appears rather than two, because Alpha and Beta
+# share a normalized body and a near pair is about *shapes*, not call sites.
+dupes  Alpha#render+Beta#render  Alpha#render+Gamma#render

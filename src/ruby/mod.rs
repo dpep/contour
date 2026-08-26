@@ -22,7 +22,11 @@ use crate::core::{Blob, Lang, Param, ParamKind, Unit};
 /// the reason).
 pub fn units(src: &[u8]) -> Blob {
     let facts = extract::extract(src);
-    let hashes = norm::hashes(src);
+    let normalized = norm::hashes(src);
+    let mut signatures = std::collections::HashMap::new();
+    for norm in normalized.values() {
+        signatures.insert(norm.hash, norm.signature.clone());
+    }
     let units = facts
         .defs
         .iter()
@@ -39,11 +43,12 @@ pub fn units(src: &[u8]) -> Blob {
             // Keyed by the position of the def's name, which is what the
             // extractor records. A macro-generated unit has no `def` node, so
             // it has no hash and nothing to summarize.
-            norm_hash: hashes.get(&(def.pos.line, def.pos.col)).copied(),
+            norm_hash: normalized.get(&(def.pos.line, def.pos.col)).map(|n| n.hash),
         })
         .collect();
     Blob {
         units,
+        signatures,
         lines: facts.lines,
         parse_errors: facts.parse_errors,
     }

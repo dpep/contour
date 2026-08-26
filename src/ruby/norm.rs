@@ -89,7 +89,7 @@ impl Atom {
 /// it, the fix is to hoist the parse into `super::units` and hand both passes
 /// one `ParseResult` — an additive change to the vendored signature, not a
 /// rewrite.
-pub(crate) fn hashes(src: &[u8]) -> HashMap<(u32, u32), u64> {
+pub(crate) fn hashes(src: &[u8]) -> HashMap<(u32, u32), Normalized> {
     let parsed = ruby_prism::parse(src);
     let lines = LineIndex::new(src);
     let mut out = HashMap::new();
@@ -97,7 +97,7 @@ pub(crate) fn hashes(src: &[u8]) -> HashMap<(u32, u32), u64> {
     out
 }
 
-fn walk(node: &Node<'_>, lines: &LineIndex, out: &mut HashMap<(u32, u32), u64>) {
+fn walk(node: &Node<'_>, lines: &LineIndex, out: &mut HashMap<(u32, u32), Normalized>) {
     if let Some(def) = node.as_def_node() {
         let at = lines.pos(def.name_loc().start_offset());
         out.insert((at.line, at.col), def_hash(&def));
@@ -119,27 +119,55 @@ fn walk(node: &Node<'_>, lines: &LineIndex, out: &mut HashMap<(u32, u32), u64>) 
 /// with the same body summarise the same way today. If milestone 3 finds that
 /// the summarizer's structural context changes the answer, that context gets
 /// its own hash beside this one rather than being smuggled into it.
-fn def_hash(def: &ruby_prism::DefNode<'_>) -> u64 {
+fn def_hash(def: &ruby_prism::DefNode<'_>) -> Normalized {
     let mut fold = Fold {
-        // Seeded with the language, so Ruby and Rust cannot collide into one
-        // another's space in the single `norm_hash` column they share.
-        hash: fnv1a(FNV_OFFSET, crate::core::Lang::Ruby.as_str().as_bytes()),
         locals: HashMap::new(),
         enclosing: def.name().as_slice().to_vec(),
+        subtrees: Vec::new(),
     };
-    match def.parameters() {
-        Some(params) => fold.node(&params.as_node()),
-        None => fold.eat(b"()"),
+    // Seeded with the language, so Ruby and Rust cannot collide into one
+    // another's space in the single `norm_hash` column they share.
+    let mut hash = fnv1a(FNV_OFFSET, crate::core::Lang::Ruby.as_str().as_bytes());
+    hash = match def.parameters() {
+        Some(params) => fnv1a(hash, &fold.node(&params.as_node()).0.to_le_bytes()),
+        None => fnv1a(hash, b"()"),
+    };
+    hash = match def.body() {
+        Some(body) => fnv1a(hash, &fold.node(&body).0.to_le_bytes()),
+        None => fnv1a(hash, b"{}"),
+    };
+    // Sorted and deduplicated: a signature is a *set*, and Jaccard over it
+    // must not depend on traversal order or on a shape appearing twice.
+    fold.subtrees.sort_unstable();
+    fold.subtrees.dedup();
+    Normalized {
+        hash,
+        signature: fold.subtrees,
     }
-    match def.body() {
-        Some(body) => fold.node(&body),
-        None => fold.eat(b"{}"),
-    }
-    fold.hash
 }
 
+/// A normalized body: its whole hash, and the hashes of the sub-shapes inside
+/// it.
+///
+/// The signature is what makes *near*-structural comparison possible at all. A
+/// whole-body hash answers only "identical or not"; the set of subtree hashes
+/// admits a distance, and DEC-010 wants a graded judgment to carry a graded
+/// number.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct Normalized {
+    pub(crate) hash: u64,
+    pub(crate) signature: Vec<u64>,
+}
+
+/// Smallest subtree worth remembering, in nodes.
+///
+/// Below this every method in the corpus shares the same handful of shapes — a
+/// bare local read, a one-argument call — and the signature stops
+/// discriminating while the inverted index that uses it explodes. Measured on
+/// rails; see `crate::near`.
+const MIN_SUBTREE_NODES: u32 = 5;
+
 struct Fold {
-    hash: u64,
     /// Local name → ordinal, assigned on first sight. The traversal is a
     /// deterministic pre-order, and a read cannot precede its binding, so
     /// first sight *is* binding order.
@@ -147,16 +175,21 @@ struct Fold {
     /// The name `super` would dispatch by here — the innermost enclosing
     /// `def`, which changes when the walk descends into a nested one.
     enclosing: Vec<u8>,
+    /// Every subtree hash at or above [`MIN_SUBTREE_NODES`], in walk order.
+    subtrees: Vec<u64>,
 }
 
 impl Fold {
-    fn eat(&mut self, bytes: &[u8]) {
-        self.hash = fnv1a(self.hash, bytes);
-    }
-
-    fn node(&mut self, node: &Node<'_>) {
-        self.eat(tag(node).as_bytes());
-        self.eat(SEP);
+    /// Hash one subtree, and its node count.
+    ///
+    /// A Merkle fold: a node's hash is a function of its own subtree and
+    /// nothing above it, which is what lets any node's hash be compared
+    /// against a node from another method. The previous rolling-stream fold
+    /// could not do that — every value depended on everything walked before
+    /// it.
+    fn node(&mut self, node: &Node<'_>) -> (u64, u32) {
+        let mut hash = fnv1a(FNV_OFFSET, tag(node).as_bytes());
+        hash = fnv1a(hash, SEP);
         // `super` carries no atom naming what it calls, because the name is
         // the enclosing method's. Fold it in, or two bodies that dispatch
         // differently hash the same (DEC-017).
@@ -164,39 +197,37 @@ impl Fold {
             node,
             Node::SuperNode { .. } | Node::ForwardingSuperNode { .. }
         ) {
-            self.eat(b"^");
-            let enclosing = std::mem::take(&mut self.enclosing);
-            self.eat(&enclosing);
-            self.enclosing = enclosing;
-            self.eat(SEP);
+            hash = fnv1a(hash, b"^");
+            hash = fnv1a(hash, &self.enclosing);
+            hash = fnv1a(hash, SEP);
         }
         let rename = binds_local(node);
         for (i, atom) in generated::atoms(node).iter().enumerate() {
             match (i, rename, atom) {
                 (0, true, Atom::Name(name)) => {
                     let ordinal = self.ordinal(name);
-                    self.eat(b"L");
-                    self.eat(&ordinal.to_le_bytes());
+                    hash = fnv1a(hash, b"L");
+                    hash = fnv1a(hash, &ordinal.to_le_bytes());
                 }
                 (_, _, Atom::Name(bytes)) => {
-                    self.eat(b"n");
-                    self.eat(bytes);
+                    hash = fnv1a(hash, b"n");
+                    hash = fnv1a(hash, bytes);
                 }
                 (_, _, Atom::Value(bytes)) => {
-                    self.eat(b"v");
-                    self.eat(bytes);
+                    hash = fnv1a(hash, b"v");
+                    hash = fnv1a(hash, bytes);
                 }
                 (_, _, Atom::Number(text)) => {
-                    self.eat(b"#");
-                    self.eat(text.as_bytes());
+                    hash = fnv1a(hash, b"#");
+                    hash = fnv1a(hash, text.as_bytes());
                 }
             }
-            self.eat(SEP);
+            hash = fnv1a(hash, SEP);
         }
-        // The child count, so a pre-order walk is unambiguous: without it,
-        // `f(g(a))` and `f(g, a)` can flatten to the same byte stream.
+        // The child count, so a node with two children can never fold like one
+        // with a single child that happens to hash the same.
         let children = generated::children(node);
-        self.eat(&(children.len() as u32).to_le_bytes());
+        hash = fnv1a(hash, &(children.len() as u32).to_le_bytes());
         // A nested `def` is what `super` inside it dispatches by, so the name
         // in scope changes for that subtree and is restored after it.
         let outer = match node.as_def_node() {
@@ -206,12 +237,19 @@ impl Fold {
             )),
             None => None,
         };
+        let mut size = 1;
         for child in &children {
-            self.node(child);
+            let (child_hash, child_size) = self.node(child);
+            hash = fnv1a(hash, &child_hash.to_le_bytes());
+            size += child_size;
         }
         if let Some(outer) = outer {
             self.enclosing = outer;
         }
+        if size >= MIN_SUBTREE_NODES {
+            self.subtrees.push(hash);
+        }
+        (hash, size)
     }
 
     fn ordinal(&mut self, name: &[u8]) -> u32 {
@@ -253,12 +291,23 @@ fn binds_local(node: &Node<'_>) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashSet;
 
     /// The hash of the sole method in a snippet.
     fn h(src: &str) -> u64 {
         let map = hashes(src.as_bytes());
         assert_eq!(map.len(), 1, "{src:?} should hold exactly one def");
-        *map.values().next().unwrap()
+        map.values().next().unwrap().hash
+    }
+
+    /// The signature of the sole method in a snippet.
+    fn sig(src: &str) -> Vec<u64> {
+        hashes(src.as_bytes())
+            .values()
+            .next()
+            .unwrap()
+            .signature
+            .clone()
     }
 
     #[test]
@@ -387,11 +436,12 @@ mod tests {
     #[test]
     fn a_nested_def_rebinds_what_super_dispatches_by() {
         let at = |src: String, line: u32| {
-            *hashes(src.as_bytes())
+            hashes(src.as_bytes())
                 .iter()
                 .find(|((l, _), _)| *l == line)
                 .expect("a def on that line")
                 .1
+                .hash
         };
         let nest = |outer: &str| format!("def {outer}\n  def b; super; end\n  super\nend\n");
 
@@ -401,11 +451,48 @@ mod tests {
         assert_eq!(at(nest("a"), 2), at(nest("z"), 2));
     }
 
+    /// The signature is what the near tier compares, so it has to behave like
+    /// a fingerprint: a small edit keeps most of it, an unrelated body shares
+    /// almost none of it.
+    #[test]
+    fn a_signature_survives_a_small_edit_and_not_a_different_method() {
+        let jaccard = |a: &[u64], b: &[u64]| {
+            let (a, b): (HashSet<_>, HashSet<_>) = (a.iter().collect(), b.iter().collect());
+            a.intersection(&b).count() as f32 / a.union(&b).count() as f32
+        };
+        let base =
+            sig("def run(rows)\n  rows.map { |r| fmt(r.name, r.size) }.compact.first\nend\n");
+        // One extra call in the chain: still mostly the same shape.
+        let edited =
+            sig("def run(rows)\n  rows.map { |r| fmt(r.name, r.size) }.compact.uniq.first\nend\n");
+        // Nothing in common but the language.
+        let other =
+            sig("def go(a, b)\n  raise Bad unless a\n  @cache[b] ||= Store.fetch(b)\nend\n");
+
+        assert!(!base.is_empty(), "a body of this size has sub-shapes");
+        assert!(
+            jaccard(&base, &edited) > 0.5,
+            "a small edit keeps most of it"
+        );
+        assert!(
+            jaccard(&base, &other) < 0.1,
+            "an unrelated body shares nothing"
+        );
+    }
+
+    /// Trivia is kept out, or every method in a corpus would look alike and
+    /// the inverted index behind the near tier would degenerate.
+    #[test]
+    fn a_tiny_body_contributes_no_sub_shapes() {
+        assert!(sig("def run\n  @x\nend\n").is_empty());
+        assert!(sig("def run(a)\n  a\nend\n").is_empty());
+    }
+
     /// Frozen, because this is an on-disk key: an LLM summary is stored under
     /// it. If this moves, every summary in every database is orphaned — which
     /// is a schema bump, not a new expectation.
     #[test]
     fn the_hash_is_frozen() {
-        assert_eq!(h("def run(a)\n  a.save\nend\n"), 0xb7df_d8ed_9104_2c14);
+        assert_eq!(h("def run(a)\n  a.save\nend\n"), 0x38cf_b5f7_11c6_c8a7);
     }
 }

@@ -43,3 +43,18 @@ Array#in_groups_of	Array#in_groups	distinct
 String#squish	String#squish!	distinct
 # Both drop blanks, but from different receivers with different bodies.
 Enumerable#compact_blank	Hash#compact_blank	distinct
+
+# --- true near-duplicates: copy-paste, then tweaked ---------------------------
+# Each verified by reading both bodies. `near` means the NEAR tier must find it
+# and the exact tier must not — a pair that is merely identical belongs above.
+# These four are the positive edge of the jaccard threshold; the `super` pairs
+# above are the negative edge.
+#
+# Identical but for one extra line (`materialize_transactions`) in the lib copy.
+ActiveRecord::Assertions::QueryAssertions#assert_queries_match	ActiveRecord::TestCase#assert_queries_match	near
+# The same test, copied between the sprockets and propshaft suites.
+ApplicationTests::AssetsTest#test_precompile_does_not_hit_the_database	ApplicationTests::SprocketsAssetsTest#test_precompile_does_not_hit_the_database	near
+# The same boot helper in two railties test files.
+ApplicationTests::QueryLogsTest#boot_app	LoadingTest#boot_app	near
+# Same shape, two libraries: building an options hash for a schema statement.
+ActiveRecord::SchemaDumper.generate_options	ActiveRecord::Migration#table_name_options	near

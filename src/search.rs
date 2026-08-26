@@ -203,9 +203,9 @@ pub struct Neighbor {
     /// - `semantic` — a nearby summary embedding, with the cosine as its
     ///   confidence, because there the judgment really is graded.
     ///
-    /// `near_structural` is named in the design and **not implemented**: it
-    /// needs a structural *distance*, and a hash is equal or it is not.
-    /// Building one is Phase 2's job, with a threshold the eval set settles.
+    /// - `near_structural` — a nearly identical shape, with the Jaccard over
+    ///   subtree signatures as its confidence (`crate::near`). Also graded,
+    ///   also reported as the measurement.
     pub how: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub confidence: Option<f32>,
@@ -250,7 +250,35 @@ pub fn similar(
         }
     }
 
-    // Semantic: nearest summaries, minus anything the structural tier already
+    // Near-structural: mostly the same shape, between exact identity and
+    // meaning. Runs before the semantic tier so a reader sees the cheaper,
+    // sharper evidence first.
+    {
+        let claimed: std::collections::HashSet<(String, u32)> = out
+            .iter()
+            .map(|n| (n.path.clone(), n.line))
+            .chain(std::iter::once((here.path.clone(), here.unit.line)))
+            .collect();
+        for near in crate::near::neighbors(store, root, here, crate::near::NEAR_THRESHOLD, None)? {
+            if claimed.contains(&(near.path.clone(), near.line)) {
+                continue;
+            }
+            let index = units
+                .iter()
+                .position(|u| u.path == near.path && u.unit.line == near.line);
+            out.push(Neighbor {
+                path: near.path,
+                id: near.id,
+                line: near.line,
+                how: "near_structural",
+                confidence: Some(near.similarity),
+                lines: Some(near.end_line + 1 - near.line),
+                summary: index.and_then(|i| summaries.text.get(&i).cloned()),
+            });
+        }
+    }
+
+    // Semantic: nearest summaries, minus anything a structural tier already
     // claimed — a result reported twice under two tiers is a result a reader
     // has to de-duplicate by hand.
     if let Some(vec) = summaries.vectors.get(&target) {

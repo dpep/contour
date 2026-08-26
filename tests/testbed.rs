@@ -135,8 +135,26 @@ fn every_testbed_case_answers_as_recorded() {
                 // totality is the point: "a rename collides" is only half a
                 // claim without "changed logic does not".
                 "dupes" => {
-                    let (answer, _, _) =
-                        contour(&db, &dir, &["dupes", "--min-lines", "1", "--json"]);
+                    // Permissive parameters on purpose, for the same reason
+                    // `--min-lines 1` is here: fixtures are small, and
+                    // Jaccard is harsher on a small body (one edit moves
+                    // every ancestor subtree, which is a larger share of a
+                    // short signature). The testbed pins *semantics*; the
+                    // calibrated defaults are pinned by the rails eval,
+                    // against a corpus where they mean something.
+                    let (answer, _, _) = contour(
+                        &db,
+                        &dir,
+                        &[
+                            "dupes",
+                            "--min-lines",
+                            "1",
+                            "--near",
+                            "--near-threshold",
+                            "0.5",
+                            "--json",
+                        ],
+                    );
                     let got = clone_groups(&answer);
                     let mut want: Vec<String> = rest
                         .split_whitespace()

@@ -27,7 +27,7 @@
 /// migration bug. It also makes adding a column free, so nothing needs to be
 /// carried speculatively. See the module header for what this version
 /// deliberately does *not* govern.
-pub(crate) const VERSION: i64 = 6;
+pub(crate) const VERSION: i64 = 7;
 
 /// Applied whole to a fresh database.
 pub(crate) const SCHEMA: &str = r#"
@@ -102,6 +102,18 @@ CREATE TABLE vector (
   PRIMARY KEY (config_key, text_key)
 ) WITHOUT ROWID;
 
+-- The sub-shapes inside one normalized body, for the near-structural tier.
+-- Keyed by `norm_hash` rather than by unit because it is a pure function of
+-- the body: a clone at ten places is one signature. Derived, so it is rebuilt
+-- freely with the tables above (DEC-016).
+CREATE TABLE signature (
+  norm_hash    INTEGER NOT NULL,
+  subtree_hash INTEGER NOT NULL,
+  PRIMARY KEY (norm_hash, subtree_hash)
+) WITHOUT ROWID;
+
+CREATE INDEX signature_subtree ON signature(subtree_hash);
+
 CREATE INDEX unit_name ON unit(name);
 CREATE INDEX unit_norm ON unit(norm_hash);
 CREATE INDEX unit_blob ON unit(blob_id);
@@ -110,7 +122,7 @@ CREATE INDEX file_blob ON file(blob_id);
 
 /// Every **derived** table, dependents first, so a drop respects nothing.
 /// `summary` is deliberately absent: see the module header.
-pub(crate) const TABLES: [&str; 5] = ["vector", "file", "checkout", "unit", "blob"];
+pub(crate) const TABLES: [&str; 6] = ["signature", "vector", "file", "checkout", "unit", "blob"];
 
 /// Bump only for a real change to the summary table.
 ///
