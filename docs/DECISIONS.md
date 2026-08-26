@@ -26,10 +26,24 @@ over the same engine.
 Parse facts are a pure function of a blob's bytes, keyed by git blob SHA-1
 (trekr's design): branch switches, rebases, and N worktrees cost nothing.
 Summaries and embeddings are expensive pure functions of *meaning*, so they
-key off the normalized structural hash (+ prompt version + model): a rename,
-move, reformat, or comment-only edit never re-summarizes. Structural-hash
-collisions across the repo get one summary — exact clones are deduplicated
-before the LLM is ever called.
+key off the normalized structural hash: a rename, move, reformat, or
+comment-only edit never re-summarizes.
+
+The full summary key is `norm_hash + ctx_hash + prompt_version + model`, and
+the governing law is the one gqls's vector cache taught us: **the key derives
+from the exact input, so cache and content can never drift.** A summary of a
+nameless body is a weaker summary, so the prompt renders structural context
+(name, owner nesting, singleton, `via`) — and anything the prompt renders must
+therefore be in the key. `ctx_hash` covers exactly those fields and nothing
+more; widening the prompt without widening the hash is the one change that
+silently serves stale answers.
+
+The consequence to embrace honestly: **exact clones in identical context share
+a summary; clones in different contexts re-summarize.** That is correct rather
+than wasteful — the same body under `Payroll::` and under `Billing::` may
+legitimately earn a different `domain`. And the clone *report* still comes free
+from `norm_hash` alone, because grouping identical bodies never needed the
+context in the first place.
 
 ## DEC-004 — Embed English summaries; validate against code-native models
 
@@ -96,6 +110,14 @@ half-summarized repo answers from what exists and says so.
 trekr's contract: `status` / `confidence` / `how`, where confidence is
 always derived from a measurement (cosine, tier, agreement count), never a
 flat vibe, and ambiguity gets its own status rather than a low number.
+
+**Confidence appears where the underlying judgment is graded.** A predicate is
+not graded: exact structural identity either holds or does not, and attaching
+`confidence: 1.0` to it would be a constant wearing a measurement's clothes —
+the very thing the rule above exists to forbid. Such an answer discloses `how`
+plus the evidence a reader would weigh instead. `contour dupes` is the worked
+example: `how: structural`, and the group's line count, so a reader can tell a
+real duplicate from two accessors that could only have been written one way.
 For similarity results: `how ∈ {structural, near_structural, semantic}`.
 `--explain` renders the same JSON fields, never recomputes.
 

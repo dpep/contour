@@ -1,0 +1,20 @@
+# A KNOWN GAP, pinned so it cannot become folklore.
+#
+# `define_method` is extracted only when its name is an interpolated literal
+# inside a binding the extractor can read (`[:one, :two].each { define_method
+# "#{n}_step" }`). A plain symbol — `define_method(:plain)` — falls through and
+# yields no unit at all. That is inherited from trekr's extractor, not
+# introduced here: trekr answers the same way on the same input.
+#
+# Two consequences, in increasing order of surprise:
+#   1. `Alpha#plain` and `Gadget#save` are invisible to `--symbols` and to the
+#      index. Not merely unsummarizable — absent.
+#   2. `Gadget#save` therefore cannot be reported as a clone of `Widget#save`,
+#      even though the bodies are identical. The `dupes` line below records
+#      that absence, so restoring extraction will fail this case loudly.
+#
+# Even once extraction is fixed, a define_method body has no `def` node and so
+# no norm_hash under the current design; the block body is hashable structure
+# and folding it is the follow-on question.
+symbols app.rb  Alpha#one_step,Alpha#two_step,Widget#save
+dupes           (none)
