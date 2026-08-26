@@ -31,6 +31,9 @@ rusqlite = { version = "0.40", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha1 = "0.10"
+# The Anthropic Messages API over raw HTTP: Rust has no official SDK. Same
+# version gqls uses, so the house has one HTTP client rather than two.
+ureq = { version = "2", features = ["json"] }
 
 [dev-dependencies]
 serde_json = "1"

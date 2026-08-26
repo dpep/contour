@@ -103,7 +103,10 @@ pub fn find(store: &Store, root: &str, scope: Option<&str>, min_lines: u32) -> R
 
 /// Is `path` inside the directory (or equal to the file) named by `prefix`?
 /// Boundary-aware: `app/model` does not contain `app/models/widget.rb`.
-fn under(path: &str, prefix: &str) -> bool {
+///
+/// Shared with `summary::fill`: a scope must mean the same thing to every
+/// command that takes one, and two implementations would eventually disagree.
+pub(crate) fn under(path: &str, prefix: &str) -> bool {
     let prefix = prefix.trim_end_matches('/');
     if prefix.is_empty() || prefix == "." {
         return true;

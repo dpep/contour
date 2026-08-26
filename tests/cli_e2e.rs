@@ -107,7 +107,12 @@ fn indexing_a_checkout_then_asking_about_it() {
     let status = repo.json(&["--status", "--json"]);
     assert_eq!(status["checkouts"][0]["units"], 3);
     assert_eq!(status["checkouts"][0]["files"], 2);
-    assert_eq!(status["coverage"], "none");
+    // Coverage is per model, and nothing has been summarized, so no model has
+    // an opinion yet.
+    assert_eq!(
+        status["checkouts"][0]["coverage"].as_array().map(Vec::len),
+        Some(0)
+    );
 }
 
 /// Exit codes are the scriptable half of every answer: 0 found, 1 nothing to
@@ -221,4 +226,117 @@ fn dupes_hides_bodies_too_short_to_mean_anything() {
         "Delta is in lib"
     );
     assert_eq!(repo.run(&["dupes", "--json"]).1, 0);
+}
+
+/// The summarize loop, driven by replayed answers. No test may make a live API
+/// call: a suite whose cost and result depend on the network is a suite nobody
+/// runs.
+#[test]
+fn summarize_fills_a_budget_and_shares_clones() {
+    // Two identical bodies in identical context (same name, same shape) and one
+    // that differs, so the run exercises both the dedup and a real call.
+    let body = "  def unpaid(customer)\n    invoices.where(customer: customer).unpaid\n  end\n";
+    let repo = Repo::new(
+        "summarize",
+        &[
+            ("a.rb", &format!("class Alpha\n{body}end\n")),
+            ("b.rb", &format!("class Alpha\n{body}end\n")),
+            (
+                "c.rb",
+                "class Beta\n  def total(order)\n    order.lines.sum(&:cents)\n  end\nend\n",
+            ),
+        ],
+    );
+    let fixtures = repo.dir.join("fixtures.json");
+    std::fs::write(
+        &fixtures,
+        r#"{
+          "Alpha#unpaid": {"summary":"Returns a customer's unpaid invoices.",
+            "primary_purpose":"invoice lookup","secondary_concerns":[],
+            "side_effects":[],"domain":"billing","patterns":["scope"]},
+          "Beta#total": {"summary":"Totals an order's line items in cents.",
+            "primary_purpose":"order total","secondary_concerns":[],
+            "side_effects":[],"domain":"billing","patterns":[]}
+        }"#,
+    )
+    .unwrap();
+    repo.run(&["index"]);
+
+    let fixtures = fixtures.to_str().unwrap();
+    let filled = repo.json(&["summarize", "--fixtures", fixtures, "--json"]);
+    // `a.rb` and `b.rb` hold the same body under the same name and owner, so
+    // they are one purchase and one share — the dedup DEC-003 promises.
+    assert_eq!(filled["summarized"], 2);
+    assert_eq!(filled["shared"], 1);
+    assert_eq!(filled["failed"], 0);
+    assert_eq!(filled["remaining"], 0);
+
+    // Coverage is per model, and counts every unit a stored answer serves.
+    let status = repo.json(&["--status", "--json"]);
+    let coverage = &status["checkouts"][0]["coverage"][0];
+    assert_eq!(coverage["model"], "fixture");
+    assert_eq!(coverage["state"], "complete");
+    assert_eq!(coverage["summarized"], 3, "three units, two answers");
+    assert_eq!(coverage["summarizable"], 3);
+
+    // Re-running buys nothing: the answers are already stored.
+    let again = repo.json(&["summarize", "--fixtures", fixtures, "--json"]);
+    assert_eq!(again["summarized"], 0);
+    assert_eq!(again["remaining"], 0);
+}
+
+/// A budget bounds spend, and a stale index refuses to summarize rather than
+/// buying a wrong answer under a right key.
+#[test]
+fn summarize_respects_a_budget_and_refuses_stale_lines() {
+    let method = |n: &str| {
+        format!("class C{n}\n  def run{n}(a)\n    a.check\n    persist(a)\n    a\n  end\nend\n")
+    };
+    let repo = Repo::new(
+        "budget",
+        &[
+            ("a.rb", &method("1")),
+            ("b.rb", &method("2")),
+            ("c.rb", &method("3")),
+        ],
+    );
+    let fixtures = repo.dir.join("f.json");
+    let one = r#"{"summary":"s","primary_purpose":"p","secondary_concerns":[],
+                  "side_effects":[],"domain":"d","patterns":[]}"#;
+    std::fs::write(
+        &fixtures,
+        format!(r#"{{"C1#run1": {one}, "C2#run2": {one}, "C3#run3": {one}}}"#),
+    )
+    .unwrap();
+    repo.run(&["index"]);
+    let fixtures = fixtures.to_str().unwrap();
+
+    let first = repo.json(&[
+        "summarize",
+        "--budget",
+        "2",
+        "--fixtures",
+        fixtures,
+        "--json",
+    ]);
+    assert_eq!(first["summarized"], 2);
+    assert_eq!(first["remaining"], 1, "the budget bounds spend, not scope");
+
+    // Rewrite c.rb so the recorded span still exists and still parses, but now
+    // holds a *different* method of the same shape. This is the dangerous
+    // case: the context the index remembers (C3#run3) is unchanged, so the
+    // request would look perfectly valid and store a wrong summary under the
+    // right body's key — paid for, cached forever, indistinguishable from a
+    // correct one. Only re-hashing the slice catches it.
+    //
+    // Deliberately the same line count as the original, so this fails if the
+    // guard is weakened to a bounds check.
+    std::fs::write(
+        repo.dir.join("c.rb"),
+        "class C3\n  def run3(a)\n    a.destroy\n    log(a)\n    nil\n  end\nend\n",
+    )
+    .unwrap();
+    let stale = repo.json(&["summarize", "--fixtures", fixtures, "--json"]);
+    assert_eq!(stale["summarized"], 0, "the body is not the one indexed");
+    assert_eq!(stale["failed"], 1);
 }

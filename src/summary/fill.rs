@@ -1,0 +1,224 @@
+//! Budgeted, on-demand summarization (DEC-009).
+//!
+//! Three things this loop is careful about, all of them because the work costs
+//! money rather than milliseconds:
+//!
+//! - **Buy each answer once.** Units are grouped by their full cache key
+//!   before anything is sent, so a clone in identical context is one call.
+//! - **Never lose what was bought.** Each answer is written as it arrives, not
+//!   batched to the end, so an interrupt or a rate limit keeps everything paid
+//!   for so far.
+//! - **Never buy a wrong answer.** A stored summary is keyed by the body it
+//!   describes, so summarizing the wrong lines would poison that key
+//!   permanently. See `slice`.
+
+use super::{Context, Request, Summarizer, Usage};
+use crate::store::{Store, SummaryKey};
+use anyhow::Result;
+use std::collections::{HashMap, HashSet};
+use std::path::Path;
+
+/// What one fill did. Every number is work, not contents.
+#[derive(Debug, Default, serde::Serialize)]
+pub struct Filled {
+    /// Answers bought in this run.
+    pub summarized: usize,
+    /// Units covered without a call, because a clone in identical context was
+    /// summarized in this run or an earlier one.
+    pub shared: usize,
+    pub failed: usize,
+    /// Distinct answers still unbought in this scope. Zero means the scope is
+    /// complete; anything else is what a bigger `--budget` would work through.
+    pub remaining: usize,
+    pub usage: Usage,
+}
+
+/// How much of a scope has been summarized.
+#[derive(Debug, Default, serde::Serialize)]
+pub struct Coverage {
+    /// Units with a body to summarize. Macro-generated units have none, so
+    /// they are not counted as missing — a denominator that includes work that
+    /// can never be done never reaches 100%.
+    pub summarizable: usize,
+    pub summarized: usize,
+}
+
+impl Coverage {
+    /// `complete` / `warming` / `none`, travelling with every answer per
+    /// DEC-009. The fraction travels with it, because the label alone cannot
+    /// tell a reader whether "warming" means 2% or 98%.
+    pub fn state(&self) -> &'static str {
+        match (self.summarized, self.summarizable) {
+            (0, _) => "none",
+            (done, total) if done >= total => "complete",
+            _ => "warming",
+        }
+    }
+}
+
+/// Summarize up to `budget` distinct answers in `scope`.
+pub fn fill(
+    store: &mut Store,
+    root: &Path,
+    scope: Option<&str>,
+    summarizer: &dyn Summarizer,
+    budget: usize,
+) -> Result<Filled> {
+    let prompt = super::PROMPT_VERSION;
+    let model = summarizer.model().to_string();
+    let root_str = root.to_string_lossy().into_owned();
+
+    // One entry per distinct answer, with the units it would serve. Grouping
+    // before spending is the dedup DEC-003 promises: an exact clone in
+    // identical context is one call, however many places it appears.
+    let mut wanted: HashMap<(u64, u64), Vec<Located>> = HashMap::new();
+    for located in store.units(&root_str)? {
+        let Some(norm_hash) = located.unit.norm_hash else {
+            continue;
+        };
+        if !scope.is_none_or(|s| crate::dupes::under(&located.path, s)) {
+            continue;
+        }
+        let context = Context::of(&located.unit);
+        wanted
+            .entry((norm_hash, context.hash()))
+            .or_default()
+            .push(Located {
+                path: located.path,
+                line: located.unit.line,
+                end_line: located.unit.end_line,
+                context,
+            });
+    }
+
+    let have: HashSet<(u64, u64)> = store.have_summaries(prompt, &model)?;
+    let mut todo: Vec<((u64, u64), Vec<Located>)> = wanted
+        .into_iter()
+        .filter(|(key, _)| !have.contains(key))
+        .collect();
+    // Deterministic order, so two runs of `--budget 100` work through the
+    // corpus rather than re-rolling the same dice.
+    todo.sort_by(|a, b| (&a.1[0].path, a.1[0].line, a.0).cmp(&(&b.1[0].path, b.1[0].line, b.0)));
+
+    let mut counts = Filled {
+        remaining: todo.len(),
+        ..Filled::default()
+    };
+    for ((norm_hash, ctx_hash), units) in todo.into_iter().take(budget) {
+        let here = &units[0];
+        let source = match slice(root, here, norm_hash) {
+            Ok(source) => source,
+            Err(err) => {
+                eprintln!("contour: skipped {}:{} — {err}", here.path, here.line);
+                counts.failed += 1;
+                continue;
+            }
+        };
+        let request = Request {
+            source,
+            context: here.context.clone(),
+        };
+        match summarizer.summarize(&request) {
+            Ok((summary, usage)) => {
+                // Written now, not at the end: an interrupt after this point
+                // must not throw away an answer that has already been paid for.
+                store.put_summary(
+                    &SummaryKey {
+                        norm_hash,
+                        ctx_hash,
+                        prompt,
+                        model: &model,
+                    },
+                    &summary,
+                )?;
+                counts.summarized += 1;
+                counts.shared += units.len() - 1;
+                counts.remaining -= 1;
+                counts.usage += usage;
+            }
+            Err(err) => {
+                eprintln!("contour: {}:{} — {err:#}", here.path, here.line);
+                counts.failed += 1;
+            }
+        }
+    }
+    Ok(counts)
+}
+
+/// How much of a scope is summarized, for `--status`.
+pub fn coverage(store: &Store, root: &str, model: &str) -> Result<Coverage> {
+    let have = store.have_summaries(super::PROMPT_VERSION, model)?;
+    let mut counts = Coverage::default();
+    for located in store.units(root)? {
+        let Some(norm_hash) = located.unit.norm_hash else {
+            continue;
+        };
+        counts.summarizable += 1;
+        if have.contains(&(norm_hash, Context::of(&located.unit).hash())) {
+            counts.summarized += 1;
+        }
+    }
+    Ok(counts)
+}
+
+/// One unit's location, carried alongside the context so the loop does not
+/// rebuild it.
+struct Located {
+    path: String,
+    line: u32,
+    end_line: u32,
+    context: Context,
+}
+
+/// The method's source, verified to be the method.
+///
+/// The index records line numbers against the blob it read; the working tree
+/// may have moved since. Slicing blindly would send the wrong lines and store
+/// the answer under the *right* body's key — a wrong summary that is paid for,
+/// permanently cached, and indistinguishable from a correct one.
+///
+/// So the slice is re-parsed and its hash compared. A `norm_hash` covers only
+/// the def's own parameters and body, so a method parsed alone hashes
+/// identically to the same method parsed in its file — which is what makes
+/// this check exact rather than approximate.
+fn slice(root: &Path, unit: &Located, norm_hash: u64) -> Result<String> {
+    let text = std::fs::read_to_string(root.join(&unit.path))?;
+    let lines: Vec<&str> = text.lines().collect();
+    let (from, to) = (unit.line as usize - 1, unit.end_line as usize);
+    anyhow::ensure!(
+        from < lines.len() && to <= lines.len(),
+        "the file is shorter than the index expects; reindex"
+    );
+    let source = lines[from..to].join("\n");
+
+    let found = crate::ruby::units(source.as_bytes())
+        .units
+        .first()
+        .and_then(|u| u.norm_hash);
+    anyhow::ensure!(
+        found == Some(norm_hash),
+        "the file changed since it was indexed; reindex"
+    );
+    Ok(source)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn coverage_states_read_from_the_counts() {
+        let state = |summarized, summarizable| {
+            Coverage {
+                summarizable,
+                summarized,
+            }
+            .state()
+        };
+        assert_eq!(state(0, 10), "none");
+        assert_eq!(state(3, 10), "warming");
+        assert_eq!(state(10, 10), "complete");
+        // A scope with nothing summarizable is not "warming" forever.
+        assert_eq!(state(0, 0), "none");
+    }
+}

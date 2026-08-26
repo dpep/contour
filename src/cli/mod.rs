@@ -63,7 +63,36 @@ enum Command {
         #[arg(long, value_name = "N", default_value_t = DEFAULT_MIN_LINES)]
         min_lines: u32,
     },
+    /// Summarize callables with an LLM, up to a budget.
+    Summarize {
+        /// A file or directory to limit the fill to. Defaults to the whole
+        /// checkout containing the working directory.
+        scope: Option<PathBuf>,
+        /// Stop after this many distinct answers. Clones in identical context
+        /// share one, so this bounds spend, not units covered.
+        #[arg(long, value_name = "N", default_value_t = DEFAULT_BUDGET)]
+        budget: usize,
+        /// Replay canned summaries from a JSON file instead of calling the
+        /// API. Offline, free, and what the tests use.
+        #[arg(long, value_name = "FILE")]
+        fixtures: Option<PathBuf>,
+        /// Which model to summarize with. Part of the cache key, so switching
+        /// builds an adjacent summary set rather than overwriting one
+        /// (DEC-006).
+        #[arg(long, value_name = "MODEL", default_value = DEFAULT_MODEL)]
+        model: String,
+    },
 }
+
+/// Conservative on purpose: this is the one command that spends money, and a
+/// bare `contour summarize` on rails would otherwise start ~50,000 API calls.
+/// Raise it deliberately.
+pub const DEFAULT_BUDGET: usize = 100;
+
+/// DEC-006 leaves the default to the eval bake-off; until that runs, the most
+/// capable model is the honest starting point — a cheap model that summarizes
+/// badly would poison the eval it is supposed to be judged by.
+pub const DEFAULT_MODEL: &str = "claude-opus-5";
 
 /// Below this, structural identity stops meaning duplication.
 ///
@@ -126,6 +155,22 @@ fn dispatch(cli: &Cli) -> Result<i32> {
         (Some(Command::Dupes { scope, min_lines }), _, _) => {
             dupes(scope.as_deref(), *min_lines, format)
         }
+        (
+            Some(Command::Summarize {
+                scope,
+                budget,
+                fixtures,
+                model,
+            }),
+            _,
+            _,
+        ) => summarize(
+            scope.as_deref(),
+            *budget,
+            fixtures.as_deref(),
+            model,
+            format,
+        ),
         (None, Some(file), _) => symbols(file, format),
         (None, None, true) => status(format),
         (None, None, false) => {
@@ -157,18 +202,24 @@ fn index(path: Option<&std::path::Path>, format: Format) -> Result<i32> {
     Ok(HIT)
 }
 
-fn dupes(scope: Option<&std::path::Path>, min_lines: u32, format: Format) -> Result<i32> {
+/// A path the user typed, resolved into the checkout root plus the
+/// checkout-relative prefix the store keys paths by.
+///
+/// Shared by every command that takes a SCOPE, so "app/models" means the same
+/// thing whichever one you hand it to.
+fn scoped(scope: Option<&std::path::Path>) -> Result<(PathBuf, Option<String>)> {
     let here = scope.unwrap_or(std::path::Path::new("."));
     let root = crate::scan::repo_root(here)?;
-    // The scope the user typed, as the checkout stores paths: relative to the
-    // repository root, whatever directory they ran from.
-    let absolute = std::fs::canonicalize(here)?;
-    let relative = absolute
+    let relative = std::fs::canonicalize(here)?
         .strip_prefix(std::fs::canonicalize(&root)?)
         .ok()
         .map(|p| p.to_string_lossy().into_owned())
         .filter(|p| !p.is_empty());
+    Ok((root, relative))
+}
 
+fn dupes(scope: Option<&std::path::Path>, min_lines: u32, format: Format) -> Result<i32> {
+    let (root, relative) = scoped(scope)?;
     let store = crate::store::open_default()?;
     let root = root.to_string_lossy().into_owned();
     let groups = crate::dupes::find(&store, &root, relative.as_deref(), min_lines)?;
@@ -201,6 +252,52 @@ fn dupes(scope: Option<&std::path::Path>, min_lines: u32, format: Format) -> Res
     Ok(if groups.is_empty() { MISS } else { HIT })
 }
 
+fn summarize(
+    scope: Option<&std::path::Path>,
+    budget: usize,
+    fixtures: Option<&std::path::Path>,
+    model: &str,
+    format: Format,
+) -> Result<i32> {
+    let (root, relative) = scoped(scope)?;
+    let summarizer: Box<dyn crate::summary::Summarizer> = match fixtures {
+        Some(path) => Box::new(crate::summary::fixture::Fixtures::load(path)?),
+        None => Box::new(crate::summary::anthropic::Anthropic::from_env(model)?),
+    };
+    let mut store = crate::store::open_default()?;
+    let filled = crate::summary::fill(
+        &mut store,
+        &root,
+        relative.as_deref(),
+        summarizer.as_ref(),
+        budget,
+    )?;
+
+    match format {
+        Format::Human => {
+            println!(
+                "{} summarized, {} shared, {} failed, {} left",
+                filled.summarized, filled.shared, filled.failed, filled.remaining
+            );
+            // Tokens, not dollars: per-token rates change, and a hardcoded
+            // price would quietly go wrong.
+            if filled.usage.input_tokens > 0 {
+                println!(
+                    "tokens   {} in, {} out",
+                    filled.usage.input_tokens, filled.usage.output_tokens
+                );
+            }
+        }
+        _ => emit(format, &filled)?,
+    }
+    // Nothing bought and nothing left to buy is a miss: the scope was already
+    // complete, or held nothing summarizable.
+    Ok(match filled.summarized > 0 || filled.remaining > 0 {
+        true => HIT,
+        false => MISS,
+    })
+}
+
 fn symbols(file: &std::path::Path, format: Format) -> Result<i32> {
     let src = std::fs::read(file)?;
     let blob = crate::ruby::units(&src);
@@ -228,31 +325,73 @@ fn status(format: Format) -> Result<i32> {
     let path = crate::store::default_path()?;
     let store = crate::store::open_default()?;
     let checkouts = store.status()?;
+    // Coverage is reported per model that has bought anything, not for a
+    // presumed one: DEC-005 lets indexes from different models coexist, so
+    // "how covered am I" has no single answer.
+    let models = store.summary_models()?;
+
+    let mut rows = Vec::new();
+    for checkout in &checkouts {
+        let mut coverage = Vec::new();
+        for model in &models {
+            let counts = crate::summary::coverage(&store, &checkout.root, model)?;
+            coverage.push(serde_json::json!({
+                "model": model,
+                "state": counts.state(),
+                "summarized": counts.summarized,
+                "summarizable": counts.summarizable,
+            }));
+        }
+        rows.push(serde_json::json!({
+            "root": checkout.root,
+            "indexed_at": checkout.indexed_at,
+            "files": checkout.files,
+            "blobs": checkout.blobs,
+            "units": checkout.units,
+            "stale": checkout.stale,
+            "coverage": coverage,
+        }));
+    }
     let report = serde_json::json!({
         "db": path.to_string_lossy(),
         "schema": store.schema_version()?,
-        "checkouts": checkouts,
-        // Summaries and embeddings do not exist yet; the field is here from
-        // the start because DEC-009 says coverage travels with every answer,
-        // and a field that appears later is a field consumers did not expect.
-        "coverage": "none",
+        "checkouts": rows,
     });
+
     match format {
         Format::Human => {
-            println!("db       {}", crate::paths::pretty(&path.to_string_lossy()));
-            println!("coverage none");
+            println!("db  {}", crate::paths::pretty(&path.to_string_lossy()));
             if checkouts.is_empty() {
                 println!("(nothing indexed)");
             }
-            for c in &checkouts {
+            for (checkout, row) in checkouts.iter().zip(&rows) {
                 println!(
                     "{}  {} files, {} blobs, {} units{}",
-                    crate::paths::pretty(&c.root),
-                    c.files,
-                    c.blobs,
-                    c.units,
-                    if c.stale { "  [may be stale]" } else { "" }
+                    crate::paths::pretty(&checkout.root),
+                    checkout.files,
+                    checkout.blobs,
+                    checkout.units,
+                    if checkout.stale {
+                        "  [may be stale]"
+                    } else {
+                        ""
+                    }
                 );
+                let coverage = row["coverage"].as_array().expect("built above");
+                if coverage.is_empty() {
+                    println!("    coverage none");
+                }
+                for entry in coverage {
+                    // The fraction travels with the label: "warming" alone
+                    // cannot tell a reader whether it means 2% or 98%.
+                    println!(
+                        "    coverage {} — {}/{} summarized by {}",
+                        entry["state"].as_str().unwrap_or("?"),
+                        entry["summarized"],
+                        entry["summarizable"],
+                        entry["model"].as_str().unwrap_or("?"),
+                    );
+                }
             }
         }
         _ => emit(format, &report)?,

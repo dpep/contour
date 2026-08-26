@@ -18,6 +18,21 @@ Initial skeleton — nothing has been released, so everything below is new.
 - `contour dupes [SCOPE]` reports units whose normalized bodies are identical.
   `--min-lines` (default 4) hides bodies too short for structural identity to
   mean duplication.
+- `contour summarize [SCOPE] --budget N` fills LLM summaries on demand, up to
+  a budget of distinct answers. Each method gets a fine summary plus typed
+  metadata: primary purpose, ranked secondary concerns, side effects, domain,
+  and recognized patterns. `--fixtures FILE` replays canned answers instead,
+  for offline work; `ANTHROPIC_API_KEY` is needed only for a live fill, never
+  to build or test.
+- `contour --status` reports summary coverage per model — `complete`,
+  `warming`, or `none`, with the fraction beside it.
+- Summaries are stored under `norm_hash + ctx_hash + prompt_version + model`,
+  so a rename, a move, or a reformat never re-summarizes, and switching models
+  builds an adjacent set rather than overwriting one.
+- **Summaries survive a reindex.** The derived tables are still dropped and
+  rebuilt on any schema change, but summaries are purchased work that cannot
+  be recomputed from local bytes, so they live under their own version and are
+  never dropped automatically.
 - Index lives at `~/.local/share/contour/contour.db`; `$CONTOUR_DB` overrides
   it. There are no migrations — a schema-version mismatch drops the database
   and reindexes, because it is a cache of a pure function, not a system of

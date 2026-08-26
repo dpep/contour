@@ -1,6 +1,19 @@
-//! The on-disk schema.
+//! The on-disk schema, in two halves with different rules.
+//!
+//! **Derived tables** (`blob`, `unit`, `checkout`, `file`) are a cache of a
+//! pure function of bytes this machine can read again. A version mismatch
+//! drops and rebuilds them — seconds of work, and no migration bugs ever.
+//!
+//! **The summary table is not that.** It holds work that was *purchased*: a
+//! full fill of a large repo is hundreds of dollars of LLM calls, and it
+//! cannot be recomputed from local bytes. Dropping it on an extractor tweak
+//! would be indefensible, so `VERSION` does not govern it — it has its own
+//! version, its own tripwire, and it survives every rebuild of the tables
+//! above. It is keyed entirely by content hashes and has no foreign keys into
+//! them, so nothing about a rebuild can leave it inconsistent.
 
-/// Bump on any change to the schema **or to what the extractor emits**.
+/// Bump on any change to the derived schema **or to what the extractor
+/// emits**.
 ///
 /// The second half is easy to miss: units are cached by blob OID on the
 /// premise that they are a pure function of the bytes — but when the
@@ -8,13 +21,13 @@
 /// otherwise ships silently dead, because every blob it would affect is
 /// already "known".
 ///
-/// There are no migrations, and that is deliberate (DEC-003): everything here
-/// is derived from bytes this machine can read again, so the database is a
-/// **cache of a pure function**, not a system of record. A version mismatch
+/// There are no migrations, and that is deliberate (DEC-003): everything under
+/// this version is derived from bytes this machine can read again. A mismatch
 /// drops it and reindexes — which costs seconds and removes an entire class of
 /// migration bug. It also makes adding a column free, so nothing needs to be
-/// carried speculatively.
-pub(crate) const VERSION: i64 = 2;
+/// carried speculatively. See the module header for what this version
+/// deliberately does *not* govern.
+pub(crate) const VERSION: i64 = 3;
 
 /// Applied whole to a fresh database.
 pub(crate) const SCHEMA: &str = r#"
@@ -80,5 +93,54 @@ CREATE INDEX unit_blob ON unit(blob_id);
 CREATE INDEX file_blob ON file(blob_id);
 "#;
 
-/// Every table, dependents first, so a drop respects nothing.
+/// Every **derived** table, dependents first, so a drop respects nothing.
+/// `summary` is deliberately absent: see the module header.
 pub(crate) const TABLES: [&str; 4] = ["file", "checkout", "unit", "blob"];
+
+/// Bump only for a real change to the summary table.
+///
+/// Unlike `VERSION`, this one cannot be answered by recomputing — a mismatch
+/// is a migration or an admission of data loss, so `Store::init` refuses to
+/// open rather than guessing. That refusal is the point: the first time this
+/// number ever changes, it must not silently destroy paid work.
+pub(crate) const SUMMARY_VERSION: i64 = 1;
+
+/// The expensive layer. Applied on every open, dropped by nothing.
+pub(crate) const SUMMARY_SCHEMA: &str = r#"
+CREATE TABLE IF NOT EXISTS meta (
+  key   TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+) WITHOUT ROWID;
+
+-- One LLM answer. The primary key IS the cache key (DEC-003), and every part
+-- of it is something that changes the answer:
+--
+--   norm_hash  the normalized body. Deliberately blind to local names, which
+--              is what makes a rename free.
+--   ctx_hash   a hash of the exact context text the prompt renders, so the
+--              key cannot drift from what the model was actually told.
+--   prompt     the prompt version, pinned by a frozen test over the whole
+--              request shape — instructions, schema, effort, token ceiling.
+--   model      so summaries from different models sit side by side rather
+--              than overwriting each other.
+--   variant    DEC-008: 'body' reads code only, 'commented' reads the
+--              comments too. Only 'body' is generated today; comparing a
+--              comment against a summary that read the comment is circular,
+--              so drift detection needs the honest one to exist separately.
+--   level      DEC-013: 'unit' today; container rollups later.
+--
+-- `variant` and `level` are carried before they are used, against the usual
+-- rule, because they are KEY components. Adding a key column later re-keys
+-- every stored row — and re-keying summaries means buying them all again.
+CREATE TABLE IF NOT EXISTS summary (
+  norm_hash  INTEGER NOT NULL,
+  ctx_hash   INTEGER NOT NULL,
+  prompt     TEXT    NOT NULL,
+  model      TEXT    NOT NULL,
+  variant    TEXT    NOT NULL,
+  level      TEXT    NOT NULL,
+  json       TEXT    NOT NULL,
+  created_at INTEGER NOT NULL,
+  PRIMARY KEY (norm_hash, ctx_hash, prompt, model, variant, level)
+) WITHOUT ROWID;
+"#;

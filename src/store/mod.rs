@@ -12,8 +12,9 @@ mod schema;
 
 use crate::core::{Blob, Oid, Param, ParamKind, Unit};
 use crate::scan::Files;
+use crate::summary::Summary;
 use anyhow::Result;
-use rusqlite::{Connection, params};
+use rusqlite::{Connection, OptionalExtension, params};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
@@ -111,6 +112,36 @@ impl Store {
             }
             conn.execute_batch(schema::SCHEMA)?;
             conn.pragma_update(None, "user_version", schema::VERSION)?;
+        }
+
+        // The purchased layer, applied on every open and dropped by nothing
+        // above. Its version lives in a row rather than in `user_version`
+        // precisely so the rebuild cannot touch it.
+        conn.execute_batch(schema::SUMMARY_SCHEMA)?;
+        let stored: Option<i64> = conn
+            .query_row(
+                "SELECT value FROM meta WHERE key = 'summary_version'",
+                [],
+                |r| r.get::<_, String>(0),
+            )
+            .optional()?
+            .and_then(|v| v.parse().ok());
+        match stored {
+            None => {
+                conn.execute(
+                    "INSERT INTO meta (key, value) VALUES ('summary_version', ?1)",
+                    params![schema::SUMMARY_VERSION.to_string()],
+                )?;
+            }
+            // Refuse rather than guess. Summaries cannot be recomputed from
+            // local bytes, so a mismatch is a migration someone has to write.
+            Some(found) => anyhow::ensure!(
+                found == schema::SUMMARY_VERSION,
+                "the summary table is v{found} but this contour speaks \
+                 v{}; summaries cannot be regenerated for free, so they are \
+                 not dropped automatically",
+                schema::SUMMARY_VERSION
+            ),
         }
         Ok(Store { conn })
     }
@@ -291,11 +322,89 @@ impl Store {
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
     }
 
+    /// The summary stored under this exact key, if there is one.
+    pub fn summary(&self, key: &SummaryKey<'_>) -> Result<Option<Summary>> {
+        let json: Option<String> = self
+            .conn
+            .query_row(
+                "SELECT json FROM summary
+                  WHERE norm_hash = ?1 AND ctx_hash = ?2 AND prompt = ?3
+                    AND model = ?4 AND variant = 'body' AND level = 'unit'",
+                params![
+                    key.norm_hash as i64,
+                    key.ctx_hash as i64,
+                    key.prompt,
+                    key.model
+                ],
+                |r| r.get(0),
+            )
+            .optional()?;
+        Ok(match json {
+            Some(json) => Some(serde_json::from_str(&json)?),
+            None => None,
+        })
+    }
+
+    /// Record one purchased answer. Idempotent: re-running a fill that was
+    /// interrupted must not fail on what it already bought.
+    pub fn put_summary(&mut self, key: &SummaryKey<'_>, summary: &Summary) -> Result<()> {
+        self.conn.execute(
+            "INSERT OR REPLACE INTO summary
+               (norm_hash, ctx_hash, prompt, model, variant, level, json, created_at)
+             VALUES (?1, ?2, ?3, ?4, 'body', 'unit', ?5, unixepoch())",
+            params![
+                key.norm_hash as i64,
+                key.ctx_hash as i64,
+                key.prompt,
+                key.model,
+                serde_json::to_string(summary)?
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Which summary keys, of the ones asked about, are already bought.
+    ///
+    /// Loaded in one query rather than probed per unit, for the same reason
+    /// `known` is: at 50k units the probe is 50k round trips.
+    pub fn have_summaries(&self, prompt: &str, model: &str) -> Result<HashSet<(u64, u64)>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT norm_hash, ctx_hash FROM summary
+              WHERE prompt = ?1 AND model = ?2 AND variant = 'body' AND level = 'unit'",
+        )?;
+        let rows = stmt.query_map(params![prompt, model], |r| {
+            Ok((r.get::<_, i64>(0)? as u64, r.get::<_, i64>(1)? as u64))
+        })?;
+        Ok(rows.collect::<rusqlite::Result<HashSet<_>>>()?)
+    }
+
+    /// Which models this machine has bought summaries from. `--status` reports
+    /// coverage per model rather than for a presumed one: DEC-005 lets indexes
+    /// from different models coexist, so "how covered am I" has no single
+    /// answer.
+    pub fn summary_models(&self) -> Result<Vec<String>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT DISTINCT model FROM summary ORDER BY model")?;
+        let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
     pub fn schema_version(&self) -> Result<i64> {
         Ok(self
             .conn
             .pragma_query_value(None, "user_version", |r| r.get(0))?)
     }
+}
+
+/// Everything that decides which stored answer a unit gets. Borrowed rather
+/// than owned: `prompt` and `model` are the same two strings for every unit in
+/// a run, and cloning them per lookup is pure noise.
+pub struct SummaryKey<'a> {
+    pub norm_hash: u64,
+    pub ctx_hash: u64,
+    pub prompt: &'a str,
+    pub model: &'a str,
 }
 
 /// A unit plus where this checkout currently keeps it.
