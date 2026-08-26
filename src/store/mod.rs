@@ -31,6 +31,8 @@ pub struct Indexed {
     /// Blobs whose bytes this machine had never seen. A reindex with no edits
     /// makes this zero, which is the entire point of blob keying.
     pub parsed: usize,
+    /// Units found in the blobs `parsed` above — so zero on a no-op reindex,
+    /// and never the size of the checkout. `Checkout::units` is that number.
     pub units: usize,
 }
 
@@ -41,6 +43,12 @@ pub struct Checkout {
     pub indexed_at: i64,
     pub files: i64,
     pub blobs: i64,
+    /// Callables reachable in this checkout, counted **once per path**. Two
+    /// files with identical bytes share one blob and one set of stored rows,
+    /// but they are two places a reader would find the method, so they count
+    /// twice here. That makes this legitimately larger than the number of
+    /// `unit` rows — on rails, 54,296 against 54,068 — and the gap is exactly
+    /// the `files` − `blobs` difference doing its job.
     pub units: i64,
     /// git has touched its index since we last looked. A probe, not a proof —
     /// see `scan::git_fingerprint` for what it cannot see.
@@ -444,5 +452,11 @@ mod tests {
         assert_eq!(located.len(), 2);
         assert_eq!(located[0].path, "a.rb");
         assert_eq!(located[1].path, "b/a.rb");
+
+        // The two `units` counts legitimately disagree, and the difference is
+        // the point rather than a bug: one is work done, the other is what the
+        // checkout contains. Pinned so nobody "fixes" one to match the other.
+        assert_eq!(counts.units, 1, "one blob was parsed, holding one unit");
+        assert_eq!(store.status().unwrap()[0].units, 2, "found at two paths");
     }
 }

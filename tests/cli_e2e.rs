@@ -178,3 +178,47 @@ fn an_edit_reparses_only_what_moved() {
         3
     );
 }
+
+/// The clone report's floor, and the scope filter. The testbed pins what
+/// hashes together; this pins what the command chooses to show.
+#[test]
+fn dupes_hides_bodies_too_short_to_mean_anything() {
+    let short = "class %C%\n  def get\n    @thing\n  end\nend\n";
+    let long = "class %C%\n  def run(a)\n    b = a.check\n    persist(b)\n    b\n  end\nend\n";
+    let repo = Repo::new(
+        "dupes",
+        &[
+            ("app/a.rb", &short.replace("%C%", "Alpha")),
+            ("app/b.rb", &short.replace("%C%", "Beta")),
+            ("app/c.rb", &long.replace("%C%", "Gamma")),
+            ("lib/d.rb", &long.replace("%C%", "Delta")),
+        ],
+    );
+    repo.run(&["index"]);
+
+    // The two three-line accessors are identical because there is only one way
+    // to write them; the default floor drops them.
+    let groups = repo.json(&["dupes", "--json"]);
+    assert_eq!(groups.as_array().map(Vec::len), Some(1));
+    assert_eq!(groups[0]["lines"], 5);
+    assert_eq!(groups[0]["how"], "structural");
+    // A u64 past 2^53 does not survive a JSON parser that stores numbers as
+    // doubles, so the key travels as hex.
+    assert_eq!(groups[0]["norm_hash"].as_str().map(str::len), Some(16));
+
+    assert_eq!(
+        repo.json(&["dupes", "--min-lines", "1", "--json"])
+            .as_array()
+            .map(Vec::len),
+        Some(2),
+        "the accessors are still clones, just filtered by default"
+    );
+
+    // A scope is a path prefix, and a group needs two members inside it.
+    assert_eq!(
+        repo.run(&["dupes", "app", "--json"]).1,
+        1,
+        "Delta is in lib"
+    );
+    assert_eq!(repo.run(&["dupes", "--json"]).1, 0);
+}

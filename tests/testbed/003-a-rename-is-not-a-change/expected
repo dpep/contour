@@ -1,0 +1,10 @@
+# The headline property: a rename is not a change. `Gadget#store` renames the
+# method, the parameter and the local, and still hashes to `Widget#save` —
+# which is what makes the summary cache survive a refactor (DEC-003) and what
+# makes the clone report about behaviour rather than spelling.
+#
+# The two controls matter as much as the collision. `Doodad#save` does one
+# more thing; `Gizmo#save` does the same things with the locals swapped, so it
+# reads the parameter where the original reads the local. Ordinals are
+# positional precisely so that second one is caught.
+dupes  Widget#save+Gadget#store

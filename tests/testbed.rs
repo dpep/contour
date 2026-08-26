@@ -130,6 +130,28 @@ fn every_testbed_case_answers_as_recorded() {
                         fail(format!("expected {want:?}, got {got:?}"));
                     }
                 }
+                // `dupes  A#x+B#y  C#z+D#w` — the WHOLE report, so a case
+                // pins what does not collide as firmly as what does. That
+                // totality is the point: "a rename collides" is only half a
+                // claim without "changed logic does not".
+                "dupes" => {
+                    let (answer, _, _) =
+                        contour(&db, &dir, &["dupes", "--min-lines", "1", "--json"]);
+                    let got = clone_groups(&answer);
+                    let mut want: Vec<String> = rest
+                        .split_whitespace()
+                        .filter(|g| *g != "(none)")
+                        .map(|g| {
+                            let mut ids: Vec<&str> = g.split('+').collect();
+                            ids.sort_unstable();
+                            ids.join("+")
+                        })
+                        .collect();
+                    want.sort();
+                    if got != want {
+                        fail(format!("expected {want:?}, got {got:?}"));
+                    }
+                }
                 other => fail(format!("unknown verb `{other}`")),
             }
         }
@@ -143,6 +165,32 @@ fn every_testbed_case_answers_as_recorded() {
         cases.len(),
         failures.join("\n\n  ")
     );
+}
+
+/// The clone report as comparable text: each group's ids sorted and joined by
+/// `+`, then the groups sorted.
+///
+/// Sorted, so a case pins *which* units collide and not how the report ranks
+/// them. Ranking is a presentation choice that should be free to change; what
+/// hashes together is not.
+fn clone_groups(answer: &serde_json::Value) -> Vec<String> {
+    let mut groups: Vec<String> = answer
+        .as_array()
+        .map(|gs| {
+            gs.iter()
+                .map(|g| {
+                    let mut ids: Vec<&str> = g["members"]
+                        .as_array()
+                        .map(|ms| ms.iter().filter_map(|m| m["id"].as_str()).collect())
+                        .unwrap_or_default();
+                    ids.sort_unstable();
+                    ids.join("+")
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    groups.sort();
+    groups
 }
 
 /// Rebuild `Unit::id` from JSON, so an expectation names a unit the way a

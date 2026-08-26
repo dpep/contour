@@ -19,11 +19,12 @@ today is the cheap end of it.
 
 ```sh
 contour index [PATH]     # scan a checkout, index every callable in it
+contour dupes [SCOPE]    # units whose normalized bodies are identical
 contour --symbols FILE   # outline one file — parses it live, no index needed
 contour --status         # what the index holds, and what it is missing
 ```
 
-Not built yet: `dupes`, `search`, `similar`, `summarize`.
+Not built yet: `search`, `similar`, `summarize`.
 
 ## How it is put together
 

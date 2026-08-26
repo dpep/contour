@@ -1,0 +1,8 @@
+# Layout, comments, quoting style and numeric spelling are all invisible to
+# the hash, and none of them needed a special case — the vendored atom table
+# compares unescaped values and integer digits, so `"x" == 'x'` and
+# `1_000 == 1000` fall out of the same mechanism that makes heredocs work.
+#
+# `Gamma#render` is the boundary: a different string *value* is a different
+# method. Normalization removes spelling, not meaning.
+dupes  Alpha#render+Beta#render

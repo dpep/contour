@@ -20,11 +20,22 @@ so it exercises the whole path: extract → store → CLI.
 ```text
 # Why this case exists. Say what broke, not what the code does.
 symbols app.rb  Widget#save,Widget.find,Widget#name
+dupes           Widget#save+Gadget#store  Alpha#run+Beta#run
 ```
 
 | verb | asserts |
 | ---- | ------- |
 | `symbols FILE  a,b,c` | the outline of `FILE`, in source order, as `Owner#name` / `Owner.name` |
+| `dupes  a+b  c+d` | the **whole** clone report: groups space-separated, members `+`-joined. `(none)` for an empty report. |
+
+`dupes` asserts the entire report, not just the groups you care about — "a
+rename collides" is half a claim without "changed logic does not", so every
+case carries its own control. Ids and groups are both sorted before comparing,
+so a case pins what hashes together and not how the report ranks it.
+
+The harness runs `dupes` with `--min-lines 1` so fixtures can stay tiny. The
+default floor is a usability knob measured on a real corpus and is pinned in
+`tests/cli_e2e.rs` instead.
 
 Comment lines start with `#`; a `#` inside an expectation (`Widget#save`) is
 just a character.
