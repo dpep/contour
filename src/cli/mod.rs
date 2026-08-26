@@ -82,7 +82,25 @@ enum Command {
         #[arg(long, value_name = "MODEL", default_value = DEFAULT_MODEL)]
         model: String,
     },
+    /// Find callables by what they do, in English.
+    Search {
+        query: String,
+        /// A file or directory to search within.
+        scope: Option<PathBuf>,
+        #[arg(short = 'l', long, value_name = "N", default_value_t = DEFAULT_LIMIT)]
+        limit: usize,
+    },
+    /// Find callables like this one, with the tier that found each disclosed.
+    Similar {
+        /// `Owner#method`, `Owner.method`, or a bare name at top level.
+        unit: String,
+        #[arg(short = 'l', long, value_name = "N", default_value_t = DEFAULT_LIMIT)]
+        limit: usize,
+    },
 }
+
+/// Enough to see the shape of an answer without scrolling.
+pub const DEFAULT_LIMIT: usize = 10;
 
 /// Conservative on purpose: this is the one command that spends money, and a
 /// bare `contour summarize` on rails would otherwise start ~50,000 API calls.
@@ -171,6 +189,16 @@ fn dispatch(cli: &Cli) -> Result<i32> {
             model,
             format,
         ),
+        (
+            Some(Command::Search {
+                query,
+                scope,
+                limit,
+            }),
+            _,
+            _,
+        ) => search(query, scope.as_deref(), *limit, format),
+        (Some(Command::Similar { unit, limit }), _, _) => similar(unit, *limit, format),
         (None, Some(file), _) => symbols(file, format),
         (None, None, true) => status(format),
         (None, None, false) => {
@@ -296,6 +324,101 @@ fn summarize(
         true => HIT,
         false => MISS,
     })
+}
+
+fn search(
+    query: &str,
+    scope: Option<&std::path::Path>,
+    limit: usize,
+    format: Format,
+) -> Result<i32> {
+    let (root, relative) = scoped(scope)?;
+    let embedder = crate::embed::default_embedder(None, crate::embed::Workload::Query);
+    let mut store = crate::store::open_default()?;
+    let answer = crate::search::search(
+        &mut store,
+        &root.to_string_lossy(),
+        relative.as_deref(),
+        query,
+        embedder.as_ref(),
+        limit,
+    )?;
+
+    match format {
+        Format::Human => {
+            for hit in &answer.hits {
+                let cosine = match hit.cosine {
+                    // Two decimals: a cosine off a 256-dim vector has about
+                    // that much meaning, and more digits invent precision.
+                    Some(c) => format!("  cos {c:.2}"),
+                    None => String::new(),
+                };
+                println!(
+                    "{}:{}  {}  [{}]{cosine}",
+                    hit.path, hit.line, hit.id, hit.how
+                );
+                if let Some(summary) = &hit.summary {
+                    println!("    {summary}");
+                }
+            }
+            // Coverage travels with every answer (DEC-009): a search over a
+            // half-summarized repo must not look like a search over a small one.
+            disclose(&answer);
+        }
+        _ => emit(format, &answer)?,
+    }
+    Ok(if answer.hits.is_empty() { MISS } else { HIT })
+}
+
+/// The line that stops a thin answer from reading as a complete one.
+fn disclose(answer: &crate::search::Answer) {
+    let note = match answer.coverage_state {
+        "complete" => String::new(),
+        "none" => " — nothing is summarized yet, so this is a name match only".into(),
+        _ => format!(
+            " — {}/{} summarized, so the meaning half saw part of the corpus",
+            answer.coverage.summarized, answer.coverage.summarizable
+        ),
+    };
+    eprintln!(
+        "contour: coverage {} via the {} embedder{note}",
+        answer.coverage_state, answer.embedder
+    );
+}
+
+fn similar(unit: &str, limit: usize, format: Format) -> Result<i32> {
+    let (root, _) = scoped(None)?;
+    let embedder = crate::embed::default_embedder(None, crate::embed::Workload::Query);
+    let mut store = crate::store::open_default()?;
+    let neighbors = crate::search::similar(
+        &mut store,
+        &root.to_string_lossy(),
+        unit,
+        embedder.as_ref(),
+        limit,
+    )?;
+
+    match format {
+        Format::Human => {
+            for n in &neighbors {
+                // An exact structural clone is a predicate, so it shows its
+                // evidence (the body size) rather than a manufactured
+                // confidence; a semantic neighbour shows the cosine, which is
+                // a real graded measurement (DEC-010).
+                let evidence = match (n.confidence, n.lines) {
+                    (Some(c), _) => format!("  cos {c:.2}"),
+                    (_, Some(lines)) => format!("  {lines} lines"),
+                    _ => String::new(),
+                };
+                println!("{}:{}  {}  [{}]{evidence}", n.path, n.line, n.id, n.how);
+                if let Some(summary) = &n.summary {
+                    println!("    {summary}");
+                }
+            }
+        }
+        _ => emit(format, &neighbors)?,
+    }
+    Ok(if neighbors.is_empty() { MISS } else { HIT })
 }
 
 fn symbols(file: &std::path::Path, format: Format) -> Result<i32> {

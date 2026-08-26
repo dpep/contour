@@ -21,11 +21,15 @@ today is the cheap end of it.
 contour index [PATH]     # scan a checkout, index every callable in it
 contour dupes [SCOPE]    # units whose normalized bodies are identical
 contour summarize [SCOPE] --budget N   # fill LLM summaries, on demand
+contour search "english query"         # rank by name match + meaning match
+contour similar Owner#method           # nearest neighbours, tier disclosed
 contour --symbols FILE   # outline one file — parses it live, no index needed
 contour --status         # what the index holds, and what it is missing
 ```
 
-Not built yet: `search`, `similar`.
+Built with `--features semantic` (or `semantic-dynamic`, which dlopens a
+system ONNX Runtime) for real embeddings; the default build falls back to a
+deterministic hash embedder that exercises the pipeline offline.
 
 ## How it is put together
 

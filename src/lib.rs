@@ -19,6 +19,8 @@
 //! - [`summary`] — the expensive layer, and the first one that leaves the
 //!   machine. Behind a trait, so tests replay canned answers (DEC-006).
 //! - [`embed`] — summaries → vectors, behind a trait (DEC-005).
+//! - [`search`] — English queries and nearest neighbours, fusing a name match
+//!   with a meaning match and disclosing which found what.
 
 pub mod cli;
 pub mod core;
@@ -29,5 +31,6 @@ pub mod index;
 pub mod paths;
 pub mod ruby;
 pub mod scan;
+pub mod search;
 pub mod store;
 pub mod summary;

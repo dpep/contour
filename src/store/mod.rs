@@ -419,6 +419,36 @@ impl Store {
         Ok(())
     }
 
+    /// Every stored summary, keyed by `(norm_hash, ctx_hash)`.
+    ///
+    /// Across models on purpose: DEC-005 lets indexes from different models
+    /// coexist, and refusing to answer from a summary because it came from a
+    /// model other than today's default would hide work already paid for. When
+    /// several models have summarized the same body, the most recent wins.
+    ///
+    /// One query rather than a probe per unit — at 50k units the probe is 50k
+    /// round trips, which is the same mistake `known` exists to avoid.
+    pub fn all_summaries(&self) -> Result<HashMap<(u64, u64), Summary>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT norm_hash, ctx_hash, json FROM summary
+              WHERE variant = 'body' AND level = 'unit'
+              ORDER BY created_at ASC",
+        )?;
+        let rows = stmt.query_map([], |r| {
+            Ok((
+                r.get::<_, i64>(0)? as u64,
+                r.get::<_, i64>(1)? as u64,
+                r.get::<_, String>(2)?,
+            ))
+        })?;
+        let mut out = HashMap::new();
+        for row in rows {
+            let (norm_hash, ctx_hash, json) = row?;
+            out.insert((norm_hash, ctx_hash), serde_json::from_str(&json)?);
+        }
+        Ok(out)
+    }
+
     /// Which models this machine has bought summaries from. `--status` reports
     /// coverage per model rather than for a presumed one: DEC-005 lets indexes
     /// from different models coexist, so "how covered am I" has no single

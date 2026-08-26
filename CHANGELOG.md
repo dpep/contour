@@ -33,6 +33,19 @@ Initial skeleton — nothing has been released, so everything below is new.
   rebuilt on any schema change, but summaries are purchased work that cannot
   be recomputed from local bytes, so they live under their own version and are
   never dropped automatically.
+- `contour search "english query"` ranks callables by fusing a name match with
+  a meaning match (RRF, K=60). Every answer discloses which half found each
+  hit, the cosine where the semantic half contributed, how much of the corpus
+  is summarized, and which embedder answered.
+- `contour similar Owner#method` lists nearest neighbours with the tier that
+  found each: `structural` for an identical normalized body (which carries the
+  body size as evidence, not a manufactured confidence) and `semantic` for a
+  nearby summary (which carries the cosine, because that judgment is graded).
+- Summaries are embedded to 256-dim vectors. The default build uses a
+  deterministic hash embedder — enough to exercise the pipeline, and offline —
+  while `--features semantic` (or `semantic-dynamic`) enables a local
+  all-MiniLM-L6-v2 through ONNX Runtime. The embedder kind and model are part
+  of every vector's key, so switching costs a re-embed, never a corruption.
 - Index lives at `~/.local/share/contour/contour.db`; `$CONTOUR_DB` overrides
   it. There are no migrations — a schema-version mismatch drops the database
   and reindexes, because it is a cache of a pure function, not a system of

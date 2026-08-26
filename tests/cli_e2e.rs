@@ -12,6 +12,10 @@ struct Repo {
 }
 
 impl Repo {
+    /// `label` names this repo's temp directory and database, so it must be
+    /// **unique across tests** — the suite runs them in parallel in one
+    /// process, and `Drop` deletes the directory. Two repos sharing a label
+    /// delete each other's files mid-run.
     fn new(label: &str, files: &[(&str, &str)]) -> Repo {
         let base = std::env::temp_dir();
         let dir = base.join(format!("contour-e2e-{}-{label}", std::process::id()));
@@ -339,4 +343,132 @@ fn summarize_respects_a_budget_and_refuses_stale_lines() {
     let stale = repo.json(&["summarize", "--fixtures", fixtures, "--json"]);
     assert_eq!(stale["summarized"], 0, "the body is not the one indexed");
     assert_eq!(stale["failed"], 1);
+}
+
+/// Fixtures for the search tests: two billing methods and one unrelated.
+fn searchable(label: &str) -> (Repo, String) {
+    let repo = Repo::new(
+        label,
+        &[
+            (
+                "billing.rb",
+                "class Invoice\n  def unpaid_for(customer)\n    where(customer: customer, paid_at: nil).order(:created_at)\n  end\n\n  def settle!(at)\n    update!(paid_at: at)\n    Notifier.deliver(self)\n  end\nend\n",
+            ),
+            (
+                "geometry.rb",
+                "class Polygon\n  def area\n    vertices.each_cons(2).sum { |a, b| a.x * b.y - b.x * a.y } / 2.0\n  end\nend\n",
+            ),
+        ],
+    );
+    let path = repo.dir.join("f.json");
+    std::fs::write(
+        &path,
+        r#"{
+          "Invoice#unpaid_for": {"summary":"Returns the invoices a customer has not yet paid, oldest first.",
+            "primary_purpose":"unpaid invoice lookup","secondary_concerns":["ordering"],
+            "side_effects":[],"domain":"billing","patterns":["scope"]},
+          "Invoice#settle!": {"summary":"Records payment on an invoice and notifies the customer.",
+            "primary_purpose":"payment settlement","secondary_concerns":["notification"],
+            "side_effects":["persists","network"],"domain":"billing","patterns":[]},
+          "Polygon#area": {"summary":"Computes the enclosed area of a polygon from its vertices.",
+            "primary_purpose":"area calculation","secondary_concerns":[],
+            "side_effects":[],"domain":"geometry","patterns":["shoelace formula"]}
+        }"#,
+    )
+    .unwrap();
+    repo.run(&["index"]);
+    (repo, path.to_str().unwrap().to_string())
+}
+
+/// Before anything is summarized, search still answers — from names alone —
+/// and says so. A thin answer that reads as a complete one is the failure this
+/// disclosure exists to prevent (DEC-009).
+#[test]
+fn search_answers_from_names_before_anything_is_summarized() {
+    let (repo, _) = searchable("search-names");
+    let answer = repo.json(&["search", "unpaid", "--json"]);
+    assert_eq!(answer["coverage_state"], "none");
+    assert_eq!(answer["hits"][0]["id"], "Invoice#unpaid_for");
+    assert_eq!(answer["hits"][0]["how"], "lexical");
+    assert!(
+        answer["hits"][0]["cosine"].is_null(),
+        "no summary means no measurement to report"
+    );
+}
+
+/// With summaries in place, a query that names no identifier still finds the
+/// method — which is the entire bet of the project (DEC-004).
+#[test]
+fn search_finds_by_meaning_once_summaries_exist() {
+    let (repo, fixtures) = searchable("search-meaning");
+    repo.run(&["summarize", "--fixtures", &fixtures]);
+
+    let answer = repo.json(&["search", "customer has not paid", "--json"]);
+    assert_eq!(answer["coverage_state"], "complete");
+    assert_eq!(answer["coverage"]["summarized"], 3);
+    assert_eq!(answer["embedder"], "hash");
+
+    let top = &answer["hits"][0];
+    assert_eq!(top["id"], "Invoice#unpaid_for");
+    // The query shares no token with the method's name, so the semantic half
+    // is what found it.
+    assert_eq!(top["how"], "semantic");
+    assert!(top["cosine"].as_f64().unwrap() > 0.0);
+    assert!(top["summary"].as_str().unwrap().contains("not yet paid"));
+
+    // A query naming the method reaches it through both halves.
+    let both = repo.json(&["search", "unpaid invoice lookup", "--json"]);
+    assert_eq!(both["hits"][0]["how"], "both");
+}
+
+/// Nothing in the corpus answers this, so nothing should come back.
+#[test]
+fn search_can_return_nothing() {
+    let (repo, fixtures) = searchable("search-nothing");
+    repo.run(&["summarize", "--fixtures", &fixtures]);
+    // The hash embedder has no calibrated floor, so set one explicitly: the
+    // point being pinned is that a floor makes "no matches" reachable.
+    let out = Command::new(env!("CARGO_BIN_EXE_contour"))
+        .args(["search", "kubernetes scheduling affinity", "--json"])
+        .current_dir(&repo.dir)
+        .env("CONTOUR_DB", &repo.db)
+        .env("CONTOUR_SEMANTIC_FLOOR", "0.9")
+        .output()
+        .unwrap();
+    let answer: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(answer["hits"].as_array().map(Vec::len), Some(0));
+    assert_eq!(answer["floor"], 0.9);
+    assert_eq!(out.status.code(), Some(1), "a miss, not an error");
+}
+
+/// `similar` reports the tier that found each neighbour, and DEC-010's rule
+/// about confidence: exact structural identity is a predicate and carries
+/// evidence instead, while a cosine is graded and carries the number itself.
+#[test]
+fn similar_discloses_its_tier_and_only_grades_what_is_graded() {
+    let body = "  def run(a)\n    a.validate\n    persist(a)\n    a\n  end\n";
+    let repo = Repo::new(
+        "similar",
+        &[
+            ("a.rb", &format!("class Alpha\n{body}end\n")),
+            // Same body, different name and owner: an exact structural clone.
+            (
+                "b.rb",
+                &format!("class Beta\n{}end\n", body.replace("run", "go")),
+            ),
+        ],
+    );
+    repo.run(&["index"]);
+
+    let neighbors = repo.json(&["similar", "Alpha#run", "--json"]);
+    let first = &neighbors[0];
+    assert_eq!(first["id"], "Beta#go");
+    assert_eq!(first["how"], "structural");
+    assert!(
+        first["confidence"].is_null(),
+        "structural identity is a predicate, not a grade"
+    );
+    assert_eq!(first["lines"], 5, "it discloses evidence instead");
+
+    assert_eq!(repo.run(&["similar", "Alpha#nope"]).1, 2, "no such unit");
 }
