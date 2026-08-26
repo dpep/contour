@@ -90,6 +90,13 @@ enum Command {
         #[arg(short = 'l', long, value_name = "N", default_value_t = DEFAULT_LIMIT)]
         limit: usize,
     },
+    /// Score this checkout against a labeled eval set.
+    Eval {
+        /// Directory holding `queries.tsv` and `pairs.tsv`.
+        set: PathBuf,
+        #[arg(long, value_name = "N", default_value_t = DEFAULT_MIN_LINES)]
+        min_lines: u32,
+    },
     /// Find callables like this one, with the tier that found each disclosed.
     Similar {
         /// `Owner#method`, `Owner.method`, or a bare name at top level.
@@ -199,6 +206,7 @@ fn dispatch(cli: &Cli) -> Result<i32> {
             _,
         ) => search(query, scope.as_deref(), *limit, format),
         (Some(Command::Similar { unit, limit }), _, _) => similar(unit, *limit, format),
+        (Some(Command::Eval { set, min_lines }), _, _) => eval(set, *min_lines, format),
         (None, Some(file), _) => symbols(file, format),
         (None, None, true) => status(format),
         (None, None, false) => {
@@ -342,6 +350,7 @@ fn search(
         query,
         embedder.as_ref(),
         limit,
+        crate::search::relevance_floor(embedder.kind()),
     )?;
 
     match format {
@@ -419,6 +428,25 @@ fn similar(unit: &str, limit: usize, format: Format) -> Result<i32> {
         _ => emit(format, &neighbors)?,
     }
     Ok(if neighbors.is_empty() { MISS } else { HIT })
+}
+
+fn eval(set: &std::path::Path, min_lines: u32, format: Format) -> Result<i32> {
+    let (root, _) = scoped(None)?;
+    let labels = crate::eval::load(set)?;
+    let embedder = crate::embed::default_embedder(None, crate::embed::Workload::Bulk);
+    let mut store = crate::store::open_default()?;
+    let report = crate::eval::run(&mut store, &root, &labels, embedder.as_ref(), min_lines)?;
+
+    match format {
+        Format::Human => crate::eval::render(&report),
+        _ => emit(format, &report)?,
+    }
+    // A miss means the labeled set found nothing to score, which is a broken
+    // set rather than a bad result.
+    Ok(match report.rankings.first().is_some_and(|r| r.total > 0) {
+        true => HIT,
+        false => MISS,
+    })
 }
 
 fn symbols(file: &std::path::Path, format: Format) -> Result<i32> {

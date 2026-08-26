@@ -1,0 +1,35 @@
+# Query → the method it should find. Tab-separated: query<TAB>expected<TAB>[provisional]
+#
+# DRAFTED BY CLAUDE, NOT YET REVIEWED BY THE OWNER. Every label here is a
+# judgement about what a person would mean, and a wrong one makes the eval
+# lie in the flattering direction. Veto or amend any line; the harness reads
+# this file, so an edit here is the whole change.
+#
+# Queries deliberately avoid naming the method, because a query that contains
+# the answer only measures string matching. That is what baseline:name is for.
+
+# --- billing ---------------------------------------------------------------
+customer owes us money	Invoice#unpaid_for
+bills a client has not settled yet	Invoice#unpaid_for
+record that a bill was paid	Invoice#settle!
+add up what a bill comes to	Invoice#total_cents
+is this bill past its due date	Invoice#overdue?
+what a buyer still has to pay	Receipt#outstanding
+
+# --- accounts --------------------------------------------------------------
+check a password against the stored hash	Account#authenticate
+stop someone signing in	Account#lock!
+can this user still sign in	Account#active?
+full name for showing to a person	Account#display_name
+validate a bearer token	Session#authenticate
+end a login early	Session#expire!
+
+# --- geometry --------------------------------------------------------------
+how much space a shape encloses	Polygon#area
+distance around the outside of a shape	Polygon#perimeter
+the middle point of a shape	Polygon#centroid
+
+# --- inventory -------------------------------------------------------------
+hold stock for a customer before checkout	Warehouse#reserve
+how many units can still be sold	Warehouse#available
+add more units to a shelf	Warehouse#restock

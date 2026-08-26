@@ -472,3 +472,63 @@ fn similar_discloses_its_tier_and_only_grades_what_is_graded() {
 
     assert_eq!(repo.run(&["similar", "Alpha#nope"]).1, 2, "no such unit");
 }
+
+/// The eval harness, end to end on the in-repo fixture corpus.
+///
+/// Asserts structure and corpus-level invariants, not scores: the numbers
+/// depend on which embedder the build has, and pinning them would make this a
+/// change-detector rather than a test. What must hold either way is that the
+/// labels resolve, all three rankings run, and the labeled duplicates behave.
+#[test]
+fn eval_scores_a_labeled_set() {
+    let set = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/eval/fixture");
+    let corpus = set.join("corpus");
+    let files: Vec<(String, String)> = std::fs::read_dir(&corpus)
+        .unwrap()
+        .flatten()
+        .map(|e| {
+            (
+                e.file_name().to_string_lossy().into_owned(),
+                std::fs::read_to_string(e.path()).unwrap(),
+            )
+        })
+        .collect();
+    let repo = Repo::new(
+        "eval",
+        &files
+            .iter()
+            .map(|(n, b)| (n.as_str(), b.as_str()))
+            .collect::<Vec<_>>(),
+    );
+    repo.run(&["index"]);
+    repo.run(&[
+        "summarize",
+        "--fixtures",
+        set.join("summaries.json").to_str().unwrap(),
+    ]);
+
+    let set = set.to_str().unwrap();
+    let report = repo.json(&["eval", set, "--min-lines", "1", "--json"]);
+
+    // Every label names a unit that is actually in the index. A drifting
+    // corpus that silently orphans labels is the way an eval starts lying.
+    let contour = &report["rankings"][0];
+    assert_eq!(contour["label"], "contour");
+    assert_eq!(contour["unknown"], 0, "a label names a unit that is gone");
+    assert_eq!(contour["total"], 18);
+    assert_eq!(report["rankings"].as_array().map(Vec::len), Some(3));
+    assert_eq!(report["coverage_state"], "complete");
+
+    // The duplicate labels are the embedder-independent half: all three
+    // copy-paste pairs collide, and not one of the near misses does.
+    let dupes = &report["dupes"];
+    assert_eq!(dupes["true_positives"], 3);
+    assert_eq!(dupes["false_positives"], 0);
+    assert_eq!(dupes["false_negatives"], 0);
+    assert_eq!(dupes["unknown"], 0);
+
+    // The sweep is the point of the exercise, so it must actually be there.
+    let sweep = report["calibration"]["sweep"].as_array().unwrap();
+    assert!(sweep.len() > 5);
+    assert_eq!(sweep[0]["floor"], 0.0);
+}

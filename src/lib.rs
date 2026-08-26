@@ -21,11 +21,13 @@
 //! - [`embed`] — summaries → vectors, behind a trait (DEC-005).
 //! - [`search`] — English queries and nearest neighbours, fusing a name match
 //!   with a meaning match and disclosing which found what.
+//! - [`eval`] — the labeled set that settles every threshold (DEC-011).
 
 pub mod cli;
 pub mod core;
 pub mod dupes;
 pub mod embed;
+pub mod eval;
 pub(crate) mod hash;
 pub mod index;
 pub mod paths;

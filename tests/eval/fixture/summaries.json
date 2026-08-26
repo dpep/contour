@@ -1,0 +1,251 @@
+{
+  "Invoice#unpaid_for": {
+    "summary": "Returns the bills belonging to one client that have no payment recorded against them, oldest first.",
+    "primary_purpose": "unsettled bill lookup",
+    "secondary_concerns": [
+      "ordering"
+    ],
+    "side_effects": [],
+    "domain": "billing",
+    "patterns": [
+      "query scope"
+    ]
+  },
+  "Invoice#settle!": {
+    "summary": "Marks a bill as having been paid at a given moment and tells the client it went through.",
+    "primary_purpose": "payment recording",
+    "secondary_concerns": [
+      "notification"
+    ],
+    "side_effects": [
+      "persists",
+      "network"
+    ],
+    "domain": "billing",
+    "patterns": [
+      "bang method"
+    ]
+  },
+  "Invoice#total_cents": {
+    "summary": "Adds up every line on a bill, multiplying each quantity by its per-unit price, and returns the whole amount in cents.",
+    "primary_purpose": "monetary total",
+    "secondary_concerns": [],
+    "side_effects": [],
+    "domain": "billing",
+    "patterns": [
+      "fold"
+    ]
+  },
+  "Invoice#overdue?": {
+    "summary": "Answers whether a bill is both unpaid and already past the day it was meant to be settled.",
+    "primary_purpose": "lateness test",
+    "secondary_concerns": [],
+    "side_effects": [],
+    "domain": "billing",
+    "patterns": [
+      "predicate"
+    ]
+  },
+  "Receipt#outstanding": {
+    "summary": "Returns the records for one purchaser that still carry no payment, oldest first.",
+    "primary_purpose": "unsettled record lookup",
+    "secondary_concerns": [
+      "ordering"
+    ],
+    "side_effects": [],
+    "domain": "billing",
+    "patterns": [
+      "query scope"
+    ]
+  },
+  "Receipt#total_cents": {
+    "summary": "Adds up every entry, multiplying each quantity by its per-unit price, and returns the whole amount in cents.",
+    "primary_purpose": "monetary total",
+    "secondary_concerns": [],
+    "side_effects": [],
+    "domain": "billing",
+    "patterns": [
+      "fold"
+    ]
+  },
+  "Account#authenticate": {
+    "summary": "Checks a secret phrase against the stored one-way hash, refusing outright if the account is not in good standing.",
+    "primary_purpose": "credential verification",
+    "secondary_concerns": [
+      "account standing"
+    ],
+    "side_effects": [],
+    "domain": "authentication",
+    "patterns": [
+      "guard clause",
+      "digest comparison"
+    ]
+  },
+  "Account#lock!": {
+    "summary": "Bars an account from further use, recording when and why, and writes the action to the audit trail.",
+    "primary_purpose": "access revocation",
+    "secondary_concerns": [
+      "auditing"
+    ],
+    "side_effects": [
+      "persists",
+      "observes"
+    ],
+    "domain": "authentication",
+    "patterns": [
+      "bang method"
+    ]
+  },
+  "Account#active?": {
+    "summary": "Answers whether an account is neither barred nor still awaiting confirmation.",
+    "primary_purpose": "usability test",
+    "secondary_concerns": [],
+    "side_effects": [],
+    "domain": "authentication",
+    "patterns": [
+      "predicate"
+    ]
+  },
+  "Account#display_name": {
+    "summary": "Joins whatever parts of a person's name are present into a single string fit for showing.",
+    "primary_purpose": "human-readable naming",
+    "secondary_concerns": [
+      "missing values"
+    ],
+    "side_effects": [],
+    "domain": "authentication",
+    "patterns": [
+      "null handling"
+    ]
+  },
+  "Session#authenticate": {
+    "summary": "Checks a presented credential string against the stored one-way hash, refusing outright if the session is no longer live.",
+    "primary_purpose": "credential verification",
+    "secondary_concerns": [
+      "session liveness"
+    ],
+    "side_effects": [],
+    "domain": "authentication",
+    "patterns": [
+      "guard clause",
+      "digest comparison"
+    ]
+  },
+  "Session#expire!": {
+    "summary": "Ends a live session ahead of time, recording when and why, and writes the action to the audit trail.",
+    "primary_purpose": "session termination",
+    "secondary_concerns": [
+      "auditing"
+    ],
+    "side_effects": [
+      "persists",
+      "observes"
+    ],
+    "domain": "authentication",
+    "patterns": [
+      "bang method"
+    ]
+  },
+  "Polygon#area": {
+    "summary": "Computes how much flat space a closed shape encloses from the coordinates of its corners.",
+    "primary_purpose": "enclosed area",
+    "secondary_concerns": [],
+    "side_effects": [],
+    "domain": "geometry",
+    "patterns": [
+      "shoelace formula"
+    ]
+  },
+  "Polygon#perimeter": {
+    "summary": "Adds the straight-line distance between each pair of neighbouring corners to get the length of the boundary.",
+    "primary_purpose": "boundary length",
+    "secondary_concerns": [],
+    "side_effects": [],
+    "domain": "geometry",
+    "patterns": [
+      "fold"
+    ]
+  },
+  "Polygon#centroid": {
+    "summary": "Averages the corner coordinates to find the balancing point of a shape.",
+    "primary_purpose": "centre of mass",
+    "secondary_concerns": [],
+    "side_effects": [],
+    "domain": "geometry",
+    "patterns": [
+      "mean"
+    ]
+  },
+  "Trail#length": {
+    "summary": "Adds the straight-line distance between each pair of neighbouring points to get the total distance covered.",
+    "primary_purpose": "path length",
+    "secondary_concerns": [],
+    "side_effects": [],
+    "domain": "geometry",
+    "patterns": [
+      "fold"
+    ]
+  },
+  "Warehouse#reserve": {
+    "summary": "Sets aside a quantity of an item for a short window, refusing if there is not enough uncommitted stock.",
+    "primary_purpose": "stock reservation",
+    "secondary_concerns": [
+      "expiry",
+      "availability check"
+    ],
+    "side_effects": [
+      "persists",
+      "raises"
+    ],
+    "domain": "inventory",
+    "patterns": [
+      "guard clause"
+    ]
+  },
+  "Warehouse#available": {
+    "summary": "Reports how much of an item could still be committed, by subtracting live holds from what is physically on hand.",
+    "primary_purpose": "uncommitted quantity",
+    "secondary_concerns": [],
+    "side_effects": [],
+    "domain": "inventory",
+    "patterns": []
+  },
+  "Warehouse#restock": {
+    "summary": "Increases the recorded on-hand quantity for an item, starting a record for it if none exists.",
+    "primary_purpose": "stock replenishment",
+    "secondary_concerns": [
+      "record creation"
+    ],
+    "side_effects": [
+      "persists"
+    ],
+    "domain": "inventory",
+    "patterns": [
+      "find or initialize"
+    ]
+  },
+  "Depot#available": {
+    "summary": "Reports how much of an item could still be committed, by subtracting live holds from what is physically on hand.",
+    "primary_purpose": "uncommitted quantity",
+    "secondary_concerns": [],
+    "side_effects": [],
+    "domain": "inventory",
+    "patterns": []
+  },
+  "Depot#reserve": {
+    "summary": "Sets aside a quantity of an item for a short window, refusing if there is not enough uncommitted stock.",
+    "primary_purpose": "stock reservation",
+    "secondary_concerns": [
+      "expiry",
+      "availability check"
+    ],
+    "side_effects": [
+      "persists",
+      "raises"
+    ],
+    "domain": "inventory",
+    "patterns": [
+      "guard clause"
+    ]
+  }
+}

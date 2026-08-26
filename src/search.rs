@@ -29,6 +29,11 @@ const SEMANTIC_WEIGHT: f64 = 0.7;
 /// Cosine below which a hit is not an answer to anything — but only for an
 /// embedder this was measured for.
 ///
+/// Callers pass the floor in explicitly rather than having `search` read it,
+/// so that `contour eval` can run with **no floor at all**. Calibrating a
+/// threshold against results the threshold already filtered would only ever
+/// show what survives today — a mistake the eval caught in its own harness.
+///
 /// gqls measured 0.40 on 256-dim MiniLM vectors over a 4602-record GraphQL
 /// schema: the weakest real answer scored 0.526, the loudest nonsense 0.309.
 /// That is **inherited, not calibrated for method summaries** — DEC-011 says
@@ -40,7 +45,7 @@ const SEMANTIC_WEIGHT: f64 = 0.7;
 /// MiniLM-derived constant to it would be exactly the sort of borrowed number
 /// that looks like evidence and is not. `CONTOUR_SEMANTIC_FLOOR` overrides
 /// either way; `0` switches it off.
-fn relevance_floor(kind: &str) -> f32 {
+pub fn relevance_floor(kind: &str) -> f32 {
     if let Some(override_) = std::env::var("CONTOUR_SEMANTIC_FLOOR")
         .ok()
         .and_then(|v| v.parse().ok())
@@ -96,6 +101,7 @@ pub fn search(
     query: &str,
     embedder: &dyn Embedder,
     limit: usize,
+    floor: f32,
 ) -> Result<Answer> {
     let units = in_scope(store, root, scope)?;
     let summaries = summaries_for(store, &units, embedder)?;
@@ -110,7 +116,6 @@ pub fn search(
     lexical.sort_by(|a, b| b.1.total_cmp(&a.1));
 
     // Semantic: cosine against each summary's vector, floored.
-    let floor = relevance_floor(embedder.kind());
     let query_vec = mrl::compress_matryoshka_vector(&embedder.embed(query));
     let mut semantic: Vec<(usize, f32)> = summaries
         .vectors

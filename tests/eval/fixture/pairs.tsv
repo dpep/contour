@@ -1,0 +1,29 @@
+# Pairs the duplicate report should and should not group. Tab-separated:
+#   a<TAB>b<TAB>duplicate|distinct<TAB>[provisional]
+#
+# DRAFTED BY CLAUDE, NOT YET REVIEWED BY THE OWNER. See queries.tsv.
+#
+# The distinct pairs are the interesting half: each is a NEAR miss that a
+# looser normalizer would collide. If one of them ever shows up as a
+# duplicate, normalization has been over-relaxed.
+
+# --- genuine copy-paste ----------------------------------------------------
+Warehouse#available	Depot#available	duplicate
+Warehouse#reserve	Depot#reserve	duplicate
+Polygon#perimeter	Trail#length	duplicate
+
+# --- near misses that must stay apart --------------------------------------
+# Same shape, different keyword arguments: `customer:` vs `buyer:` is what a
+# caller writes, so these are different interfaces (see ruby::norm).
+Invoice#unpaid_for	Receipt#outstanding	distinct
+# Same shape, different collaborators: line_items vs entries.
+Invoice#total_cents	Receipt#total_cents	distinct
+# Same shape, different method called on the receiver.
+Account#authenticate	Session#authenticate	distinct
+# Same shape, different keyword arguments and audit verb.
+Account#lock!	Session#expire!	distinct
+# Same iteration, genuinely different arithmetic.
+Polygon#area	Polygon#perimeter	distinct
+# Unrelated behaviour that shares a receiver.
+Invoice#settle!	Invoice#overdue?	distinct
+Warehouse#reserve	Warehouse#restock	distinct

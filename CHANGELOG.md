@@ -46,6 +46,13 @@ Initial skeleton — nothing has been released, so everything below is new.
   while `--features semantic` (or `semantic-dynamic`) enables a local
   all-MiniLM-L6-v2 through ONNX Runtime. The embedder kind and model are part
   of every vector's key, so switching costs a re-embed, never a corruption.
+- `contour eval <SET>` scores a checkout against a labeled set: search hit-rate
+  (top-1 / top-5 / found) for contour and two baselines, duplicate precision
+  and recall, and the cosine distributions that say where the relevance floor
+  and `--min-lines` belong. Runs with no floor, deliberately — calibrating a
+  threshold against results it already filtered can only confirm it.
+- A labeled fixture set ships in-repo (`tests/eval/fixture`) and runs in CI.
+  The labels are a draft awaiting review; see `tests/eval/README.md`.
 - Index lives at `~/.local/share/contour/contour.db`; `$CONTOUR_DB` overrides
   it. There are no migrations — a schema-version mismatch drops the database
   and reindexes, because it is a cache of a pure function, not a system of

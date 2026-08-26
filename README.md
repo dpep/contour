@@ -23,6 +23,7 @@ contour dupes [SCOPE]    # units whose normalized bodies are identical
 contour summarize [SCOPE] --budget N   # fill LLM summaries, on demand
 contour search "english query"         # rank by name match + meaning match
 contour similar Owner#method           # nearest neighbours, tier disclosed
+contour eval <SET>                     # score against a labeled set
 contour --symbols FILE   # outline one file — parses it live, no index needed
 contour --status         # what the index holds, and what it is missing
 ```
