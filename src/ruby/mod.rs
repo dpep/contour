@@ -74,6 +74,13 @@ fn param(p: &facts::Param) -> Param {
     // Both vocabularies are Ruby's `Method#parameters`; the duplication is the
     // language seam, not an accident. A `parse` round-trip keeps the two
     // enums honest without a match arm per variant.
+    //
+    // contour's own `dupes` report flags the pair this straddles —
+    // `ParamKind::as_str` and `::parse` in `core.rs` against `ruby/facts.rs`,
+    // 2x14 and 2x13 lines. Kept anyway: `ruby/facts.rs` is vendored and must
+    // stay a straight re-copy of trekr's (PRIOR-ART's contract), and 27 lines
+    // is what that property costs. A tool that argues with its author and
+    // loses on stated grounds is working correctly.
     Param {
         kind: ParamKind::parse(p.kind.as_str()).unwrap_or(ParamKind::Req),
         name: p.name.clone(),
