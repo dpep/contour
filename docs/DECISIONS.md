@@ -186,3 +186,53 @@ which is the property that makes it usable as an editor outline.
 The alternative (everything a subcommand) reads more uniform and hides the
 distinction that actually matters to a caller: whether an answer depends on
 state this machine may not have.
+
+## DEC-016 — Two storage rules: derived is a cache, purchased is a record
+
+DEC-003 calls the database "a cache of a pure function, not a system of
+record", and a schema-version mismatch drops it and rebuilds. That is right for
+everything derived from bytes this machine can read again — blobs, units,
+structural hashes, the file map — where a rebuild costs seconds and removes an
+entire class of migration bug.
+
+It is **wrong for summaries.** A full fill of a large repo is hundreds of
+dollars of LLM calls, and no amount of local reading reproduces it. Dropping
+that because the extractor gained a macro would be indefensible. So the schema
+has two halves with different rules:
+
+- **Derived** (`blob`, `unit`, `checkout`, `file`) — governed by `user_version`,
+  dropped and rebuilt on any mismatch, exactly as DEC-003 says.
+- **Purchased** (`summary`) — its own version in a `meta` row, never dropped by
+  a rebuild. If that version ever moves, the store **refuses to open** rather
+  than guessing: a mismatch there is a migration someone has to write, or an
+  admission of data loss someone has to make on purpose. The refusal is the
+  point. The first time that number changes it must not silently destroy work
+  that was paid for.
+
+The two halves stay consistent by construction rather than by care: the summary
+table is keyed entirely by content hashes and holds no foreign key into the
+derived tables, so no rebuild can strand or orphan a row in it.
+
+### The key-column asymmetry
+
+DEC-014 says carry nothing speculatively, because a schema change is free. That
+reasoning holds only for the derived half, and only for non-key columns. A
+**key** column in the purchased half is different: adding one later re-keys
+every stored row, and re-keying a summary means buying it again.
+
+So `variant` (DEC-008's body-only vs comment-informed) and `level` (DEC-013's
+container rollups) are in the primary key from the start, before either has a
+second value. That is not a violation of DEC-014 but its complement — the same
+question, "what does deferring this cost?", answered by a different arithmetic.
+
+### Why server-side refusal fallbacks are off
+
+Anthropic's API can re-run a refused request against a fallback model inside
+the same call, and the guidance is to enable it by default. contour does not,
+and the reason is this decision rather than laziness: **`model` is part of the
+summary cache key.** A fallback returns an answer from a model other than the
+one requested, so storing it under the requested key is a lie and storing it
+under the responding model's key scatters one fill's purchases across indexes
+nondeterministically — which the per-model coverage accounting would then
+inherit. A refusal on source code should be vanishingly rare; the fill loop
+records its category and moves on, like any other per-unit failure.
