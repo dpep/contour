@@ -15,7 +15,7 @@
 //! call than trimming this file.
 #![allow(dead_code)]
 
-mod line_index;
+pub(crate) mod line_index;
 mod macros;
 mod sig;
 // Upstream re-exports `macros::{camelize, table_to_class}` for its tree layer.

@@ -15,9 +15,11 @@
 //! - [`store`] — units keyed by blob OID (no paths), plus the path map beside
 //!   it. N worktrees of one repo cost one index (DEC-003).
 //! - [`index`] — the three above, wired together.
+//! - [`dupes`] — the first product, and a group-by over one column.
 
 pub mod cli;
 pub mod core;
+pub mod dupes;
 pub(crate) mod hash;
 pub mod index;
 pub mod paths;

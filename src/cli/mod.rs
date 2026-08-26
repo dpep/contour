@@ -54,7 +54,31 @@ enum Command {
         /// A path inside the repository. Defaults to the working directory.
         path: Option<PathBuf>,
     },
+    /// Report units whose normalized bodies are identical.
+    Dupes {
+        /// A file or directory to limit the report to. Defaults to the whole
+        /// checkout containing the working directory.
+        scope: Option<PathBuf>,
+        /// Ignore bodies shorter than this, `def` through `end`.
+        #[arg(long, value_name = "N", default_value_t = DEFAULT_MIN_LINES)]
+        min_lines: u32,
+    },
 }
+
+/// Below this, structural identity stops meaning duplication.
+///
+/// Measured on rails (54,068 units, 3,307 files). With no floor the report is
+/// 1,069 groups, and 650 of them — 61% — are three-line bodies: `def
+/// initialize(place); @place = place; end` and its siblings, identical because
+/// there is only one way to write a one-expression method. Dropping that one
+/// line class takes the report to 318 groups and 2,566 duplicated lines; the
+/// cliff is what says the short bodies are a different population rather than
+/// the tail of this one.
+///
+/// This is a usability floor, not a calibrated threshold. The real one comes
+/// from the eval set (DEC-011), and `--min-lines` exists so nobody has to
+/// wait for it.
+pub const DEFAULT_MIN_LINES: u32 = 4;
 
 /// How an answer is rendered. One value, so no command can render only half of
 /// itself in JSON.
@@ -99,6 +123,9 @@ fn dispatch(cli: &Cli) -> Result<i32> {
 
     match (&cli.command, &cli.symbols, cli.status) {
         (Some(Command::Index { path }), _, _) => index(path.as_deref(), format),
+        (Some(Command::Dupes { scope, min_lines }), _, _) => {
+            dupes(scope.as_deref(), *min_lines, format)
+        }
         (None, Some(file), _) => symbols(file, format),
         (None, None, true) => status(format),
         (None, None, false) => {
@@ -128,6 +155,50 @@ fn index(path: Option<&std::path::Path>, format: Format) -> Result<i32> {
         )?,
     }
     Ok(HIT)
+}
+
+fn dupes(scope: Option<&std::path::Path>, min_lines: u32, format: Format) -> Result<i32> {
+    let here = scope.unwrap_or(std::path::Path::new("."));
+    let root = crate::scan::repo_root(here)?;
+    // The scope the user typed, as the checkout stores paths: relative to the
+    // repository root, whatever directory they ran from.
+    let absolute = std::fs::canonicalize(here)?;
+    let relative = absolute
+        .strip_prefix(std::fs::canonicalize(&root)?)
+        .ok()
+        .map(|p| p.to_string_lossy().into_owned())
+        .filter(|p| !p.is_empty());
+
+    let store = crate::store::open_default()?;
+    let root = root.to_string_lossy().into_owned();
+    let groups = crate::dupes::find(&store, &root, relative.as_deref(), min_lines)?;
+
+    match format {
+        Format::Human => {
+            for group in &groups {
+                println!(
+                    "{} × {} lines  [{}]",
+                    group.members.len(),
+                    group.lines,
+                    group.how
+                );
+                for member in &group.members {
+                    println!(
+                        "  {}:{}-{}  {}",
+                        member.path, member.line, member.end_line, member.id
+                    );
+                }
+            }
+            if groups.is_empty() {
+                eprintln!(
+                    "contour: no clones of {min_lines}+ lines in {}",
+                    crate::paths::pretty(&root)
+                );
+            }
+        }
+        _ => emit(format, &groups)?,
+    }
+    Ok(if groups.is_empty() { MISS } else { HIT })
 }
 
 fn symbols(file: &std::path::Path, format: Format) -> Result<i32> {

@@ -8,6 +8,9 @@
 
 mod extract;
 mod facts;
+mod generated;
+mod node_tag;
+mod norm;
 
 use crate::core::{Blob, Param, ParamKind, Unit};
 
@@ -19,6 +22,7 @@ use crate::core::{Blob, Param, ParamKind, Unit};
 /// the reason).
 pub fn units(src: &[u8]) -> Blob {
     let facts = extract::extract(src);
+    let hashes = norm::hashes(src);
     let units = facts
         .defs
         .iter()
@@ -31,7 +35,10 @@ pub fn units(src: &[u8]) -> Blob {
             via: def.via.clone(),
             line: def.pos.line,
             end_line: def.end_line,
-            norm_hash: None,
+            // Keyed by the position of the def's name, which is what the
+            // extractor records. A macro-generated unit has no `def` node, so
+            // it has no hash and nothing to summarize.
+            norm_hash: hashes.get(&(def.pos.line, def.pos.col)).copied(),
         })
         .collect();
     Blob {

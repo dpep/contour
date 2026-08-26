@@ -20,6 +20,11 @@ pub(crate) fn fnv1a(mut h: u64, bytes: &[u8]) -> u64 {
     h
 }
 
+/// Folded in between concatenated fields so adjacent values cannot alias
+/// (`"ab" + "c"` must not hash like `"a" + "bc"`). `0xff` is never a byte of
+/// valid UTF-8, so it cannot occur inside a name or a literal.
+pub(crate) const SEP: &[u8] = &[0xff];
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -32,5 +37,12 @@ mod tests {
         assert_eq!(fnv1a(FNV_OFFSET, b""), 0xcbf2_9ce4_8422_2325);
         assert_eq!(fnv1a(FNV_OFFSET, b"a"), 0xaf63_dc4c_8601_ec8c);
         assert_eq!(fnv1a(FNV_OFFSET, b"foobar"), 0x85944171f73967e8);
+    }
+
+    #[test]
+    fn a_separator_stops_adjacent_fields_aliasing() {
+        let ab_c = fnv1a(fnv1a(FNV_OFFSET, b"ab"), SEP);
+        let a_bc = fnv1a(fnv1a(FNV_OFFSET, b"a"), SEP);
+        assert_ne!(fnv1a(ab_c, b"c"), fnv1a(a_bc, b"bc"));
     }
 }

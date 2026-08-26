@@ -14,7 +14,7 @@
 /// drops it and reindexes — which costs seconds and removes an entire class of
 /// migration bug. It also makes adding a column free, so nothing needs to be
 /// carried speculatively.
-pub(crate) const VERSION: i64 = 1;
+pub(crate) const VERSION: i64 = 2;
 
 /// Applied whole to a fresh database.
 pub(crate) const SCHEMA: &str = r#"
@@ -41,7 +41,13 @@ CREATE TABLE unit (
   params    TEXT    NOT NULL,             -- 'req:a;key:b', Ruby's vocabulary
   via       TEXT,
   line      INTEGER NOT NULL,
-  end_line  INTEGER NOT NULL
+  end_line  INTEGER NOT NULL,
+  -- Hash of the normalized body: locals renamed to ordinals, layout and
+  -- comments collapsed (see `ruby::norm`). NULL when there is no body — a
+  -- macro-generated unit has nothing to hash and nothing to summarize.
+  -- This is the key expensive layers hang off (DEC-003), so it is an on-disk
+  -- format: see `crate::hash` for why it is not a `DefaultHasher`.
+  norm_hash INTEGER
 );
 
 -- ── Layer 2: the path→blob map, the only place a path appears ────────────
@@ -69,6 +75,7 @@ CREATE TABLE file (
 ) WITHOUT ROWID;
 
 CREATE INDEX unit_name ON unit(name);
+CREATE INDEX unit_norm ON unit(norm_hash);
 CREATE INDEX unit_blob ON unit(blob_id);
 CREATE INDEX file_blob ON file(blob_id);
 "#;
