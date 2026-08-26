@@ -439,6 +439,20 @@ fn search_can_return_nothing() {
     assert_eq!(answer["hits"].as_array().map(Vec::len), Some(0));
     assert_eq!(answer["floor"], 0.9);
     assert_eq!(out.status.code(), Some(1), "a miss, not an error");
+    // The floor is inherited from another corpus, so what it hid has to be
+    // countable — otherwise it is a constant nobody can argue with.
+    assert!(answer["withheld"].as_u64().unwrap() > 0);
+
+    // `--floor 0` withholds nothing and answers from the whole ranking.
+    let open = repo.json(&[
+        "search",
+        "kubernetes scheduling affinity",
+        "--floor",
+        "0",
+        "--json",
+    ]);
+    assert_eq!(open["withheld"], 0);
+    assert!(!open["hits"].as_array().unwrap().is_empty());
 }
 
 /// `similar` reports the tier that found each neighbour, and DEC-010's rule

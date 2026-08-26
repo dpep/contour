@@ -89,6 +89,10 @@ enum Command {
         scope: Option<PathBuf>,
         #[arg(short = 'l', long, value_name = "N", default_value_t = DEFAULT_LIMIT)]
         limit: usize,
+        /// Cosine below which a hit is not an answer. Defaults to the
+        /// embedder's calibrated floor; `0` shows everything it withheld.
+        #[arg(long, value_name = "F")]
+        floor: Option<f32>,
     },
     /// Score this checkout against a labeled eval set.
     Eval {
@@ -201,10 +205,11 @@ fn dispatch(cli: &Cli) -> Result<i32> {
                 query,
                 scope,
                 limit,
+                floor,
             }),
             _,
             _,
-        ) => search(query, scope.as_deref(), *limit, format),
+        ) => search(query, scope.as_deref(), *limit, *floor, format),
         (Some(Command::Similar { unit, limit }), _, _) => similar(unit, *limit, format),
         (Some(Command::Eval { set, min_lines }), _, _) => eval(set, *min_lines, format),
         (None, Some(file), _) => symbols(file, format),
@@ -338,6 +343,7 @@ fn search(
     query: &str,
     scope: Option<&std::path::Path>,
     limit: usize,
+    floor: Option<f32>,
     format: Format,
 ) -> Result<i32> {
     let (root, relative) = scoped(scope)?;
@@ -350,7 +356,7 @@ fn search(
         query,
         embedder.as_ref(),
         limit,
-        crate::search::relevance_floor(embedder.kind()),
+        floor.unwrap_or_else(|| crate::search::relevance_floor(embedder.kind())),
     )?;
 
     match format {
@@ -393,6 +399,15 @@ fn disclose(answer: &crate::search::Answer) {
         "contour: coverage {} via the {} embedder{note}",
         answer.coverage_state, answer.embedder
     );
+    // The floor is inherited from another corpus, so what it hides has to be
+    // visible or it is an unfalsifiable constant.
+    if answer.withheld > 0 {
+        eprintln!(
+            "contour: {} result(s) below the relevance floor ({:.2}) withheld; \
+             --floor 0 to see them",
+            answer.withheld, answer.floor
+        );
+    }
 }
 
 fn similar(unit: &str, limit: usize, format: Format) -> Result<i32> {

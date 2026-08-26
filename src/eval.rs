@@ -243,6 +243,7 @@ pub fn run(
         // measuring above an existing one can only confirm it.
         let answer =
             crate::search::search(store, &root_str, None, &label.query, embedder, depth, 0.0)?;
+        debug_assert_eq!(answer.withheld, 0, "the eval must run unfloored");
         coverage_state = answer.coverage_state;
         summarized = answer.coverage.summarized;
         summarizable = answer.coverage.summarizable;

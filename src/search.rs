@@ -91,6 +91,13 @@ pub struct Answer {
     /// The absolute cosine floor applied, so a reader knows whether "no
     /// matches" means "nothing above the bar" or "no bar was set".
     pub floor: f32,
+    /// Units the floor removed that would otherwise have ranked.
+    ///
+    /// The floor is inherited from another corpus and contour's own eval
+    /// argues with it, so shipping it silently would be shipping an
+    /// unfalsifiable constant. Reporting what it hid makes it auditable —
+    /// trekr's `--include-excluded` move — and `--floor 0` shows the rest.
+    pub withheld: usize,
 }
 
 /// Rank units in a checkout against an English query.
@@ -117,12 +124,18 @@ pub fn search(
 
     // Semantic: cosine against each summary's vector, floored.
     let query_vec = mrl::compress_matryoshka_vector(&embedder.embed(query));
-    let mut semantic: Vec<(usize, f32)> = summaries
+    let scored: Vec<(usize, f32)> = summaries
         .vectors
         .iter()
         .map(|(i, vec)| (*i, mrl::cosine_similarity(&query_vec, vec)))
-        .filter(|(_, cosine)| *cosine >= floor && *cosine > 0.0)
+        .filter(|(_, cosine)| *cosine > 0.0)
         .collect();
+    let mut semantic: Vec<(usize, f32)> = scored
+        .iter()
+        .copied()
+        .filter(|(_, cosine)| *cosine >= floor)
+        .collect();
+    let withheld = scored.len() - semantic.len();
     semantic.sort_by(|a, b| b.1.total_cmp(&a.1));
 
     let cosines: HashMap<usize, f32> = semantic.iter().copied().collect();
@@ -173,6 +186,7 @@ pub fn search(
         coverage: summaries.coverage,
         embedder: embedder.kind(),
         floor,
+        withheld,
     })
 }
 
