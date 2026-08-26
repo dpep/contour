@@ -378,6 +378,47 @@ impl Store {
         Ok(rows.collect::<rusqlite::Result<HashSet<_>>>()?)
     }
 
+    /// Every vector stored for one embedder configuration, keyed by the text
+    /// it came from.
+    ///
+    /// Loaded whole. Brute-force cosine reads all of them anyway (PLAN rules
+    /// out an ANN index at this scale), and at 50k units this is ~50 MB and
+    /// one query against 50k round trips.
+    pub fn vectors(&self, config_key: u64) -> Result<HashMap<u64, Vec<f32>>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT text_key, vec FROM vector WHERE config_key = ?1")?;
+        let rows = stmt.query_map(params![config_key as i64], |r| {
+            Ok((r.get::<_, i64>(0)? as u64, r.get::<_, Vec<u8>>(1)?))
+        })?;
+        let mut out = HashMap::new();
+        for row in rows {
+            let (key, bytes) = row?;
+            out.insert(key, decode_vector(&bytes));
+        }
+        Ok(out)
+    }
+
+    /// Store freshly embedded vectors. One transaction, so an interrupted
+    /// embed leaves a consistent set rather than a torn one.
+    pub fn put_vectors(&mut self, config_key: u64, vectors: &[(u64, Vec<f32>)]) -> Result<()> {
+        let tx = self.conn.transaction()?;
+        {
+            let mut stmt = tx.prepare_cached(
+                "INSERT OR REPLACE INTO vector (config_key, text_key, vec) VALUES (?1, ?2, ?3)",
+            )?;
+            for (text_key, vec) in vectors {
+                stmt.execute(params![
+                    config_key as i64,
+                    *text_key as i64,
+                    encode_vector(vec)
+                ])?;
+            }
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
     /// Which models this machine has bought summaries from. `--status` reports
     /// coverage per model rather than for a presumed one: DEC-005 lets indexes
     /// from different models coexist, so "how covered am I" has no single
@@ -453,6 +494,23 @@ fn insert_blob(tx: &rusqlite::Transaction<'_>, oid: &Oid, blob: &Blob) -> rusqli
     Ok(())
 }
 
+/// Vectors round-trip as little-endian f32. Explicit rather than
+/// `bytemuck`-style casting: the byte order is an on-disk format and must not
+/// follow whatever the host happens to be.
+fn encode_vector(vec: &[f32]) -> Vec<u8> {
+    vec.iter().flat_map(|x| x.to_le_bytes()).collect()
+}
+
+fn decode_vector(bytes: &[u8]) -> Vec<f32> {
+    bytes
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .copied()
+        .map(f32::from_le_bytes)
+        .collect()
+}
+
 /// FNV-1a over a path, for the map fold. Not a stored key, so stability across
 /// releases is not required — but it is the same ten lines as `crate::hash`
 /// and reusing them costs nothing.
@@ -493,6 +551,17 @@ mod tests {
             crate::scan::hash_blob(src.as_bytes()),
             crate::ruby::units(src.as_bytes()),
         )
+    }
+
+    #[test]
+    fn vectors_round_trip_through_a_blob() {
+        let mut store = Store::open_in_memory().unwrap();
+        let vec: Vec<f32> = vec![0.5, -0.25, 0.0, 1.0];
+        store.put_vectors(7, &[(11, vec.clone())]).unwrap();
+        assert_eq!(store.vectors(7).unwrap().get(&11), Some(&vec));
+        // A different embedder configuration is a different index, not an
+        // overwrite (DEC-005).
+        assert!(store.vectors(8).unwrap().is_empty());
     }
 
     #[test]

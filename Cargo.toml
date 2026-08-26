@@ -35,6 +35,32 @@ sha1 = "0.10"
 # version gqls uses, so the house has one HTTP client rather than two.
 ureq = { version = "2", features = ["json"] }
 
+# Semantic embeddings (opt-in via the `semantic` feature): local
+# all-MiniLM-L6-v2 through ONNX Runtime, vendored from gqls with the same pins
+# so the copied onnx.rs matches the ort API. Off by default, unlike gqls: the
+# hash embedder exercises the whole pipeline, and a build that downloads a
+# runtime is a poor default for a tool nobody has installed yet.
+ort = { version = "=2.0.0-rc.12", default-features = false, optional = true }
+tokenizers = { version = "0.23", default-features = false, features = ["fancy-regex"], optional = true }
+hf-hub = { version = "0.5", default-features = false, features = ["ureq"], optional = true }
+log = { version = "0.4", optional = true }
+
+[features]
+default = []
+
+# Internal: the embedding code and its deps, minus the ORT linking strategy.
+# Not selected directly — pick one of the two below.
+_semantic = [
+  "dep:ort", "dep:tokenizers", "dep:hf-hub", "dep:log",
+  "ort/std", "ort/ndarray", "ort/tracing", "ort/api-24",
+]
+# ONNX Runtime downloaded and statically linked at build time.
+semantic = ["_semantic", "ort/download-binaries", "ort/tls-native", "ort/copy-dylibs"]
+# ONNX Runtime dlopen'd from a system install at runtime: smaller binary, no
+# build-time download. This is the one `script/check.sh` compiles, because it
+# proves the code path builds without fetching a runtime in CI.
+semantic-dynamic = ["_semantic", "ort/load-dynamic"]
+
 [dev-dependencies]
 serde_json = "1"
 

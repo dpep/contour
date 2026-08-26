@@ -18,10 +18,12 @@
 //! - [`dupes`] — the first product, and a group-by over one column.
 //! - [`summary`] — the expensive layer, and the first one that leaves the
 //!   machine. Behind a trait, so tests replay canned answers (DEC-006).
+//! - [`embed`] — summaries → vectors, behind a trait (DEC-005).
 
 pub mod cli;
 pub mod core;
 pub mod dupes;
+pub mod embed;
 pub(crate) mod hash;
 pub mod index;
 pub mod paths;

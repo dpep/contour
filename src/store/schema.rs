@@ -27,7 +27,7 @@
 /// migration bug. It also makes adding a column free, so nothing needs to be
 /// carried speculatively. See the module header for what this version
 /// deliberately does *not* govern.
-pub(crate) const VERSION: i64 = 3;
+pub(crate) const VERSION: i64 = 4;
 
 /// Applied whole to a fresh database.
 pub(crate) const SCHEMA: &str = r#"
@@ -87,6 +87,18 @@ CREATE TABLE file (
   PRIMARY KEY (checkout_id, path)
 ) WITHOUT ROWID;
 
+-- One embedding, keyed by the exact text it came from plus everything else
+-- that invalidates it (width, embedder kind, model — see `embed::config_key`).
+-- Derived rather than purchased: re-embedding a large repo locally is about a
+-- minute, so DEC-016 puts it on this side of the line. An API-backed embedder
+-- would move it to the other side.
+CREATE TABLE vector (
+  config_key INTEGER NOT NULL,
+  text_key   INTEGER NOT NULL,
+  vec        BLOB    NOT NULL,   -- dims x f32, little-endian
+  PRIMARY KEY (config_key, text_key)
+) WITHOUT ROWID;
+
 CREATE INDEX unit_name ON unit(name);
 CREATE INDEX unit_norm ON unit(norm_hash);
 CREATE INDEX unit_blob ON unit(blob_id);
@@ -95,7 +107,7 @@ CREATE INDEX file_blob ON file(blob_id);
 
 /// Every **derived** table, dependents first, so a drop respects nothing.
 /// `summary` is deliberately absent: see the module header.
-pub(crate) const TABLES: [&str; 4] = ["file", "checkout", "unit", "blob"];
+pub(crate) const TABLES: [&str; 5] = ["vector", "file", "checkout", "unit", "blob"];
 
 /// Bump only for a real change to the summary table.
 ///

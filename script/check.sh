@@ -23,4 +23,10 @@ cargo fmt --check
 cargo clippy --all-targets -- -D warnings
 cargo test
 
+# The ONNX embedder is behind a feature, so the default build above never
+# compiles it. `semantic-dynamic` dlopens ONNX Runtime instead of downloading
+# and linking it, so this proves the code path builds without fetching a
+# runtime in CI — which is why it, and not `semantic`, is the gated one.
+cargo clippy --all-targets --features semantic-dynamic -- -D warnings
+
 printf '\nall green\n'
