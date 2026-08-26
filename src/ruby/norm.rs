@@ -18,6 +18,15 @@
 //! shape, method and constant names, instance-variable names, literal values,
 //! keyword parameter names, and arity.
 //!
+//! **The one principled exception to excluding the method's own name**
+//! (DEC-017, provisional): a body containing `super` gets the enclosing def's
+//! name folded in. `super` dispatches *by* that name, so two byte-identical
+//! bodies ending in `super` run different code — `LocalCache#increment` and
+//! `#decrement` in rails are exactly this. Reporting them as clones offers a
+//! consolidation that is not available without metaprogramming, which is a
+//! false lead rather than a harmless one. Everywhere else the name is
+//! deliberately invisible; here it is structure.
+//!
 //! The result is an **on-disk key** — DEC-003 keys an LLM summary by it — so
 //! everything folded in is chosen for stability across releases: the hash is a
 //! vendored FNV-1a rather than `DefaultHasher`, and the node tag is a
@@ -114,6 +123,7 @@ fn def_hash(def: &ruby_prism::DefNode<'_>) -> u64 {
     let mut fold = Fold {
         hash: FNV_OFFSET,
         locals: HashMap::new(),
+        enclosing: def.name().as_slice().to_vec(),
     };
     match def.parameters() {
         Some(params) => fold.node(&params.as_node()),
@@ -132,6 +142,9 @@ struct Fold {
     /// deterministic pre-order, and a read cannot precede its binding, so
     /// first sight *is* binding order.
     locals: HashMap<Vec<u8>, u32>,
+    /// The name `super` would dispatch by here — the innermost enclosing
+    /// `def`, which changes when the walk descends into a nested one.
+    enclosing: Vec<u8>,
 }
 
 impl Fold {
@@ -142,6 +155,19 @@ impl Fold {
     fn node(&mut self, node: &Node<'_>) {
         self.eat(tag(node).as_bytes());
         self.eat(SEP);
+        // `super` carries no atom naming what it calls, because the name is
+        // the enclosing method's. Fold it in, or two bodies that dispatch
+        // differently hash the same (DEC-017).
+        if matches!(
+            node,
+            Node::SuperNode { .. } | Node::ForwardingSuperNode { .. }
+        ) {
+            self.eat(b"^");
+            let enclosing = std::mem::take(&mut self.enclosing);
+            self.eat(&enclosing);
+            self.enclosing = enclosing;
+            self.eat(SEP);
+        }
         let rename = binds_local(node);
         for (i, atom) in generated::atoms(node).iter().enumerate() {
             match (i, rename, atom) {
@@ -169,8 +195,20 @@ impl Fold {
         // `f(g(a))` and `f(g, a)` can flatten to the same byte stream.
         let children = generated::children(node);
         self.eat(&(children.len() as u32).to_le_bytes());
+        // A nested `def` is what `super` inside it dispatches by, so the name
+        // in scope changes for that subtree and is restored after it.
+        let outer = match node.as_def_node() {
+            Some(inner) => Some(std::mem::replace(
+                &mut self.enclosing,
+                inner.name().as_slice().to_vec(),
+            )),
+            None => None,
+        };
         for child in &children {
             self.node(child);
+        }
+        if let Some(outer) = outer {
+            self.enclosing = outer;
         }
     }
 
@@ -305,6 +343,60 @@ mod tests {
     fn finds_every_def_including_nested_ones() {
         let map = hashes(b"def outer\n  def inner; 1; end\nend\n");
         assert_eq!(map.len(), 2);
+    }
+
+    /// DEC-017, and the one place the method's own name is structure. rails
+    /// has four live instances of this shape; `LocalCache#increment` and
+    /// `#decrement` are byte-identical apart from the name and dispatch to
+    /// different superclass methods.
+    #[test]
+    fn a_body_containing_super_is_named_by_it() {
+        assert_ne!(
+            h("def increment(a)\n  super\nend\n"),
+            h("def decrement(a)\n  super\nend\n")
+        );
+        // Explicit `super(...)` dispatches by the same name and is separated
+        // the same way.
+        assert_ne!(
+            h("def increment(a)\n  super(a)\nend\n"),
+            h("def decrement(a)\n  super(a)\nend\n")
+        );
+        // Everywhere else the name stays invisible: without `super`, these two
+        // are still the same method.
+        assert_eq!(
+            h("def increment(a)\n  store(a)\nend\n"),
+            h("def decrement(a)\n  store(a)\nend\n")
+        );
+        // And the same name with the same body still agrees with itself.
+        assert_eq!(
+            h("def increment(a)\n  super\nend\n"),
+            h("def increment(b)\n  super\nend\n")
+        );
+    }
+
+    /// A nested `def` rebinds what `super` means, and the outer scope comes
+    /// back afterwards.
+    ///
+    /// Isolated carefully: a def's *own* name is not an atom of its own hash
+    /// (`def_hash` folds parameters and body, never the name), so renaming the
+    /// outer def changes nothing except what its `super` dispatches by. An
+    /// earlier version of this test renamed the *inner* def and passed without
+    /// the rule at all, because a nested DefNode carries its name as an atom.
+    #[test]
+    fn a_nested_def_rebinds_what_super_dispatches_by() {
+        let at = |src: String, line: u32| {
+            *hashes(src.as_bytes())
+                .iter()
+                .find(|((l, _), _)| *l == line)
+                .expect("a def on that line")
+                .1
+        };
+        let nest = |outer: &str| format!("def {outer}\n  def b; super; end\n  super\nend\n");
+
+        // The outer `super` follows the outer name.
+        assert_ne!(at(nest("a"), 1), at(nest("z"), 1));
+        // The inner one does not: it is `b` either way.
+        assert_eq!(at(nest("a"), 2), at(nest("z"), 2));
     }
 
     /// Frozen, because this is an on-disk key: an LLM summary is stored under

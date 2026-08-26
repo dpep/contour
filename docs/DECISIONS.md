@@ -236,3 +236,29 @@ under the responding model's key scatters one fill's purchases across indexes
 nondeterministically — which the per-model coverage accounting would then
 inherit. A refusal on source code should be vanishingly rare; the fill loop
 records its category and moves on, like any other per-unit failure.
+
+## DEC-017 — `super` makes the method's own name structure
+
+**Provisional: ruled by the supervising session, pending the owner's veto.**
+
+`norm_hash` excludes a method's own name everywhere — that is what makes
+`Widget#save` and `Gadget#persist` with the same body report as clones, and
+what lets a rename never re-summarize. There is exactly one exception.
+
+A body containing `super` gets the enclosing `def`'s name folded in, because
+`super` dispatches *by* that name. Two byte-identical bodies ending in `super`
+run different code. rails has four live instances: `LocalCache#increment` and
+`#decrement`, `LogSubscriber#info` and `#error`, `CompareWithRange#===` and
+`#include?`, and `V6_1::TableDefinition#change` and `#column` are each a pair
+of identical wrappers whose only difference is which superclass method they
+reach.
+
+Reporting those as clones is worse than a harmless false positive: it offers a
+consolidation that is **not available** without metaprogramming, so a reader
+who acts on it wastes the trip. The eval set now carries all four as
+`distinct`, which makes them the sharpest labels in it — if normalization ever
+stops folding the name in, they fail first.
+
+Cost: a `norm_hash` change, so a schema bump. Taken now deliberately, at the
+one moment it is free — no purchased summary exists under the old key outside
+fixtures, and after the first real fill this same change costs money to make.

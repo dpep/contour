@@ -11,6 +11,10 @@ Initial skeleton — nothing has been released, so everything below is new.
   index required, and it works in a directory contour has never seen.
 - `contour --status` reports what the index holds, whether a checkout may be
   stale, and summary coverage (`none` until milestone 3).
+- A method body containing `super` now has the enclosing method's name folded
+  into its `norm_hash` (DEC-017). `super` dispatches by that name, so two
+  identical bodies ending in `super` run different code and are no longer
+  reported as clones. **Forces a reindex** — the schema version moves with it.
 - Every method carries a `norm_hash`: a structural hash of its normalized
   body, with locals and positional parameters renamed to ordinals and layout,
   comments, quoting style and numeric spelling collapsed. Keyword parameter

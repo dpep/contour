@@ -27,7 +27,7 @@
 /// migration bug. It also makes adding a column free, so nothing needs to be
 /// carried speculatively. See the module header for what this version
 /// deliberately does *not* govern.
-pub(crate) const VERSION: i64 = 4;
+pub(crate) const VERSION: i64 = 5;
 
 /// Applied whole to a fresh database.
 pub(crate) const SCHEMA: &str = r#"

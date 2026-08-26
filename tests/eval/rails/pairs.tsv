@@ -10,16 +10,18 @@
 # different files, no shared identifier for grep to catch.
 ActiveRecord::ConnectionAdapters::Quoting#sanitize_as_sql_comment	ActiveRecord::QueryLogs.escape_sql_comment	duplicate
 
-# Provisional, and worth arguing about. These four pairs are byte-identical
-# apart from the method name, and each body ends in `super` — so at runtime
-# they call different things. The `dupes` report is literally correct (the
-# bodies ARE clones, and each pair could be DRY'd) but a reader may reasonably
-# say two methods that dispatch differently are not the same method. If the
-# owner rules them distinct, they become the sharpest labels in this file.
-ActiveSupport::Cache::Strategy::LocalCache#increment	ActiveSupport::Cache::Strategy::LocalCache#decrement	duplicate	provisional
-ActiveJob::LogSubscriber#info	ActiveJob::LogSubscriber#error	duplicate	provisional
-ActiveSupport::CompareWithRange#===	ActiveSupport::CompareWithRange#include?	duplicate	provisional
-ActiveRecord::Migration::Compatibility::V6_1::TableDefinition#change	ActiveRecord::Migration::Compatibility::V6_1::TableDefinition#column	duplicate	provisional
+# --- the `super` pairs: DISTINCT, and the sharpest labels here ---------------
+# Each of these four is byte-identical apart from the method name, and each
+# body ends in `super`. A zero-arg `super` dispatches BY the enclosing
+# method's name, so these run different code and cannot be consolidated
+# without metaprogramming — reporting them as clones offers a refactor that
+# does not exist. DEC-017 folds the enclosing name in at `super` for exactly
+# this reason, so they no longer collide. If normalization ever stops doing
+# that, these four fail first.
+ActiveSupport::Cache::Strategy::LocalCache#increment	ActiveSupport::Cache::Strategy::LocalCache#decrement	distinct
+ActiveJob::LogSubscriber#info	ActiveJob::LogSubscriber#error	distinct
+ActiveSupport::CompareWithRange#===	ActiveSupport::CompareWithRange#include?	distinct
+ActiveRecord::Migration::Compatibility::V6_1::TableDefinition#change	ActiveRecord::Migration::Compatibility::V6_1::TableDefinition#column	distinct
 
 # --- near misses that must stay apart ----------------------------------------
 # Same shape, opposite operation: `map(&key).min` against `map(&key).max`.
