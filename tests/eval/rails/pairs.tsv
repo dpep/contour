@@ -1,0 +1,43 @@
+# Pairs the duplicate report should and should not group, against a rails
+# checkout.
+#
+# DRAFTED BY CLAUDE, NOT YET REVIEWED BY THE OWNER. Each duplicate below was
+# confirmed by reading both bodies; each distinct pair was chosen as a NEAR
+# miss that a looser normalizer would collide.
+
+# --- confirmed identical bodies ----------------------------------------------
+# The find that motivated this project: same behaviour, different names,
+# different files, no shared identifier for grep to catch.
+ActiveRecord::ConnectionAdapters::Quoting#sanitize_as_sql_comment	ActiveRecord::QueryLogs.escape_sql_comment	duplicate
+
+# Provisional, and worth arguing about. These four pairs are byte-identical
+# apart from the method name, and each body ends in `super` — so at runtime
+# they call different things. The `dupes` report is literally correct (the
+# bodies ARE clones, and each pair could be DRY'd) but a reader may reasonably
+# say two methods that dispatch differently are not the same method. If the
+# owner rules them distinct, they become the sharpest labels in this file.
+ActiveSupport::Cache::Strategy::LocalCache#increment	ActiveSupport::Cache::Strategy::LocalCache#decrement	duplicate	provisional
+ActiveJob::LogSubscriber#info	ActiveJob::LogSubscriber#error	duplicate	provisional
+ActiveSupport::CompareWithRange#===	ActiveSupport::CompareWithRange#include?	duplicate	provisional
+ActiveRecord::Migration::Compatibility::V6_1::TableDefinition#change	ActiveRecord::Migration::Compatibility::V6_1::TableDefinition#column	duplicate	provisional
+
+# --- near misses that must stay apart ----------------------------------------
+# Same shape, opposite operation: `map(&key).min` against `map(&key).max`.
+Enumerable#minimum	Enumerable#maximum	distinct
+# Same shape, opposite end of the string.
+String#first	String#last	distinct
+String#from	String#to	distinct
+# Same shape, one keeps what the other removes.
+Hash#slice!	Hash#extract!	distinct
+# Inverse transformations of each other.
+ActiveSupport::Inflector#camelize	ActiveSupport::Inflector#underscore	distinct
+ActiveSupport::Inflector#pluralize	ActiveSupport::Inflector#singularize	distinct
+ActiveSupport::Inflector#tableize	ActiveSupport::Inflector#classify	distinct
+# One raises where the other returns nil — the difference that matters most.
+ActiveSupport::Inflector#constantize	ActiveSupport::Inflector#safe_constantize	distinct
+# Chunk size against chunk count: the same words, a different split.
+Array#in_groups_of	Array#in_groups	distinct
+# A bang method and its non-mutating twin.
+String#squish	String#squish!	distinct
+# Both drop blanks, but from different receivers with different bodies.
+Enumerable#compact_blank	Hash#compact_blank	distinct

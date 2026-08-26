@@ -71,3 +71,23 @@ has been over-relaxed.
 
 The eval runs search with **no floor**, deliberately. Calibrating a threshold
 against results that threshold already filtered can only ever confirm it.
+
+## Running the rails set
+
+```sh
+cd ~/code/lib/ruby/rails
+contour index
+contour eval ~/code/lib/rust/contour/tests/eval/rails
+```
+
+The **duplicate half runs today** — it needs only the structural hash. The
+**search half needs real summaries**, so it needs an API key:
+
+```sh
+contour summarize --budget 500     # or however much of the corpus you want
+contour eval ~/code/lib/rust/contour/tests/eval/rails
+```
+
+Search numbers against a corpus with `coverage none` are not a result. The
+report says which state it ran in on every line of output, so a run without
+summaries cannot be mistaken for one with them.

@@ -1,0 +1,67 @@
+# Query → the method it should find, against a rails checkout.
+#
+# DRAFTED BY CLAUDE, NOT YET REVIEWED BY THE OWNER. Every label is a judgement
+# about what a person would mean; a wrong one makes the eval lie in the
+# flattering direction. Veto or amend any line — the harness reads this file.
+#
+# Method behaviour was verified by reading the source, not recalled. Queries
+# deliberately avoid naming the method: a query containing its own answer
+# measures string matching, which is what baseline:name isolates.
+#
+# Run with:  cd <rails checkout> && contour eval <this dir>
+
+# --- ActiveSupport::Inflector ------------------------------------------------
+turn a singular noun into its plural form	ActiveSupport::Inflector#pluralize
+turn a plural noun back into one item	ActiveSupport::Inflector#singularize
+convert a snake case identifier to camel case	ActiveSupport::Inflector#camelize
+convert a camel case identifier to snake case	ActiveSupport::Inflector#underscore
+make a machine readable name presentable to a person	ActiveSupport::Inflector#humanize
+capitalize only the first character and leave the rest alone	ActiveSupport::Inflector#upcase_first
+lowercase only the first character and leave the rest alone	ActiveSupport::Inflector#downcase_first
+format text as a heading with every word capitalized	ActiveSupport::Inflector#titleize
+the database table name for a model class	ActiveSupport::Inflector#tableize
+the model class name for a database table	ActiveSupport::Inflector#classify
+swap underscores for hyphens	ActiveSupport::Inflector#dasherize
+strip the namespace off a constant path	ActiveSupport::Inflector#demodulize
+the enclosing namespace of a constant path without the final name	ActiveSupport::Inflector#deconstantize
+build the foreign key column name for a model	ActiveSupport::Inflector#foreign_key
+look up a constant from its name as a string	ActiveSupport::Inflector#constantize
+resolve a constant by name and return nothing when it is missing	ActiveSupport::Inflector#safe_constantize
+the two letter suffix for a numbered position	ActiveSupport::Inflector#ordinal
+render a number as first second third	ActiveSupport::Inflector#ordinalize
+
+# --- Enumerable --------------------------------------------------------------
+smallest value of one attribute across a collection	Enumerable#minimum
+largest value of one attribute across a collection	Enumerable#maximum
+build a lookup table keyed by something computed from each element	Enumerable#index_by
+build a lookup from each element to a computed value	Enumerable#index_with
+does this collection hold more than one entry	Enumerable#many?
+a copy of the collection with extra entries added	Enumerable#including
+is this object absent from the collection	Enumerable#exclude?
+a copy of the collection with certain entries removed	Enumerable#excluding
+gather one attribute from every element	Enumerable#pluck
+the first element's attribute or nothing when empty	Enumerable#pick
+drop entries that are empty or nil	Enumerable#compact_blank
+reorder a collection to match a given sequence of values	Enumerable#in_order_of
+the only element, complaining when there is more than one	Enumerable#sole
+
+# --- Array -------------------------------------------------------------------
+break a list into chunks of a fixed size	Array#in_groups_of
+break a list into a fixed number of chunks	Array#in_groups
+cut a list apart at every occurrence of a separator	Array#split
+
+# --- String ------------------------------------------------------------------
+collapse runs of whitespace and trim the ends	String#squish
+delete every occurrence of a pattern from text	String#remove
+shorten text to a maximum length with an ellipsis	String#truncate
+shorten text without splitting a multibyte character	String#truncate_bytes
+shorten text to a number of words	String#truncate_words
+the single character at a position	String#at
+everything from a position to the end	String#from
+everything up to and including a position	String#to
+the opening characters of a string	String#first
+the closing characters of a string	String#last
+
+# --- Hash --------------------------------------------------------------------
+keep only the named keys, changing the hash in place	Hash#slice!
+remove the named keys and hand them back	Hash#extract!
