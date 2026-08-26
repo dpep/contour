@@ -27,7 +27,7 @@
 /// migration bug. It also makes adding a column free, so nothing needs to be
 /// carried speculatively. See the module header for what this version
 /// deliberately does *not* govern.
-pub(crate) const VERSION: i64 = 5;
+pub(crate) const VERSION: i64 = 6;
 
 /// Applied whole to a fresh database.
 pub(crate) const SCHEMA: &str = r#"
@@ -48,6 +48,7 @@ CREATE TABLE blob (
 -- body, hence no norm_hash and nothing to summarize.
 CREATE TABLE unit (
   blob_id   INTEGER NOT NULL REFERENCES blob(id) ON DELETE CASCADE,
+  lang      TEXT    NOT NULL,             -- ruby | rust
   name      TEXT    NOT NULL,
   owner     TEXT    NOT NULL,             -- lexical namespace, '::'-joined
   singleton INTEGER NOT NULL,             -- `def self.x` / inside `class << self`
@@ -60,6 +61,8 @@ CREATE TABLE unit (
   -- macro-generated unit has nothing to hash and nothing to summarize.
   -- This is the key expensive layers hang off (DEC-003), so it is an on-disk
   -- format: see `crate::hash` for why it is not a `DefaultHasher`.
+  -- Seeded with the language, so two languages sharing this column cannot
+  -- collide into one another's hash space.
   norm_hash INTEGER
 );
 

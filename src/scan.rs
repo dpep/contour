@@ -13,28 +13,36 @@
 //! hashed, and they get hashed *the way git does* so an uncommitted edit keys
 //! the same as it will once committed.
 
-use crate::core::Oid;
+use crate::core::{Lang, Oid};
 use anyhow::{Context, Result, bail};
 use sha1::{Digest, Sha1};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-/// One checkout's Ruby files, path (repo-relative) → blob OID.
+/// One checkout's indexable files, path (repo-relative) → blob OID.
 pub type Files = BTreeMap<String, Oid>;
 
-/// Is this a file we can extract units from?
-pub fn is_ruby(path: &str) -> bool {
+/// Which extractor reads this file, if any.
+///
+/// By name alone. Sniffing content would be more accurate and would mean
+/// reading every file in the repo to answer a question `git ls-files` already
+/// answers for free.
+pub fn language(path: &str) -> Option<Lang> {
     let name = path.rsplit('/').next().unwrap_or(path);
-    if let Some((_, ext)) = name.rsplit_once('.')
-        && matches!(ext, "rb" | "rake" | "gemspec" | "ru" | "jbuilder" | "rbi")
-    {
-        return true;
+    if let Some((_, ext)) = name.rsplit_once('.') {
+        match ext {
+            "rb" | "rake" | "gemspec" | "ru" | "jbuilder" | "rbi" => return Some(Lang::Ruby),
+            "rs" => return Some(Lang::Rust),
+            _ => {}
+        }
     }
-    matches!(
-        name,
-        "Gemfile" | "Rakefile" | "Guardfile" | "Capfile" | "Podfile" | "Brewfile"
-    )
+    match name {
+        "Gemfile" | "Rakefile" | "Guardfile" | "Capfile" | "Podfile" | "Brewfile" => {
+            Some(Lang::Ruby)
+        }
+        _ => None,
+    }
 }
 
 /// Git's blob hash: SHA-1 over `blob <byte-len>\0` then the content.
@@ -66,7 +74,7 @@ fn parse_ls_files(out: &[u8]) -> Files {
         if mode != "100644" && mode != "100755" {
             continue;
         }
-        if is_ruby(path) {
+        if language(path).is_some() {
             files.insert(path.to_string(), Oid(oid.to_string()));
         }
     }
@@ -152,7 +160,7 @@ pub fn git_fingerprint(root: &Path) -> Option<i64> {
     Some((modified.as_nanos() as i64).wrapping_mul(31) ^ (meta.len() as i64))
 }
 
-/// Every Ruby file in the working tree, keyed by the blob its *current* bytes
+/// Every indexable file in the working tree, keyed by the blob its current bytes
 /// hash to — not what HEAD says. Uncommitted edits are first-class.
 pub fn scan(root: &Path) -> Result<Files> {
     let mut files = parse_ls_files(&git(root, &["ls-files", "-s", "-z"])?);
@@ -166,7 +174,7 @@ pub fn scan(root: &Path) -> Result<Files> {
     )?));
 
     for path in dirty {
-        if !is_ruby(&path) {
+        if language(&path).is_none() {
             continue;
         }
         match std::fs::read(root.join(&path)) {
@@ -198,24 +206,28 @@ mod tests {
     }
 
     #[test]
-    fn recognizes_ruby_by_extension_and_by_bare_name() {
+    fn recognizes_a_language_by_extension_and_by_bare_name() {
         for path in ["a/b.rb", "lib/t.rake", "x.gemspec", "config.ru", "Gemfile"] {
-            assert!(is_ruby(path), "{path} is Ruby");
+            assert_eq!(language(path), Some(Lang::Ruby), "{path}");
         }
-        for path in ["a/b.py", "README.md", "Gemfile.lock", "norb"] {
-            assert!(!is_ruby(path), "{path} is not Ruby");
+        for path in ["src/main.rs", "a/b/mod.rs"] {
+            assert_eq!(language(path), Some(Lang::Rust), "{path}");
+        }
+        for path in ["a/b.py", "README.md", "Gemfile.lock", "norb", "x.rs.bak"] {
+            assert_eq!(language(path), None, "{path}");
         }
     }
 
     #[test]
     fn keeps_only_ruby_blobs_and_drops_symlinks_and_submodules() {
         let out = b"100644 aaa 0\ta.rb\x00100644 bbb 0\tb.py\x00\
-                    120000 ccc 0\tlink.rb\x00160000 ddd 0\tsub\x00100755 eee 0\tbin/x.rb\x00";
+                    120000 ccc 0\tlink.rb\x00160000 ddd 0\tsub\x00100755 eee 0\tbin/x.rb\x00\
+                    100644 fff 0\tsrc/main.rs\x00";
         let files = parse_ls_files(out);
         assert_eq!(
             files.keys().collect::<Vec<_>>(),
-            ["a.rb", "bin/x.rb"],
-            "symlinks and submodules carry no Ruby content"
+            ["a.rb", "bin/x.rb", "src/main.rs"],
+            "symlinks and submodules carry no source we can read"
         );
         assert_eq!(files["a.rb"].0, "aaa");
     }

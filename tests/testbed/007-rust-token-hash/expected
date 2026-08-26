@@ -1,0 +1,17 @@
+# Rust normalization is a DEGRADED tier by design (DEC-012), and this case
+# pins both halves of that bargain.
+#
+# What it catches: `Beta::accumulate` is `Alpha::total` reformatted,
+# re-commented, and renamed. Layout and comments never reach the hash because
+# only leaf tokens are folded, and a function's own name is excluded exactly
+# as in Ruby — so the two collide.
+#
+# What it does NOT catch: `Gamma::total` is the same computation with renamed
+# locals and parameters. Ruby's normalization sees through a rename; the token
+# stream cannot, so Gamma stands alone. Recorded deliberately — if Rust ever
+# gains real normalization this line is the first thing that should change,
+# and until then nobody should believe the tiers are equivalent.
+#
+# `Delta::total` subtracts where the others add: a real difference, and the
+# control that proves the collisions above are not everything colliding.
+dupes  Alpha::total+Beta::accumulate

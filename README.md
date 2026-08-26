@@ -14,8 +14,11 @@ questions, from exact clone detection to English-language concept search.
 
 ## Status
 
-Early. Ruby only. The pipeline is being built a layer at a time; what works
-today is the cheap end of it.
+Early. Ruby and Rust. The pipeline is being built a layer at a time.
+
+Ruby normalization is AST-grade — a rename or a reformat is not a change. Rust
+is a deliberately degraded tier (a comment-stripped token stream, disclosed as
+`token_hash`), which catches copy-paste and stops there.
 
 ```sh
 contour index [PATH]     # scan a checkout, index every callable in it

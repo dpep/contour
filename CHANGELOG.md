@@ -50,6 +50,13 @@ Initial skeleton — nothing has been released, so everything below is new.
   while `--features semantic` (or `semantic-dynamic`) enables a local
   all-MiniLM-L6-v2 through ONNX Runtime. The embedder kind and model are part
   of every vector's key, so switching costs a re-embed, never a corruption.
+- **Rust is the second language** (DEC-012). `index`, `--symbols`, `dupes`,
+  `search`, and `similar` all work on `.rs` files, and units from both
+  languages share one store. Names render in each language's own dialect:
+  `Widget#save` in Ruby, `Widget::run` in Rust.
+- Rust normalization is a deliberately degraded tier: a comment-stripped token
+  stream, disclosed as `token_hash` and never as `structural`. Reformatting
+  and re-commenting collide; a renamed local does not, where Ruby's would.
 - `contour eval <SET>` scores a checkout against a labeled set: search hit-rate
   (top-1 / top-5 / found) for contour and two baselines, duplicate precision
   and recall, and the cosine distributions that say where the relevance floor

@@ -10,7 +10,7 @@
 
 mod schema;
 
-use crate::core::{Blob, Oid, Param, ParamKind, Unit};
+use crate::core::{Blob, Lang, Oid, Param, ParamKind, Unit};
 use crate::scan::Files;
 use crate::summary::Summary;
 use anyhow::Result;
@@ -296,8 +296,8 @@ impl Store {
     /// many paths point at it.
     pub fn units(&self, root: &str) -> Result<Vec<Located>> {
         let mut stmt = self.conn.prepare(
-            "SELECT f.path, u.name, u.owner, u.singleton, u.params, u.via, u.line, u.end_line,
-                    u.norm_hash
+            "SELECT f.path, u.lang, u.name, u.owner, u.singleton, u.params, u.via,
+                    u.line, u.end_line, u.norm_hash
                FROM checkout c
                JOIN file f ON f.checkout_id = c.id
                JOIN unit u ON u.blob_id = f.blob_id
@@ -308,14 +308,18 @@ impl Store {
             Ok(Located {
                 path: r.get(0)?,
                 unit: Unit {
-                    name: r.get(1)?,
-                    owner: r.get(2)?,
-                    singleton: r.get::<_, i64>(3)? != 0,
-                    params: decode_params(&r.get::<_, String>(4)?),
-                    via: r.get(5)?,
-                    line: r.get(6)?,
-                    end_line: r.get(7)?,
-                    norm_hash: r.get::<_, Option<i64>>(8)?.map(|h| h as u64),
+                    // An unknown language means the row was written by a
+                    // newer contour; treat it as Ruby rather than dropping a
+                    // unit, since every field but rendering is neutral.
+                    lang: Lang::parse(&r.get::<_, String>(1)?).unwrap_or(Lang::Ruby),
+                    name: r.get(2)?,
+                    owner: r.get(3)?,
+                    singleton: r.get::<_, i64>(4)? != 0,
+                    params: decode_params(&r.get::<_, String>(5)?),
+                    via: r.get(6)?,
+                    line: r.get(7)?,
+                    end_line: r.get(8)?,
+                    norm_hash: r.get::<_, Option<i64>>(9)?.map(|h| h as u64),
                 },
             })
         })?;
@@ -505,12 +509,14 @@ fn insert_blob(tx: &rusqlite::Transaction<'_>, oid: &Oid, blob: &Blob) -> rusqli
         return Ok(());
     }
     let mut stmt = tx.prepare_cached(
-        "INSERT INTO unit (blob_id, name, owner, singleton, params, via, line, end_line, norm_hash)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+        "INSERT INTO unit
+           (blob_id, lang, name, owner, singleton, params, via, line, end_line, norm_hash)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
     )?;
     for u in &blob.units {
         stmt.execute(params![
             blob_id,
+            u.lang.as_str(),
             u.name,
             u.owner,
             u.singleton as i64,

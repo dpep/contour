@@ -195,16 +195,19 @@ fn clone_groups(answer: &serde_json::Value) -> Vec<String> {
 
 /// Rebuild `Unit::id` from JSON, so an expectation names a unit the way a
 /// person does rather than the way the record is shaped.
+///
+/// Mirrors `core::Unit::id`, including its one language-specific bit: Rust
+/// spells every path with `::`, Ruby distinguishes `#` from `.`.
 fn unit_id(row: &serde_json::Value) -> Option<String> {
     let name = row["name"].as_str()?;
     let owner = row["owner"].as_str().unwrap_or_default();
     if owner.is_empty() {
         return Some(name.to_string());
     }
-    let sep = if row["singleton"].as_bool() == Some(true) {
-        '.'
-    } else {
-        '#'
+    let sep = match (row["lang"].as_str(), row["singleton"].as_bool()) {
+        (Some("rust"), _) => "::",
+        (_, Some(true)) => ".",
+        _ => "#",
     };
     Some(format!("{owner}{sep}{name}"))
 }

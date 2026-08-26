@@ -121,7 +121,9 @@ fn walk(node: &Node<'_>, lines: &LineIndex, out: &mut HashMap<(u32, u32), u64>) 
 /// its own hash beside this one rather than being smuggled into it.
 fn def_hash(def: &ruby_prism::DefNode<'_>) -> u64 {
     let mut fold = Fold {
-        hash: FNV_OFFSET,
+        // Seeded with the language, so Ruby and Rust cannot collide into one
+        // another's space in the single `norm_hash` column they share.
+        hash: fnv1a(FNV_OFFSET, crate::core::Lang::Ruby.as_str().as_bytes()),
         locals: HashMap::new(),
         enclosing: def.name().as_slice().to_vec(),
     };
@@ -404,6 +406,6 @@ mod tests {
     /// is a schema bump, not a new expectation.
     #[test]
     fn the_hash_is_frozen() {
-        assert_eq!(h("def run(a)\n  a.save\nend\n"), 0x0483_aa87_5270_736c);
+        assert_eq!(h("def run(a)\n  a.save\nend\n"), 0xb7df_d8ed_9104_2c14);
     }
 }

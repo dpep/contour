@@ -1,0 +1,13 @@
+# Rust units are named the way Rust writes them — `::` throughout, never the
+# `#`/`.` Ruby uses. A Rust developer typing `Widget#run` is one contour has
+# confused, and `Unit::id` is the single place that dialect lives.
+#
+# Also pinned here:
+#   - module and impl nesting compose into one path
+#   - a trait impl is named by the TYPE (`Widget::fmt`), because that is where
+#     a reader looks for the body, not by the trait
+#   - a bodyless trait signature is still a unit; it just has no hash
+#   - a free function at file scope has no owner. Rust derives module paths
+#     from FILE paths, which layer 1 cannot see (DEC-003 forbids it a path),
+#     so `main` is bare rather than `app::main`. Known limit, not an accident.
+symbols app.rs  outer::inner::Widget::new,outer::inner::Widget::run,outer::inner::Widget::fmt,Loud::shout,Loud::whisper,main

@@ -12,7 +12,7 @@ mod generated;
 mod node_tag;
 mod norm;
 
-use crate::core::{Blob, Param, ParamKind, Unit};
+use crate::core::{Blob, Lang, Param, ParamKind, Unit};
 
 /// Every callable in one blob.
 ///
@@ -28,6 +28,7 @@ pub fn units(src: &[u8]) -> Blob {
         .iter()
         .filter(|def| def.kind == facts::Kind::Method)
         .map(|def| Unit {
+            lang: Lang::Ruby,
             name: def.name.clone(),
             owner: owner_path(&def.nesting),
             singleton: def.singleton,

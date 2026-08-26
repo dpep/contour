@@ -18,9 +18,9 @@ pub struct Group {
     /// Hex, not a JSON number: a u64 past 2^53 does not survive a round trip
     /// through a JSON parser that stores numbers as doubles.
     pub norm_hash: String,
-    /// How this group was found. The only tier that exists today, named
-    /// anyway so a consumer written now keeps working when the others land
-    /// (DEC-010).
+    /// How this group was found: `structural` for a normalized Ruby AST,
+    /// `token_hash` for Rust's degraded token stream (DEC-012). A group never
+    /// mixes the two, because each language seeds its own hash space.
     pub how: &'static str,
     /// Source lines spanned, `def` through `end`. The size disclosure that
     /// makes the floor honest: a reader can see whether a match is a real
@@ -75,7 +75,7 @@ pub fn find(store: &Store, root: &str, scope: Option<&str>, min_lines: u32) -> R
         .filter(|(_, members)| members.len() > 1)
         .map(|(hash, members)| Group {
             norm_hash: format!("{hash:016x}"),
-            how: "structural",
+            how: members[0].unit.lang.hash_tier(),
             lines: members[0].unit.end_line + 1 - members[0].unit.line,
             members: members
                 .into_iter()

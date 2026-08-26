@@ -8,8 +8,9 @@
 //!
 //! Layers, strictly separated:
 //!
-//! - [`ruby`] — bytes → units. The only Ruby-aware module; a second language
-//!   is a second module with the same signature (DEC-012).
+//! - [`ruby`] and [`rust`] — bytes → units. Two modules, one signature; no
+//!   other layer learns which produced what (DEC-012). Ruby normalizes a full
+//!   AST, Rust hashes a token stream and says so.
 //! - [`scan`] — checkout → path→blob map. The only module that knows a path
 //!   exists.
 //! - [`store`] — units keyed by blob OID (no paths), plus the path map beside
@@ -32,6 +33,7 @@ pub(crate) mod hash;
 pub mod index;
 pub mod paths;
 pub mod ruby;
+pub mod rust;
 pub mod scan;
 pub mod search;
 pub mod store;

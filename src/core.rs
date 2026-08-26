@@ -36,6 +36,52 @@ impl std::fmt::Display for Oid {
     }
 }
 
+/// A language contour can read.
+///
+/// Only extraction and normalization are language-specific (DEC-012);
+/// everything expensive downstream operates on text and vectors. This tag
+/// exists for three narrow reasons and no others: picking an extractor,
+/// keeping one language's structural hashes out of another's space, and
+/// rendering a unit's name the way that language's people write it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Lang {
+    Ruby,
+    Rust,
+}
+
+impl Lang {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Lang::Ruby => "ruby",
+            Lang::Rust => "rust",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Lang> {
+        match s {
+            "ruby" => Some(Lang::Ruby),
+            "rust" => Some(Lang::Rust),
+            _ => None,
+        }
+    }
+
+    /// How this language's structural hash was computed, as disclosed on every
+    /// duplicate report (DEC-010, DEC-012).
+    ///
+    /// Ruby's is a normalized AST — locals renamed, literals and layout
+    /// collapsed. Rust's is a **degraded tier by design**: a comment-stripped
+    /// token stream, which catches exact-ish clones and nothing subtler. They
+    /// must never both be called `structural`, because a reader would then
+    /// believe a Rust group survived normalization it never saw.
+    pub fn hash_tier(self) -> &'static str {
+        match self {
+            Lang::Ruby => "structural",
+            Lang::Rust => "token_hash",
+        }
+    }
+}
+
 /// One callable span of source.
 ///
 /// Deliberately *not* everything an extractor knows. Classes, constants,
@@ -45,6 +91,7 @@ impl std::fmt::Display for Oid {
 /// when canonicality ranking needs reference counts.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct Unit {
+    pub lang: Lang,
     pub name: String,
     /// The enclosing namespace as written, `::`-joined, empty at top level.
     /// Lexical, not resolved — `Foo::Bar`, never the class `Bar` actually
@@ -70,13 +117,26 @@ pub struct Unit {
 }
 
 impl Unit {
-    /// How a person names this unit, and what `contour similar` accepts:
-    /// `Widget#save`, `Widget.find`, or a bare `helper` at top level.
+    /// How a person names this unit, and what `contour similar` accepts.
+    ///
+    /// The one place the record is rendered in its own language's dialect:
+    /// `Widget#save` and `Widget.find` in Ruby, `Widget::run` in Rust. Every
+    /// other field here is neutral — this is presentation, and a Rust
+    /// developer typing `Widget#run` is a Rust developer contour has confused.
+    ///
+    /// Rust does not spell the associated/instance distinction into the path,
+    /// so `singleton` is carried but not shown there. It is still the same
+    /// fact in both languages: whether calling this needs an instance.
     pub fn id(&self) -> String {
-        let sep = if self.singleton { '.' } else { '#' };
-        match self.owner.is_empty() {
-            true => self.name.clone(),
-            false => format!("{}{sep}{}", self.owner, self.name),
+        if self.owner.is_empty() {
+            return self.name.clone();
+        }
+        match self.lang {
+            Lang::Rust => format!("{}::{}", self.owner, self.name),
+            Lang::Ruby => {
+                let sep = if self.singleton { '.' } else { '#' };
+                format!("{}{sep}{}", self.owner, self.name)
+            }
         }
     }
 }
@@ -148,6 +208,7 @@ mod tests {
 
     fn unit(owner: &str, name: &str, singleton: bool) -> Unit {
         Unit {
+            lang: Lang::Ruby,
             name: name.into(),
             owner: owner.into(),
             singleton,
@@ -165,5 +226,25 @@ mod tests {
         assert_eq!(unit("Widget", "find", true).id(), "Widget.find");
         assert_eq!(unit("A::B", "run", false).id(), "A::B#run");
         assert_eq!(unit("", "helper", false).id(), "helper");
+    }
+
+    /// Rust spells the same record its own way. The distinction `singleton`
+    /// carries is real in both languages; only Ruby writes it into the name.
+    #[test]
+    fn a_rust_unit_is_named_the_way_rust_writes_it() {
+        let rust = |owner: &str, name: &str, singleton: bool| Unit {
+            lang: Lang::Rust,
+            ..unit(owner, name, singleton)
+        };
+        assert_eq!(rust("Widget", "run", false).id(), "Widget::run");
+        assert_eq!(rust("Widget", "new", true).id(), "Widget::new");
+        assert_eq!(rust("a::b::Widget", "run", false).id(), "a::b::Widget::run");
+        assert_eq!(rust("", "main", true).id(), "main");
+    }
+
+    #[test]
+    fn the_two_hash_tiers_are_never_confused() {
+        assert_eq!(Lang::Ruby.hash_tier(), "structural");
+        assert_eq!(Lang::Rust.hash_tier(), "token_hash");
     }
 }

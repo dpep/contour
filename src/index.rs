@@ -3,7 +3,7 @@
 //! The only expensive step is parsing, and it runs on exactly the blobs this
 //! machine has never seen. Everything else is a git call and a fold.
 
-use crate::core::{Blob, Oid};
+use crate::core::{Blob, Lang, Oid};
 use crate::scan;
 use crate::store::{Indexed, Store};
 use anyhow::Result;
@@ -35,9 +35,17 @@ pub fn index(store: &mut Store, path: &Path) -> Result<(String, Indexed)> {
     let read: Vec<(Oid, Option<Blob>)> = todo
         .par_iter()
         .map(|(oid, path)| {
-            let blob = std::fs::read(root.join(path))
-                .ok()
-                .map(|b| crate::ruby::units(&b));
+            // The extractor is chosen by the path, but reads only bytes — so
+            // the same blob still yields the same units wherever it sits, and
+            // the layer-1 contract holds.
+            let blob = std::fs::read(root.join(path)).ok().map(|bytes| {
+                match crate::scan::language(path) {
+                    Some(Lang::Rust) => crate::rust::units(&bytes),
+                    // `language` already said yes, or this path would not be
+                    // in the map at all.
+                    _ => crate::ruby::units(&bytes),
+                }
+            });
             ((*oid).clone(), blob)
         })
         .collect();
