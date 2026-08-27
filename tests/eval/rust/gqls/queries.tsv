@@ -1,2 +1,19 @@
-# Deliberately empty: the Rust sets exist to measure the token_hash tier
-# (see tests/eval/README.md).
+# Query -> the unit that answers it, against a gqls checkout — part of the
+# first Rust SEARCH ground truth; see tests/eval/rust/trekr/queries.tsv for
+# the band conventions.
+#
+# DRAFTED BY CLAUDE, NOT YET REVIEWED BY THE OWNER. Behaviour verified by
+# reading the bodies.
+
+# --- easy on purpose ---------------------------------------------------------
+build an example operation for a schema field	build
+
+# --- no token shared with the answer's identifier ----------------------------
+# The cross-language twin: rails spells this idea Inflector#camelize. See the
+# README ("Cross-language queries") for the proposed extension this motivates.
+make a class-style name from a camelCase field name	to_pascal
+
+# --- behaviour that appears in NO identifier ---------------------------------
+# The name says the algorithm (OSA), not the behaviour; only the body says
+# "typo tolerance".
+tolerate a small typo when comparing two names	osa_within

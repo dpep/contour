@@ -1,3 +1,27 @@
-# Deliberately empty: the Rust sets exist to measure the token_hash tier
-# (see tests/eval/README.md). Search labels can come later if the identifier
-# tier's Rust behaviour becomes a question.
+# Query -> the unit that answers it, against a trekr checkout — part of the
+# first Rust SEARCH ground truth (the Rust sets originally measured only the
+# token_hash tier; a field trial then found Rust search weak, with
+# sentence-named test functions dominating).
+#
+# DRAFTED BY CLAUDE, NOT YET REVIEWED BY THE OWNER. Behaviour verified by
+# reading the bodies. Same bands as the Ruby sets.
+#
+# TEST-TRAP rows: the answer is production code, but the query's vocabulary
+# deliberately matches this repo's sentence-named tests (trekr is the corpus
+# the field trial tripped on). These are the regression net for
+# search::NON_APP_DISCOUNT — if the discount regresses, a test function
+# outranks the labeled answer here first.
+
+# --- easy on purpose ---------------------------------------------------------
+# Shares "receiver" with the answer's name; the contrast row for the traps.
+infer the receiver of a ruby call	receiver_of
+
+# --- no token shared with the answer's identifier ----------------------------
+# TEST-TRAP: resolve/mod.rs's own tests are named
+# a_bare_call_in_a_class_body_dispatches_on_the_class,
+# new_on_a_constant_receiver_resolves_to_class, ... — this wording is theirs,
+# the answer is the production resolver they exercise.
+where does a bare call inside a class body dispatch	method_at
+# TEST-TRAP: refs.rs's test is named reads_both_of_rubys_method_notations;
+# the production parser is what it exercises.
+read both ruby method notations for naming a method	Query::parse

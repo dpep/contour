@@ -28,7 +28,7 @@ in the last column and are counted separately in the report.
 | `rails/` | a rails checkout | real summaries, so an API key |
 | `discourse/` | a discourse checkout | real summaries, so an API key |
 | `mastodon/` | a mastodon checkout | real summaries, so an API key |
-| `rust/<repo>/` | the sibling repos (trekr, rwr, rq, gqls, launder, navi) | nothing |
+| `rust/<repo>/` | the sibling repos (trekr, rwr, rq, gqls, ae, launder, navi) | nothing |
 | `berater/` | a berater checkout — `similar.tsv` only | nothing |
 
 `fixture/` exists to prove the machinery, not to calibrate anything: two dozen
@@ -243,14 +243,53 @@ Two conventions specific to these sets:
   collide". Sound while exactly two units carry the name; a third would
   make the label ambiguous, which is the known cost of DEC-012's owner rule.
 
-`queries.tsv` is deliberately empty — the duplicate tier is what shipped
-unmeasured. Two limits, noted rather than worked around: the harness runs one
-checkout, so the cross-repo copy (ae's `HashEmbedder::embed` is a paste of
-gqls's, identical modulo locals) is real but unlabelable; and `ae` itself has
-no in-repo pair worth labeling. Measured baseline on 2026-08 checkouts:
-every labeled collision reported, no false collisions at any size, and one
+Two limits, noted rather than worked around: the harness runs one checkout,
+so the cross-repo copy (ae's `HashEmbedder::embed` is a paste of gqls's,
+identical modulo locals) is real but unlabelable; and `ae` itself has no
+in-repo pair worth labeling. Measured baseline on 2026-08 checkouts: every
+labeled collision reported, no false collisions at any size, and one
 deliberate false negative (rwr's 3-line `corpus_dir` sits below
 `--min-lines 4` — the floor's cost, on the record).
+
+One labeled family has since been RETIRED WITH ITS DUPLICATION: rq
+consolidated the epoch-seconds helpers into `core/clock.rs` (7df14e2, "One
+clock, not four", 2026-08-27), which is the outcome the report exists to
+cause. The rq pair and similar labels were relabeled to the new corpus; the
+qualification-twin contract case went with them (rwr's renamed-local rows
+still cover the normalization boundary).
+
+### Rust search: the first query labels
+
+The Rust sets originally measured only the duplicate tier; a field trial
+then found Rust *search* weak — sentence-named test functions dominating —
+so `queries.tsv` across the seven repos now carries the first Rust search
+ground truth (~20 queries), in the same bands as the Ruby sets plus one
+convention of its own:
+
+- **TEST-TRAP rows** (marked in comments): the answer is production code,
+  but the query's wording deliberately matches the repo's sentence-named
+  tests (`a_bare_call_in_a_class_body_dispatches_on_the_class`, ...). These
+  are the regression net for `search::NON_APP_DISCOUNT` — and today they
+  fail, because Rust's inline `#[cfg(test)] mod tests` sit in app files and
+  classify as `app` (DEC-022's standing example), so the discount never
+  touches the very units the field trial tripped on. On rq, the ranking for
+  a trap query is a page of `tests::*` units with the production answer
+  below the fold. Fixing that requires unit-level test classification — and
+  the `tests::` owner prefix already visible in those units' ids is the
+  signal to build it from.
+
+### Cross-language queries: a proposed extension
+
+Some ideas exist twice across corpora, once per language: discourse's
+`ScreenedEmail.levenshtein` and ae's `levenshtein`, rails' camelize and
+gqls's `to_pascal`. The ae and discourse sets carry the SAME query verbatim
+("how many edits turn one string into another"), each labeled with its own
+corpus's answer — the harness runs one checkout, so that is as far as the
+current format reaches. Proposed, for when it matters: an optional
+`corpus:` prefix on the expectation column
+(`ruby/discourse:ScreenedEmail.levenshtein<TAB>rust/ae:levenshtein`), scored
+only by a future multi-corpus runner and ignored by the one-checkout
+harness. Not built until a product feature needs cross-corpus answers.
 
 ## The short-body band: the near tier's limitation, measured
 

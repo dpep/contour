@@ -1,0 +1,17 @@
+# Canonicality edges against a gqls checkout — the first Rust ones.
+#
+# DRAFTED BY CLAUDE, NOT YET REVIEWED BY THE OWNER. Verified by reading both
+# bodies and `git log -S` in the gqls checkout.
+#
+# Only pairs whose two units carry DIFFERENT names can be labeled: a copied
+# free function keeps one id under DEC-012's owner rule, and an edge that
+# names the same id twice asserts nothing (trekr's shares_namespace copy has
+# provable direction — mod.rs b3e114e predates refs.rs 4f49270 — and still
+# cannot be written down here).
+#
+# Note for scoring: the references signal is trekr-backed and Ruby-only, so
+# on a Rust corpus git_age is expected to carry the edge alone.
+
+# resolve.rs's to_pascal (c10d954, 2026-07-27) predates example.rs's renamed
+# copy pascal_case (a9707dc, 2026-07-30); bodies identical modulo local names.
+to_pascal	pascal_case	older

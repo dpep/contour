@@ -1,0 +1,4 @@
+# Deliberately empty: ae has no in-repo pair worth labeling (see the README —
+# its one real duplicate, HashEmbedder::embed pasted from gqls, is cross-repo
+# and the one-checkout harness cannot label it). This set exists for
+# queries.tsv.

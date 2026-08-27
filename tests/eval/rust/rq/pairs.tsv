@@ -3,19 +3,23 @@
 # DRAFTED BY CLAUDE, NOT YET REVIEWED BY THE OWNER. Verified by reading both
 # bodies. See tests/eval/rust/trekr/pairs.tsv and the README for the tier's
 # contract and the same-id convention.
+#
+# HISTORY: this set originally labeled rq's epoch-seconds family (now_secs /
+# unix_now / now_unix twice) — two duplicates and the qualification twin. On
+# 2026-08-27 rq consolidated all four into core/clock.rs (7df14e2, "One
+# clock, not four"), which is the outcome dupes exists to cause: the labels
+# were retired WITH the duplication. The qualification-twin contract case
+# (path-qualified vs imported names are different tokens, correct-by-design)
+# is no longer instantiable here; rwr's renamed-local rows still cover the
+# normalization boundary.
+#
+# The one exact group in today's checkout is tests::empty_and_unparseable_
+# yield_no_symbols, copied across FOUR language plugins' inline test mods.
+# It is deliberately NOT labeled: all four units share one id under DEC-012's
+# owner rule, and the same-id convention is only sound for exactly two.
+# (Those inline #[cfg(test)] mods also classify as `app` — DEC-022's
+# standing example — so the test population banner cannot separate them.)
 
-# cli/mod.rs contains the same epoch-seconds helper twice under two names,
-# 400 lines apart. Different names, one file — the cleanest possible Rust
-# duplicate label, and pure oversight.
-now_secs	unix_now	duplicate
-# The same helper again in search/ and store/, name shared this time.
-now_unix	now_unix	duplicate
-
-# The SAME body as now_secs, but written with `SystemTime` imported rather
-# than `std::time::`-qualified. Path qualification is tokens, so the tier
-# misses it correct-by-design — the qualification twin of the renamed-local
-# boundary (see rwr's line_start). Would flip under real normalization.
-now_secs	now_unix	distinct
 # Per-plugin extract calls its own module's grammar and walker: one differing
 # token (tree_sitter_go vs tree_sitter_rust) that is the entire behaviour.
 Rust::extract	Go::extract	distinct
