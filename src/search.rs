@@ -496,12 +496,21 @@ fn vectors_for(
     if !missing.is_empty() {
         // A cold corpus is a long wait, and a silent one reads as a hang.
         //
-        // Measured, and the honest state of this path: the embed loop below is
+        // Measured, and the honest state of this path. The loop below is
         // sequential, and the vendored ONNX embedder holds one session behind
-        // a mutex, so parallelising the loop alone would not help. gqls solves
-        // this with a thread-local pool of embedders plus `Workload::Bulk`;
-        // porting that is the fix when this stops being tolerable. Until then
-        // the cost is disclosed rather than hidden.
+        // a mutex, so parallelising the loop alone would not help.
+        //
+        // Release build, ONNX: contour's own 529 units embed in 3.3 s (~160/s).
+        // rails' 54,296 units had NOT finished after ten minutes, so the cost
+        // is worse than that rate predicts and the nonlinearity is unexplained
+        // — do not quote an extrapolation. The hash embedder does the same
+        // corpus in about 7 s, which is the tradeoff: fast and untrained
+        // against slow-to-warm and good.
+        //
+        // gqls solves this with a thread-local pool of embedders plus
+        // `Workload::Bulk`; porting that is the fix, and the measurement above
+        // is what justifies doing it. Until then the cost is disclosed rather
+        // than hidden.
         if missing.len() > 2_000 {
             eprintln!(
                 "contour: embedding {} texts with the {} embedder — this is a one-time \
