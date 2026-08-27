@@ -133,6 +133,22 @@ impl Store {
                     params![schema::SUMMARY_VERSION.to_string()],
                 )?;
             }
+            // A *newer* purchased schema. The derived half has guarded this
+            // since milestone 1; this half did not, and the gap was worse than
+            // an omission: the migration walk below runs only upward, so a
+            // marker of 99 fell straight through it to the `UPDATE` and got
+            // stamped back down to ours — silently rewriting the one record
+            // that says what format the summaries are in. DEC-016 says the
+            // refusal is the point, and this is where it has to happen.
+            Some(found) if found > schema::SUMMARY_VERSION => {
+                anyhow::bail!(
+                    "the summary table is v{found} but this contour speaks v{}; \
+                     a newer contour wrote it. Summaries are purchased work, so \
+                     this build will not guess at a format it does not know — \
+                     upgrade contour, or point $CONTOUR_DB elsewhere.",
+                    schema::SUMMARY_VERSION
+                );
+            }
             Some(found) if found != schema::SUMMARY_VERSION => {
                 // Migrate rather than drop. Summaries cannot be recomputed
                 // from local bytes, so the tripwire only fires when no
@@ -348,7 +364,12 @@ impl Store {
 
     /// Record one purchased answer. Idempotent: re-running a fill that was
     /// interrupted must not fail on what it already bought.
+    ///
+    /// The one door into the purchased half, and therefore where
+    /// [`Summary::check`] is enforced — a gate on any lesser path is a gate
+    /// the next path forgets.
     pub fn put_summary(&mut self, key: &SummaryKey<'_>, summary: &Summary) -> Result<()> {
+        summary.check()?;
         self.conn.execute(
             "INSERT OR REPLACE INTO summary
                (norm_hash, ctx_hash, prompt, model, via, variant, level, json, created_at)
@@ -636,6 +657,46 @@ mod tests {
             crate::scan::hash_blob(src.as_bytes()),
             crate::ruby::units(src.as_bytes()),
         )
+    }
+
+    /// DEC-016's refusal, which was not enforced: a marker newer than ours
+    /// fell through the upward-only migration walk and was stamped back down,
+    /// rewriting the record that says what format the purchased half is in.
+    /// Found by QA hand-editing `meta`.
+    #[test]
+    fn a_newer_purchased_schema_refuses_to_open() {
+        let path = std::env::temp_dir().join(format!("contour-dec016-{}.db", std::process::id()));
+        for suffix in ["", "-wal", "-shm"] {
+            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+        }
+        Store::open(&path).expect("a fresh store opens");
+
+        let conn = Connection::open(&path).unwrap();
+        conn.execute(
+            "UPDATE meta SET value = '99' WHERE key = 'summary_version'",
+            [],
+        )
+        .unwrap();
+        drop(conn);
+
+        let refused = Store::open(&path);
+        assert!(refused.is_err(), "a newer purchased schema must refuse");
+        let message = format!("{:#}", refused.err().unwrap());
+        assert!(message.contains("v99"), "{message}");
+
+        // And the marker is left exactly as it was found. Repairing it would
+        // destroy the only evidence of what wrote the file.
+        let conn = Connection::open(&path).unwrap();
+        let still: String = conn
+            .query_row(
+                "SELECT value FROM meta WHERE key = 'summary_version'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(still, "99");
+        drop(conn);
+        let _ = std::fs::remove_file(&path);
     }
 
     #[test]

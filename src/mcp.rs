@@ -162,7 +162,7 @@ fn tools() -> Vec<Value> {
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "unit": {"type": "string", "description": "`Owner#method` or `Owner.method` in Ruby, `Owner::fn` in Rust."},
+                    "unit": {"type": "string", "description": "`Owner#method` or `Owner.method` in Ruby, `Owner::fn` in Rust. A name that means two units is refused with both locations listed; pass `path:line` to pick one."},
                     "path": path,
                     "limit": {"type": "integer", "description": "Maximum neighbours. Default 10."}
                 },

@@ -308,9 +308,7 @@ pub fn similar(
     limit: usize,
 ) -> Result<Vec<Neighbor>> {
     let units = in_scope(store, root, None)?;
-    let Some(target) = units.iter().position(|u| u.unit.id() == id) else {
-        bail!("no unit named `{id}` in this checkout");
-    };
+    let target = resolve(&units, id)?;
     let summaries = vectors_for(store, &units, embedder, Prefer::Best)?;
     let here = &units[target];
 
@@ -393,6 +391,59 @@ pub fn similar(
     }
     out.truncate(limit);
     Ok(out)
+}
+
+/// Resolve what the user typed to exactly one unit.
+///
+/// Accepts the id every surface prints (`Owner#method`, `Owner::fn`) and, when
+/// that is not unique, the `path:line` every surface prints beside it.
+///
+/// **An ambiguous name is refused, not resolved.** rails' two
+/// `ConnectionPool::Wrapper#method_missing` defs are the worked example: with
+/// the name alone contour picked whichever the index stored first and then
+/// listed the other one, printing the same id twice, so the answer was
+/// unreadable — the reader could not tell the query from the result. DEC-010
+/// gives ambiguity its own status rather than a quiet resolution, and this is
+/// the same medicine a canonical pick needed: identify a unit by where it is,
+/// not only by what it is called.
+fn resolve(units: &[Located], target: &str) -> Result<usize> {
+    // `path:line` first: it is unambiguous by construction, and a filename
+    // cannot collide with a unit id because ids carry no colon-then-digits.
+    if let Some((path, line)) = target.rsplit_once(':')
+        && let Ok(line) = line.parse::<u32>()
+    {
+        return units
+            .iter()
+            .position(|u| u.path == path && u.unit.line == line)
+            .ok_or_else(|| anyhow::anyhow!("no unit at {target} in this checkout"));
+    }
+
+    let matches: Vec<usize> = units
+        .iter()
+        .enumerate()
+        .filter(|(_, u)| u.unit.id() == target)
+        .map(|(i, _)| i)
+        .collect();
+    match matches.as_slice() {
+        [] => bail!("no unit named `{target}` in this checkout"),
+        [only] => Ok(*only),
+        many => {
+            let listed: Vec<String> = many
+                .iter()
+                .map(|i| {
+                    format!(
+                        "  contour similar {}:{}",
+                        units[*i].path, units[*i].unit.line
+                    )
+                })
+                .collect();
+            bail!(
+                "`{target}` names {} units in this checkout; ask for one by location:\n{}",
+                many.len(),
+                listed.join("\n")
+            )
+        }
+    }
 }
 
 /// Token overlap between a query and a unit's humanized name.

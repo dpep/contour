@@ -122,20 +122,31 @@ pub fn fill(
             Ok((summary, usage)) => {
                 // Written now, not at the end: an interrupt after this point
                 // must not throw away an answer that has already been paid for.
-                store.put_summary(
-                    &SummaryKey {
-                        norm_hash,
-                        ctx_hash,
-                        prompt,
-                        model: &model,
-                        via: crate::store::VIA_API,
-                    },
-                    &summary,
-                )?;
-                counts.summarized += 1;
-                counts.shared += units.len() - 1;
-                counts.remaining -= 1;
-                counts.usage += usage;
+                let key = SummaryKey {
+                    norm_hash,
+                    ctx_hash,
+                    prompt,
+                    model: &model,
+                    via: crate::store::VIA_API,
+                };
+                // A refused answer is one unit's failure, not the run's. The
+                // store gates what it accepts, and a batch that has already
+                // spent money on fifty good answers must not throw them away
+                // over the fifty-first.
+                match store.put_summary(&key, &summary) {
+                    Ok(()) => {
+                        counts.summarized += 1;
+                        counts.shared += units.len() - 1;
+                        counts.remaining -= 1;
+                        counts.usage += usage;
+                    }
+                    Err(err) => {
+                        eprintln!("contour: {}:{} refused — {err:#}", here.path, here.line);
+                        counts.failed += 1;
+                        // The call still happened, so the cost still happened.
+                        counts.usage += usage;
+                    }
+                }
             }
             Err(err) => {
                 eprintln!("contour: {}:{} — {err:#}", here.path, here.line);

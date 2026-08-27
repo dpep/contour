@@ -273,6 +273,67 @@ fn similar_can_be_pointed_at_a_checkout_from_outside_it() {
     );
 }
 
+/// A name that means two units is refused, not quietly resolved to whichever
+/// the index stored first — and the refusal says how to disambiguate. rails'
+/// two `ConnectionPool::Wrapper#method_missing` defs are the real case: the
+/// old answer printed the same id for the query and the result, so a reader
+/// could not tell them apart. Found by QA.
+#[test]
+fn similar_refuses_an_ambiguous_name_and_takes_a_location() {
+    let body = "    def method_missing(name, *args, &block)
+      target = with_connection
+                
+      target.send(name, *args, &block)
+    end
+";
+    let repo = Repo::new(
+        "similar-ambiguous",
+        &[(
+            "pool.rb",
+            &format!(
+                "module ConnectionPool
+  class Wrapper
+{body}
+    def other
+      1
+    end
+
+{body}  end
+end
+"
+            ),
+        )],
+    );
+    repo.run(&["index"]);
+
+    let (_, err, code) = repo.run_in(
+        &repo.dir.clone(),
+        &["similar", "ConnectionPool::Wrapper#method_missing"],
+    );
+    assert_eq!(code, 2, "ambiguity is an error, not a guess");
+    assert!(err.contains("names 2 units"), "got {err:?}");
+    assert!(
+        err.contains("pool.rb:3") && err.contains("pool.rb:13"),
+        "got {err:?}"
+    );
+
+    // The location it just printed resolves, and finds the other copy as an
+    // exact structural clone.
+    let (out, code) = repo.run(&["similar", "pool.rb:3"]);
+    assert_eq!(code, 0);
+    assert!(
+        out.contains("pool.rb:13") && out.contains("[structural]"),
+        "got {out:?}"
+    );
+
+    // An unambiguous name is untouched.
+    assert_eq!(repo.run(&["similar", "ConnectionPool::Wrapper#other"]).1, 0);
+    // A location that names nothing is a miss with its own message.
+    let (_, err, code) = repo.run_in(&repo.dir.clone(), &["similar", "pool.rb:999"]);
+    assert_eq!(code, 2);
+    assert!(err.contains("no unit at pool.rb:999"), "got {err:?}");
+}
+
 /// The summarize loop, driven by replayed answers. No test may make a live API
 /// call: a suite whose cost and result depend on the network is a suite nobody
 /// runs.
@@ -388,6 +449,53 @@ end
     ]);
     assert_eq!(filled["summarized"], 2, "one per language");
     assert_eq!(filled["failed"], 0);
+}
+
+/// The purchased half has one door, and it is gated. `--fixtures` used to walk
+/// an invented side effect straight into a table nothing ever drops, while the
+/// MCP path rejected the identical payload. Found by QA.
+#[test]
+fn a_replayed_summary_is_gated_like_a_contributed_one() {
+    let repo = Repo::new(
+        "fixture-gate",
+        &[(
+            "app.rb",
+            "class Widget
+  def total(items)
+    sum = 0
+    items.each { |i| sum += i }
+    sum
+  end
+             
+  def label
+    name.to_s.upcase.strip
+  end
+end
+",
+        )],
+    );
+    repo.run(&["index"]);
+    let fixtures = repo.dir.join("fx.json");
+    std::fs::write(
+        &fixtures,
+        r#"{"Widget#total": {"summary":"sums","primary_purpose":"aggregate",
+             "secondary_concerns":[],"side_effects":["telepathy"],"domain":"math","patterns":[]},
+            "Widget#label": {"summary":"formats a name","primary_purpose":"format",
+             "secondary_concerns":[],"side_effects":["observes"],"domain":"display","patterns":[]}}"#,
+    )
+    .unwrap();
+
+    let filled = repo.json(&[
+        "summarize",
+        "--fixtures",
+        fixtures.to_str().unwrap(),
+        "--json",
+    ]);
+    // The invented vocabulary is refused; the good answer beside it is kept.
+    // A batch that has already spent money must not be abandoned over one bad
+    // answer, so this is a per-unit failure rather than a failed run.
+    assert_eq!(filled["summarized"], 1);
+    assert_eq!(filled["failed"], 1);
 }
 
 /// A budget bounds spend, and a stale index refuses to summarize rather than

@@ -24,7 +24,9 @@
 //!    are all refused with a message the session can act on. Coercing would
 //!    put a quietly wrong summary into a store that never forgets.
 
-use super::{SideEffect, Summary};
+#[cfg(test)]
+use super::SideEffect;
+use super::Summary;
 use crate::store::{Store, SummaryKey, VIA_MCP};
 use anyhow::{Result, bail};
 use serde_json::Value;
@@ -198,20 +200,9 @@ pub fn validate(payload: &Value) -> Result<Summary> {
 
     let summary: Summary = serde_json::from_value(payload.clone())
         .map_err(|err| anyhow::anyhow!("payload does not match the summary schema: {err}"))?;
-    for (field, value) in [
-        ("summary", &summary.summary),
-        ("primary_purpose", &summary.primary_purpose),
-        ("domain", &summary.domain),
-    ] {
-        if value.trim().is_empty() {
-            bail!("`{field}` must not be empty");
-        }
-    }
-    // Unreachable given the vocabulary check above, and asserted anyway: it is
-    // the one way a coercion could still slip through.
-    if summary.side_effects.contains(&SideEffect::Other) {
-        bail!("`side_effects` fell back to `other`, which a contribution may not do");
-    }
+    // The floor every ingest path shares. Everything above it is the extra
+    // strictness a hand-written payload earns.
+    summary.check()?;
     Ok(summary)
 }
 

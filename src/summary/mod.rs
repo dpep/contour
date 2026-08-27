@@ -55,6 +55,38 @@ pub struct Summary {
     pub patterns: Vec<String>,
 }
 
+impl Summary {
+    /// What must be true of anything that reaches the purchased half.
+    ///
+    /// Enforced by [`crate::store::Store::put_summary`], which is the one door
+    /// into that half — so it holds for a replayed fixture and an API answer
+    /// exactly as it holds for a session's contribution. It used to be checked
+    /// only on the MCP path, and `summarize --fixtures` walked a side effect of
+    /// `telepathy` straight into a table nothing ever drops.
+    ///
+    /// Deliberately *not* the same check as [`contributed::validate`], which is
+    /// stricter because it reads hand-written JSON from outside and can afford
+    /// to be. This is the floor beneath every path.
+    pub fn check(&self) -> anyhow::Result<()> {
+        for (field, value) in [
+            ("summary", &self.summary),
+            ("primary_purpose", &self.primary_purpose),
+            ("domain", &self.domain),
+        ] {
+            anyhow::ensure!(!value.trim().is_empty(), "`{field}` must not be empty");
+        }
+        // `Other` exists so reading an old row degrades one field instead of
+        // failing a parse (see `SideEffect`). Writing one is different: it
+        // means a vocabulary word nobody chose is about to be stored forever.
+        anyhow::ensure!(
+            !self.side_effects.contains(&SideEffect::Other),
+            "`side_effects` holds a value outside contour's vocabulary; a summary is \
+             stored permanently, so it is refused rather than repaired"
+        );
+        Ok(())
+    }
+}
+
 /// What a method does besides return a value.
 ///
 /// A closed vocabulary, unlike `domain` and `patterns`, because the set really
