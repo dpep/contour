@@ -39,3 +39,52 @@ ActiveRecord::ConnectionAdapters::MySQL::SchemaCreation#visit_ChangeColumnDefaul
 # Copied then adapted, but the assertion tests a different association type —
 # consolidating would erase the distinction under test (0.69).
 HasOneThroughAssociationsTest#test_loading_cpk_association_with_unpersisted_owner	HasManyThroughAssociationsTest#test_loading_cpk_association_with_unpersisted_owner	distinct	provisional
+
+# --- M11c re-audit: an unbiased sample of what the near tier actually reports -
+#
+# The labels above this block were sourced from the near tier's own report at
+# 0.80, so they could only ever confirm it — rails scored 1.00/1.00 and the
+# number meant nothing. These were drawn differently: sweep the tier to 0.55,
+# take a RANDOM sample (seed 11) of 20 pairs it reports at the shipped 0.70 and
+# 15 it reports below, and judge every one against the rule — a pair is a
+# duplicate iff consolidating it would reduce net complexity.
+#
+# The finding, and it is not a small one: **2 of the 20 shipped pairs are real**
+# (precision 0.10), and 18 of 20 are sibling test methods that differ by exactly
+# the thing they test. Lowering the threshold gains almost nothing: 1 of 15 in
+# 0.55-0.70. See the same note in pairs.tsv.
+
+# [1.00, 8L, shipped] two latency stubs in one gem's cache tests — a shared helper is the consolidation
+SlowRedis#get	MemCacheStoreTest::SlowDalliClient#get	near
+# [0.75, 6L, shipped] different routes, different scenarios
+ContentSecurityPolicyIntegrationTest#test_generates_no_content_security_policy_for_not_modified	ContentSecurityPolicyIntegrationTest#test_generates_no_content_security_policy	distinct
+# [0.78, 7L, shipped] destroy vs delete is the behaviour under test
+HasManyAssociationsTest#test_destroy_on_association_clears_scope	HasManyAssociationsTest#test_delete_on_association_clears_scope	distinct
+# [0.75, 7L, shipped] default vs marshal serializer
+CookiesTest#test_encrypted_cookie_using_default_serializer	CookiesTest#test_encrypted_cookie_using_marshal_serializer	distinct
+# [0.75, 7L, shipped] different subjects, same assertion
+ControllerRuntimeLogSubscriberTest#test_log_with_active_record	ControllerRuntimeLogSubscriberTest#test_runtime_reset_before_requests	distinct
+# [0.83, 7L, shipped] the extra save is the case
+AssociationProxyTest#test_push_does_not_load_target	AssociationProxyTest#test_push_followed_by_save_does_not_load_target	distinct
+# [0.80, 6L, shipped] belongs_to and has_one mirrored on purpose
+BelongsToAssociationsTest#test_natural_assignment	HasOneAssociationsTest#test_natural_assignment	distinct
+# [0.75, 4L, shipped] the schema reload is the case
+PersistenceTest#test_becomes	PersistenceTest#test_becomes_after_reload_schema_from_cache	distinct
+# [0.75, 8L, shipped] PRODUCTION: identical bodies, but `super` continues from add_column vs change_column (DEC-017)
+ActiveRecord::Migration::Compatibility::V6_1#change_column	ActiveRecord::Migration::Compatibility::V6_1#add_column	distinct
+# [0.60, 7L, below] different assertions about the same output
+GeneratorsTest#test_rails_generators_help_with_builtin_information	GeneratorsTest#test_rails_generators_does_not_show_active_record_hooks	distinct
+# [0.60, 5L, below] PRODUCTION: `IS DISTINCT FROM` against `<=>` — opposite operators, mirrored shape
+Arel::Visitors::PostgreSQL#visit_Arel_Nodes_IsDistinctFrom	Arel::Visitors::MySQL#visit_Arel_Nodes_IsNotDistinctFrom	distinct
+# [0.67, 4L, below] different methods, same logging assertion
+ActiveRecord::PostgresqlConnectionTest#test_encoding_logs_name	ActiveRecord::PostgresqlConnectionTest#test_schema_names_logs_name	distinct
+# [0.60, 4L, below] two test classes, different controller actions
+ExpiresInRenderTest#test_cache_control_no_store_overridden_by_expires_now	HttpCacheNoStoreTest#test_no_store_overridden_by_expires_now	distinct
+# [0.67, 4L, below] model vs helper collision message
+ModelGeneratorTest#test_check_class_collision	HelperGeneratorTest#test_check_class_collision	distinct
+# [0.60, 4L, below] different controllers, same header assertion
+ExpiresInRenderTest#test_no_expires_now_with_public	LastModifiedRenderTest#test_last_modified_with_custom_cache_control_headers	distinct
+# [0.67, 6L, below] reset vs scheduled? is the behaviour under test
+ActiveRecord::LoadAsyncNullExecutorTest#test_reset	ActiveRecord::LoadAsyncNullExecutorTest#test_scheduled?	distinct
+# [0.56, 5L, below] PRODUCTION: subtract against merge — opposite operations on the same set (DEC-017's cousin)
+ActionDispatch::Flash::FlashHash#keep	ActionDispatch::Flash::FlashHash#discard	distinct

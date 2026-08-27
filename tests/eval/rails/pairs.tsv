@@ -131,3 +131,54 @@ ActiveRecord::ConnectionAdapters::PostgreSQL::OID::Macaddr#changed?	ActiveRecord
 # One method taking the operator consolidates both, so the labeling rule keeps
 # it: a small modification for a real reduction.
 Arel::Visitors::ToSql#visit_Arel_Nodes_LessThanOrEqual	Arel::Visitors::ToSql#visit_Arel_Nodes_LessThan	near
+
+# --- M11c re-audit: an unbiased sample of what the near tier actually reports -
+#
+# The labels above this block were sourced from the near tier's own report at
+# 0.80, so they could only ever confirm it — rails scored 1.00/1.00 and the
+# number meant nothing. These were drawn differently: sweep the tier to 0.55,
+# take a RANDOM sample (seed 11) of 20 pairs it reports at the shipped 0.70 and
+# 15 it reports below, and judge every one against the rule — a pair is a
+# duplicate iff consolidating it would reduce net complexity.
+#
+# The finding, and it is not a small one: **2 of the 20 shipped pairs are real**
+# (precision 0.10), and 18 of 20 are sibling test methods that differ by exactly
+# the thing they test. Lowering the threshold gains almost nothing: 1 of 15 in
+# 0.55-0.70. See tests/eval/README.md.
+
+# [0.82, 11L, shipped] same test, two gems: consolidating would couple actionpack's suite to actionmailer's
+FragmentCachingTest#test_expire_fragment_with_regexp	FragmentCachingTest#test_expire_fragment_with_regexp	distinct
+# [0.82, 9L, shipped] Treasure vs HiddenTreasure IS the test
+ActiveRecord::WhereTest#test_polymorphic_shallow_where	ActiveRecord::WhereTest#test_polymorphic_sti_shallow_where	distinct
+# [0.82, 10L, shipped] with and without autosave
+AssociationsTest#test_append_composite_foreign_key_has_many_association	AssociationsTest#test_append_composite_foreign_key_has_many_association_with_autosave	distinct
+# [0.71, 9L, shipped] the whitespace is the case
+HashToXmlTest#test_empty_array_from_xml	HashToXmlTest#test_empty_array_with_whitespace_from_xml	distinct
+# [0.75, 10L, shipped] deep_ vs shallow variants of the method under test
+HashWithIndifferentAccessTest#test_deep_stringify_and_deep_symbolize_keys_on_indifferent_preserves_hash	HashWithIndifferentAccessTest#test_stringify_and_symbolize_keys_on_indifferent_preserves_hash	distinct
+# [0.71, 14L, shipped] different option sets for the helper under test
+DateHelperTest#test_time_select_without_date_hidden_fields	DateHelperTest#test_time_select_with_html_options	distinct
+# [0.71, 14L, shipped] different option sets for the helper under test
+DateHelperTest#test_time_select_without_date_hidden_fields	DateHelperTest#test_time_select_with_disabled_html_option	distinct
+# [0.77, 9L, shipped] two gems' setups, each with its own extra scaffolding
+I18nValidationTest#setup	I18nValidationTest#setup	distinct
+# [0.75, 9L, shipped] one gem's connection tests, the same helper twice — a real consolidation
+ActionCable::Connection::IdentifierTest#open_connection	ActionCable::Connection::StringIdentifierTest#open_connection	near
+# [0.78, 13L, shipped] the configuration flag is the case
+CallbacksOnMultipleInstancesInATransactionTest#test_destroyed_callbacks_called_on_first_saved_instance_in_transaction_with_old_configuration	CallbacksOnMultipleInstancesInATransactionTest#test_destroyed_callbacks_called_on_destroyed_instance_even_when_followed_by_update_from_separate_instances_in_a_transaction	distinct
+# [0.83, 16L, shipped] proxy vs plain collection is the case
+FormHelperTest#test_nested_fields_for_with_child_index_option_override_on_a_nested_attributes_collection_association_with_proxy	FormHelperTest#test_nested_fields_for_with_child_index_option_override_on_a_nested_attributes_collection_association	distinct
+# [0.64, 20L, below] different helpers under test
+DateHelperTest#test_time_select_with_generic_with_css_classes	DateHelperTest#test_datetime_select_discard_year_and_month	distinct
+# [0.58, 30L, below] different option sets for the helper under test
+DateHelperTest#test_datetime_select_with_seconds	DateHelperTest#test_datetime_select_discard_with_order	distinct
+# [0.57, 9L, below] the same form_text helper in two test classes of one gem
+FormWithActsLikeFormForTest#form_text	FormHelperActiveRecordTest#form_text	near
+# [0.60, 15L, below] the open transaction is the case
+ActiveRecord::PostgresqlConnectionTest#test_reset_with_transaction	ActiveRecord::PostgresqlConnectionTest#test_reset	distinct
+# [0.67, 10L, below] the skipped component is the case
+AppGeneratorTest#test_app_update_preserves_skip_action_mailbox	AppGeneratorTest#test_app_update_preserves_skip_action_text	distinct
+# [0.67, 9L, below] different assertions about the generated dummy
+PluginGeneratorTest#test_creating_dummy_without_tests_but_with_dummy_path	PluginGeneratorTest#test_ensure_that_gitignore_can_be_generated_from_a_template_for_dummy_path	distinct
+# [0.68, 21L, below] the format is the case
+ResourcesTest#test_with_new_action_with_name_prefix	ResourcesTest#test_with_formatted_new_action_with_name_prefix	distinct
