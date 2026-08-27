@@ -56,10 +56,32 @@ pub enum Verdict {
     Distinct,
 }
 
+/// One "of these two, this is the implementation the other shadows" label.
+///
+/// An *edge*, not a group: a canonical with two alternates is two rows. That
+/// is the labeller's shape, and it is the right one — a shim that delegates to
+/// what it shadows has a different body, so no duplicate group holds the pair,
+/// and the pair is still the one most worth ranking.
+#[derive(Debug, Clone)]
+pub struct CanonicalLabel {
+    pub canonical: String,
+    pub alternate: String,
+    /// Why the labeller is sure, from a closed vocabulary. Recorded and
+    /// validated, but **not scored against** — a signal's job is to be right,
+    /// not to be right for the reason a human wrote down.
+    pub evidence: Vec<String>,
+    pub provisional: bool,
+}
+
+/// The vocabulary `canonical.tsv` documents. Closed on purpose: a typo that
+/// parses is a label that quietly means something else.
+const EVIDENCE: [&str; 4] = ["older", "delegates", "mirrors", "ex_subclass"];
+
 #[derive(Debug, Default)]
 pub struct Labels {
     pub queries: Vec<QueryLabel>,
     pub pairs: Vec<PairLabel>,
+    pub canonical: Vec<CanonicalLabel>,
 }
 
 /// Read `queries.tsv` and `pairs.tsv` from a labeled-set directory.
@@ -105,7 +127,37 @@ pub fn load(dir: &Path) -> Result<Labels> {
             provisional: fields.next() == Some("provisional"),
         });
     }
+    // Optional: a set may label duplicates without labelling canonicality, and
+    // an absent file is a set that says nothing rather than a broken one.
+    for (line_no, line) in optional_rows(&dir.join("canonical.tsv"))? {
+        let mut fields = line.split('\t').map(str::trim);
+        let (Some(canonical), Some(alternate), Some(evidence)) =
+            (fields.next(), fields.next(), fields.next())
+        else {
+            bail!("canonical.tsv:{line_no}: expected `canonical<TAB>alternate<TAB>evidence`");
+        };
+        let evidence: Vec<String> = evidence.split(',').map(|e| e.trim().to_string()).collect();
+        if let Some(unknown) = evidence.iter().find(|e| !EVIDENCE.contains(&e.as_str())) {
+            bail!(
+                "canonical.tsv:{line_no}: `{unknown}` is not one of {}",
+                EVIDENCE.join(", ")
+            );
+        }
+        labels.canonical.push(CanonicalLabel {
+            canonical: canonical.to_string(),
+            alternate: alternate.to_string(),
+            evidence,
+            provisional: fields.next() == Some("provisional"),
+        });
+    }
     Ok(labels)
+}
+
+fn optional_rows(path: &Path) -> Result<Vec<(usize, String)>> {
+    match path.exists() {
+        true => rows(path),
+        false => Ok(Vec::new()),
+    }
 }
 
 fn rows(path: &Path) -> Result<Vec<(usize, String)>> {
@@ -201,6 +253,43 @@ pub struct FloorPoint {
     pub distractors_cut: usize,
 }
 
+/// How the canonicality signals did against labeled edges.
+#[derive(Debug, Default, serde::Serialize)]
+pub struct CanonicalScore {
+    pub correct: usize,
+    pub wrong: usize,
+    /// The signals disagreed, or none could be measured. **Not** a wrong
+    /// answer: abstaining is the designed behaviour (DEC-019), and scoring it
+    /// as wrong would push the design toward guessing to raise a number.
+    pub abstained: usize,
+    /// A label naming a unit this index does not hold. A broken label, not a
+    /// bad answer — the same convention `Ranking::unknown` uses.
+    pub unknown: usize,
+    /// Each signal on its own, which is the number that says whether a signal
+    /// earns its cost. A signal that is right twice and silent thrice is a
+    /// different proposition from one that is right twice and wrong thrice.
+    pub signals: Vec<SignalScore>,
+    pub cases: Vec<CanonicalCase>,
+}
+
+#[derive(Debug, Default, serde::Serialize)]
+pub struct SignalScore {
+    pub signal: String,
+    pub correct: usize,
+    pub wrong: usize,
+    /// Tied, or unavailable. Silence is honest; it is not a miss.
+    pub silent: usize,
+}
+
+#[derive(Debug, serde::Serialize)]
+pub struct CanonicalCase {
+    pub canonical: String,
+    pub alternate: String,
+    /// `correct`, `wrong`, `abstained`, or `unknown`.
+    pub outcome: &'static str,
+    pub basis: String,
+}
+
 #[derive(Debug, serde::Serialize)]
 pub struct Report {
     pub corpus: String,
@@ -214,8 +303,10 @@ pub struct Report {
     /// the two answer different questions and share no threshold.
     pub near: Dupes,
     pub calibration: Calibration,
+    pub canonical: CanonicalScore,
     pub provisional_queries: usize,
     pub provisional_pairs: usize,
+    pub provisional_canonical: usize,
 }
 
 /// Run the whole eval against the current checkout.
@@ -361,8 +452,10 @@ pub fn run(
             answers: Distribution::of(&calibration_answers),
             distractors: Distribution::of(&calibration_distractors),
         },
+        canonical: score_canonical(root, labels, &units, &by_id),
         provisional_queries: labels.queries.iter().filter(|q| q.provisional).count(),
         provisional_pairs: labels.pairs.iter().filter(|p| p.provisional).count(),
+        provisional_canonical: labels.canonical.iter().filter(|c| c.provisional).count(),
     })
 }
 
@@ -547,6 +640,104 @@ fn score_near(store: &Store, root: &str, labels: &Labels, min_lines: u32) -> Res
     Ok(out)
 }
 
+/// The canonicality signals against labeled edges.
+///
+/// Ranks each labeled pair directly rather than looking for a duplicate group
+/// that holds it, because a `delegates` edge has two different bodies and no
+/// group will ever hold it — and the harness must be able to say whether the
+/// signals get that one right too.
+fn score_canonical(
+    root: &Path,
+    labels: &Labels,
+    units: &[Located],
+    by_id: &HashMap<String, usize>,
+) -> CanonicalScore {
+    let mut out = CanonicalScore::default();
+    if labels.canonical.is_empty() {
+        return out;
+    }
+    let candidate = |id: &str| -> Option<crate::canonical::Candidate> {
+        let unit = &units[*by_id.get(id)?];
+        Some(crate::canonical::Candidate {
+            id: id.to_string(),
+            path: unit.path.clone(),
+            line: unit.unit.line,
+            end_line: unit.unit.end_line,
+            lang: unit.unit.lang,
+        })
+    };
+
+    // One batch of probes for every labeled unit, so a name in two edges is
+    // blamed once.
+    let pairs: Vec<(&CanonicalLabel, Vec<crate::canonical::Candidate>)> = labels
+        .canonical
+        .iter()
+        .map(|label| {
+            let both = [candidate(&label.canonical), candidate(&label.alternate)];
+            (label, both.into_iter().flatten().collect())
+        })
+        .collect();
+    let all: Vec<crate::canonical::Candidate> =
+        pairs.iter().flat_map(|(_, c)| c.iter().cloned()).collect();
+    let probes = crate::canonical::Probes::gather(root, &all);
+
+    let mut signals: HashMap<String, SignalScore> = HashMap::new();
+    for (label, candidates) in &pairs {
+        if candidates.len() != 2 {
+            out.unknown += 1;
+            out.cases.push(CanonicalCase {
+                canonical: label.canonical.clone(),
+                alternate: label.alternate.clone(),
+                outcome: "unknown",
+                basis: "one side is not in this index".into(),
+            });
+            continue;
+        }
+        let ranked = probes.rank(candidates);
+        for signal in &ranked.signals {
+            let score = signals
+                .entry(signal.signal.to_string())
+                .or_insert(SignalScore {
+                    signal: signal.signal.to_string(),
+                    ..SignalScore::default()
+                });
+            match signal.picks.as_deref() {
+                Some(pick) if pick == label.canonical => score.correct += 1,
+                Some(_) => score.wrong += 1,
+                None => score.silent += 1,
+            }
+        }
+        let outcome = match ranked.pick.as_deref() {
+            Some(pick) if pick == label.canonical => {
+                out.correct += 1;
+                "correct"
+            }
+            Some(_) => {
+                out.wrong += 1;
+                "wrong"
+            }
+            None => {
+                out.abstained += 1;
+                "abstained"
+            }
+        };
+        out.cases.push(CanonicalCase {
+            canonical: label.canonical.clone(),
+            alternate: label.alternate.clone(),
+            outcome,
+            basis: ranked.basis,
+        });
+    }
+    // Signal order follows the ranker's, so the report reads the same way the
+    // reasoning does.
+    for name in ["git_age", "references", "namespace_depth"] {
+        if let Some(score) = signals.remove(name) {
+            out.signals.push(score);
+        }
+    }
+    out
+}
+
 /// What each candidate floor would keep and cut. The point of the eval.
 fn sweep(answers: &[f32], distractors: &[f32]) -> Vec<FloorPoint> {
     (0..=10)
@@ -654,11 +845,40 @@ pub fn render(report: &Report) {
             point.floor, point.answers_kept, c.answers.n, point.distractors_cut, c.distractors.n
         );
     }
-    if report.provisional_queries + report.provisional_pairs > 0 {
+    let canon = &report.canonical;
+    if !canon.cases.is_empty() {
+        println!("\ncanonicality ({} labeled edge(s))", canon.cases.len());
+        // Abstentions stand apart from wrong answers on purpose: refusing to
+        // pick when the signals disagree is the design (DEC-019), and a report
+        // that folded the two would make guessing look like an improvement.
         println!(
-            "\n{} query and {} pair label(s) are marked provisional — the \
-             labeller was unsure, and they are included above.",
-            report.provisional_queries, report.provisional_pairs
+            "  correct {}   wrong {}   abstained {}   unknown {}",
+            canon.correct, canon.wrong, canon.abstained, canon.unknown
+        );
+        println!("  signal            correct  wrong  silent");
+        for signal in &canon.signals {
+            println!(
+                "  {:<16} {:>7} {:>6} {:>7}",
+                signal.signal, signal.correct, signal.wrong, signal.silent
+            );
+        }
+        // Only what did not land: the correct rows say nothing a reader acts
+        // on, and the list stays short exactly when the signals are working.
+        for case in canon.cases.iter().filter(|case| case.outcome != "correct") {
+            println!(
+                "  [{}] {} over {} — {}",
+                case.outcome, case.canonical, case.alternate, case.basis
+            );
+        }
+    }
+
+    let provisional =
+        report.provisional_queries + report.provisional_pairs + report.provisional_canonical;
+    if provisional > 0 {
+        println!(
+            "\n{} query, {} pair and {} canonical label(s) are marked provisional \
+             — the labeller was unsure, and they are included above.",
+            report.provisional_queries, report.provisional_pairs, report.provisional_canonical
         );
     }
 }
@@ -675,6 +895,30 @@ mod tests {
         // 0.40 loses one real answer and removes both distractors.
         assert_eq!((at(0.40).answers_kept, at(0.40).distractors_cut), (2, 2));
         assert_eq!((at(0.50).answers_kept, at(0.50).distractors_cut), (1, 2));
+    }
+
+    /// A typo in the evidence column must fail the run, not become a label
+    /// that quietly means something else. The same rule the verdict column has.
+    #[test]
+    fn a_canonical_label_with_unknown_evidence_fails_loudly() {
+        let dir = std::env::temp_dir().join(format!("contour-labels-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("queries.tsv"), "").unwrap();
+        std::fs::write(dir.join("pairs.tsv"), "").unwrap();
+
+        std::fs::write(dir.join("canonical.tsv"), "A#x\tB#x\tolder,delegates\n").unwrap();
+        let labels = load(&dir).unwrap();
+        assert_eq!(labels.canonical.len(), 1);
+        assert_eq!(labels.canonical[0].evidence, ["older", "delegates"]);
+
+        std::fs::write(dir.join("canonical.tsv"), "A#x\tB#x\tolder,oldre\n").unwrap();
+        assert!(load(&dir).is_err(), "`oldre` is not evidence");
+
+        // An absent file is a set that says nothing about canonicality, not a
+        // broken one — the fixture set has no such labels and still runs.
+        std::fs::remove_file(dir.join("canonical.tsv")).unwrap();
+        assert!(load(&dir).unwrap().canonical.is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

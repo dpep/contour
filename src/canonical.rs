@@ -239,7 +239,27 @@ fn resolve(signals: &[Signal]) -> (Option<String>, String) {
         // They named different members. That is a finding — usually a
         // superseded implementation nobody deleted — so it is reported as one
         // rather than resolved by a rule that would be inventing an answer.
-        Some(_) => (None, format!("signals disagree — {}", clauses(&spoke))),
+        //
+        // Which signal favours whom is the whole content of a disagreement, so
+        // it is named here and not just in the per-signal detail: the rails
+        // labels showed a reader can settle every one of these by eye from
+        // this line, and cannot settle any of them without it.
+        Some(_) => (
+            None,
+            format!(
+                "signals disagree — {}",
+                spoke
+                    .iter()
+                    .map(|s| format!(
+                        "{} favours {} ({})",
+                        s.signal,
+                        s.picks.as_deref().unwrap_or("?"),
+                        s.note
+                    ))
+                    .collect::<Vec<_>>()
+                    .join("; ")
+            ),
+        ),
         None => {
             let silent = clauses(
                 &signals

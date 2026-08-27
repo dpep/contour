@@ -99,6 +99,13 @@ Initial skeleton — nothing has been released, so everything below is new.
 - `contour similar UNIT [PATH]` can be pointed at a checkout, like `index` and
   `search` already could, and failing to find one now leads with what to do
   about it rather than with git's own `fatal:`.
+- `contour eval` scores canonicality against `canonical.tsv`, per edge and per
+  signal, counting an abstention apart from a wrong answer. On the rails
+  labels the two deciding signals fail in **opposite** directions: git age is
+  fooled when an implementation is extracted to a new home, and reference
+  counts are fooled by a delegating shim, which is called more precisely
+  because it is the front door. Neither dominates, and the run reports which
+  signal favours which member on every disagreement.
 - **`contour dupes --canonical`** names the likely-original member of every
   group and says why: git age (the oldest surviving line of each body),
   reference counts from `trekr --refs` with its confirmed/possible tiers, and

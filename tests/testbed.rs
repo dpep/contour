@@ -13,9 +13,19 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 fn git(dir: &Path, args: &[&str]) {
+    git_at(dir, "2000-01-01T00:00:00Z", args);
+}
+
+/// The same, with the commit dated. Every commit a case makes is dated
+/// explicitly: `git blame` is a canonicality signal, so "when was this
+/// written" has to be a property of the fixture rather than of the machine
+/// that ran the suite.
+fn git_at(dir: &Path, date: &str, args: &[&str]) {
     let out = Command::new("git")
         .args(args)
         .current_dir(dir)
+        .env("GIT_AUTHOR_DATE", date)
+        .env("GIT_COMMITTER_DATE", date)
         .output()
         .expect("run git");
     assert!(out.status.success(), "git {args:?}: {out:?}");
@@ -34,10 +44,54 @@ fn stage(case: &Path, label: &str) -> (PathBuf, PathBuf) {
     let _ = fs::remove_file(dir.join("expected"));
     let _ = fs::remove_file(dir.join("README.md"));
 
+    // A case may hand its files a history: each path in `history` gets its own
+    // commit, in order, a year apart, and everything else lands in the first.
+    // Without it the whole case is one commit — which is itself a fixture
+    // worth having, since it is what makes the git-age signal tie.
+    let history: Vec<String> = fs::read_to_string(case.join("history"))
+        .unwrap_or_default()
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty() && !l.starts_with('#'))
+        .map(str::to_string)
+        .collect();
+    let _ = fs::remove_file(dir.join("history"));
+
     git(&dir, &["init", "-q"]);
-    git(&dir, &["add", "-A"]);
     let author = ["-c", "user.email=t@e.st", "-c", "user.name=test"];
-    git(&dir, &[&author[..], &["commit", "-qm", "case"]].concat());
+    // Everything the history does not name goes into the first commit, so a
+    // case only has to date the files it is making a claim about.
+    let mut rest: Vec<String> = vec!["-A".into(), "--".into(), ".".into()];
+    rest.extend(history.iter().map(|path| format!(":!:{path}")));
+    for (nth, path) in std::iter::once(None)
+        .chain(history.iter().map(Some))
+        .enumerate()
+    {
+        match path {
+            None => {
+                let args: Vec<&str> = std::iter::once("add")
+                    .chain(rest.iter().map(String::as_str))
+                    .collect();
+                git(&dir, &args);
+            }
+            Some(path) => git(&dir, &["add", "-A", "--", path]),
+        }
+        let year = format!("{}-01-01T00:00:00Z", 2000 + nth);
+        let staged = Command::new("git")
+            .args(["diff", "--cached", "--quiet"])
+            .current_dir(&dir)
+            .output()
+            .expect("run git");
+        // An empty commit would still be a commit, and dating one is how a
+        // case accidentally makes every body look the same age.
+        if !staged.status.success() {
+            git_at(
+                &dir,
+                &year,
+                &[&author[..], &["commit", "-qm", "case"]].concat(),
+            );
+        }
+    }
 
     let indexed = contour(&db, &dir, &["index"]);
     assert!(
@@ -67,6 +121,10 @@ fn contour(db: &Path, dir: &Path, args: &[&str]) -> (serde_json::Value, i32, Str
         .args(args)
         .current_dir(dir)
         .env("CONTOUR_DB", db)
+        // Hermetic: a case must not consult whatever trekr this machine has,
+        // nor index a temp repo into its global store. The reference signal
+        // reports itself absent, which is the degraded path a case can pin.
+        .env("CONTOUR_TREKR", "/nonexistent/trekr")
         .output()
         .expect("run contour");
     (
@@ -79,7 +137,10 @@ fn contour(db: &Path, dir: &Path, args: &[&str]) -> (serde_json::Value, i32, Str
 /// The trailing field of an assertion line: everything after the verb and its
 /// target, trimmed.
 fn tail(rest: &str) -> &str {
-    rest.split_once(char::is_whitespace)
+    // Trimmed first: `split_once` consumes exactly one space, so a case that
+    // lines its columns up with two would otherwise get the whole rest back.
+    rest.trim()
+        .split_once(char::is_whitespace)
         .map(|(_, t)| t.trim())
         .unwrap_or_default()
 }
@@ -168,6 +229,49 @@ fn every_testbed_case_answers_as_recorded() {
                     want.sort();
                     if got != want {
                         fail(format!("expected {want:?}, got {got:?}"));
+                    }
+                }
+                // `canonical  A#x+B#y  A#x` — which member of that group the
+                // signals name, or `(none)` when they decline to. An
+                // abstention is an expectation like any other: it is what a
+                // group with nothing to go on is supposed to produce.
+                "canonical" => {
+                    let (answer, _, _) = contour(
+                        &db,
+                        &dir,
+                        &[
+                            "dupes",
+                            "--min-lines",
+                            "1",
+                            "--near",
+                            "--near-threshold",
+                            "0.5",
+                            "--canonical",
+                            "--json",
+                        ],
+                    );
+                    let mut want_ids: Vec<&str> = target.split('+').collect();
+                    want_ids.sort_unstable();
+                    let found = answer.as_array().into_iter().flatten().find(|group| {
+                        let mut ids: Vec<&str> = group["members"]
+                            .as_array()
+                            .map(|ms| ms.iter().filter_map(|m| m["id"].as_str()).collect())
+                            .unwrap_or_default();
+                        ids.sort_unstable();
+                        ids == want_ids
+                    });
+                    match found {
+                        None => fail(format!("no group holds exactly {want_ids:?}")),
+                        Some(group) => {
+                            let got = group["canonical"]["pick"].as_str().unwrap_or("(none)");
+                            let want = tail(rest);
+                            if got != want {
+                                fail(format!(
+                                    "expected {want:?}, got {got:?} — {}",
+                                    group["canonical"]["basis"].as_str().unwrap_or("?")
+                                ));
+                            }
+                        }
                     }
                 }
                 other => fail(format!("unknown verb `{other}`")),

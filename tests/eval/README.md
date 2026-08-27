@@ -70,8 +70,8 @@ has been over-relaxed.
 
 `canonical.tsv` — groups of similar methods where one is unambiguously the
 implementation the others shadow, with the evidence named (Phase 3's
-canonicality signals need ground truth too). **Proposed format; no harness
-reads it yet.** One row per (canonical, alternate) edge:
+canonicality signals need ground truth too). One row per (canonical,
+alternate) edge:
 
 ```text
 Invoice#unpaid_for	LegacyInvoice#unpaid_for	older,delegates
@@ -83,6 +83,16 @@ canonical), `mirrors` (a declared copy, e.g. a test stub), `ex_subclass` (the
 alternate's class once inherited the method's home). Every verdict is verified
 by reading both bodies and `git log`, never assumed.
 
+The evidence column is **validated but not scored against** — an unknown token
+fails the run, and a signal's job is to be right rather than to be right for
+the reason a human wrote down. The file is optional: a set without one simply
+reports no canonicality section.
+
+The pairs here are *edges*, not groups, and deliberately not all duplicates: a
+shim that `delegates` to what it shadows has a different body, so no clone
+group holds it, and it is still a pair worth ranking. The harness ranks each
+labeled pair directly for that reason.
+
 ## What the report says
 
 - **search** — rank of the expected method, as top-1 / top-5 / found-at-all,
@@ -93,6 +103,12 @@ by reading both bodies and `git log`, never assumed.
 - **duplicates** — precision and recall over the labeled pairs, plus the
   smallest true duplicate and largest false collision, which is where
   `--min-lines` belongs.
+- **canonicality** — for each labeled edge, whether the signals named the
+  labelled implementation, named the other one, or declined to choose. An
+  **abstention is counted apart from a wrong answer**: declining when the
+  signals disagree is the design (DEC-019), and folding the two would make
+  guessing look like an improvement. Each signal is also scored on its own,
+  which is what says whether it earns its cost.
 - **calibration** — the cosine of each labeled answer against the best wrong
   answer for the same query, swept across candidate floors. This is gqls's
   floor experiment rerun on method summaries.
