@@ -39,7 +39,7 @@ pub struct Group {
     /// predicate and carries evidence (`lines`), where this is a graded
     /// judgment and carries the measurement itself (DEC-010).
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub similarity: Option<f32>,
+    pub similarity: Option<f64>,
     pub members: Vec<Member>,
     /// Nodes in one member's normalized body — the size the payoff estimate
     /// is built from. `None` where `norm_hash` is.
@@ -182,6 +182,12 @@ fn member(root: &str, l: &Located, classes: &crate::paths::Classes) -> Member {
     }
 }
 
+/// Two decimals, as an f64 — `crate::search::round2`'s argument, applied to
+/// the other measurement that leaves the process.
+fn round2(x: f32) -> f64 {
+    (x as f64 * 100.0).round() / 100.0
+}
+
 /// The one population a group belongs to, or `mixed` where its copies
 /// disagree. Not a [`crate::paths::Class`]: a file has one class, and a group
 /// of files need not.
@@ -311,7 +317,7 @@ pub fn find_near(
                 how: "near_structural",
                 lang: a.unit.lang,
                 lines: a.unit.end_line + 1 - a.unit.line,
-                similarity: Some(pair.similarity),
+                similarity: Some(round2(pair.similarity)),
                 nodes: a.unit.nodes,
                 saves_nodes: estimate(a.unit.nodes, 2, Some(pair.similarity)),
                 canonical: None,

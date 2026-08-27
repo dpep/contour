@@ -97,7 +97,7 @@ pub struct Hit {
     /// The semantic half's measurement, when it contributed. Absent when the
     /// unit was found by name alone.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub cosine: Option<f32>,
+    pub cosine: Option<f64>,
     /// The fused rank score, after any path-class discount. Deliberately
     /// **not** called confidence: RRF is scale-free and its value means nothing
     /// outside this result set (DEC-010). `cosine` above is the measurement a
@@ -130,7 +130,7 @@ pub struct Answer {
     pub tiers: Tiers,
     /// The absolute cosine floor applied, so a reader knows whether "no
     /// matches" means "nothing above the bar" or "no bar was set".
-    pub floor: f32,
+    pub floor: f64,
     /// Units the floor removed that would otherwise have ranked.
     ///
     /// The floor is inherited from another corpus and contour's own eval
@@ -339,11 +339,16 @@ pub fn search(
 }
 
 /// Two decimals: a cosine off a 256-dim vector has about that much meaning,
-/// and a floor of 0.4000000059604645 is an f32 artefact rather than a
-/// threshold anybody chose. Rounded where the value is built (the house rule),
-/// so JSON and human output cannot disagree about how much precision exists.
-fn round2(x: f32) -> f32 {
-    (x * 100.0).round() / 100.0
+/// and a floor of 0.4000000059604645 is an f32 artefact rather than a threshold
+/// anybody chose. Rounded where the value is built (the house rule), so JSON
+/// and human output cannot disagree about how much precision exists.
+///
+/// **Out as f64, and that is the whole point.** Rounding an f32 leaves an f32,
+/// and serialization widens it back to a double — so `0.45f32` reached every
+/// agent as `0.44999998807907104`, digits the human output had been careful to
+/// hide. The rounding has to survive the type it is serialized through.
+pub(crate) fn round2(x: f32) -> f64 {
+    (x as f64 * 100.0).round() / 100.0
 }
 
 /// One neighbour of a named unit, and how it was found.
@@ -368,12 +373,12 @@ pub struct Neighbor {
     /// is the same measurement: one field called `confidence` here and
     /// `cosine` there made a consumer handle two names for one number.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub cosine: Option<f32>,
+    pub cosine: Option<f64>,
     /// The near tier's Jaccard, named the same as `dupes::Group::similarity`
     /// for the same reason. Two different measurements sharing one field was
     /// the other half of the drift.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub similarity: Option<f32>,
+    pub similarity: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub lines: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -543,7 +548,7 @@ pub struct Neighbors {
     pub embedder: &'static str,
     /// The cosine floor applied to the semantic tier. The structural and
     /// near-structural tiers are predicates and no floor touches them.
-    pub floor: f32,
+    pub floor: f64,
     pub withheld: usize,
     /// Neighbours the path policy removed, by class — from every tier, since
     /// an identical body in `vendor/` is as much a non-answer as a nearby one

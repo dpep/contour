@@ -912,6 +912,23 @@ fn search_ranks_a_spec_below_the_code_it_tests() {
     assert_eq!(answer["hits"][1]["class"], "test");
     // The discount is disclosed rather than being a silent thumb on the scale.
     assert_eq!(answer["discount"], 0.5);
+    // Two decimals, and they survive serialization: rounding an f32 leaves an
+    // f32, which widens back to a double on the way out, so a cosine reached
+    // every agent as `0.44999998807907104` while the human output showed 0.45.
+    // Rounded where the value is built, in the type it is built in.
+    // Asserted on the rendered number, because that is what a consumer reads.
+    let decimals = |value: &serde_json::Value| -> usize {
+        let text = value.to_string();
+        text.split_once('.').map_or(0, |(_, rest)| rest.len())
+    };
+    for hit in answer["hits"].as_array().unwrap() {
+        assert!(
+            decimals(&hit["cosine"]) <= 2,
+            "{} claims more",
+            hit["cosine"]
+        );
+    }
+    assert!(decimals(&answer["floor"]) <= 2);
     assert!(
         answer["hits"][1]["score"].as_f64().unwrap() < answer["hits"][0]["score"].as_f64().unwrap()
     );

@@ -222,31 +222,31 @@ pub struct Calibration {
 #[derive(Debug, Default, serde::Serialize)]
 pub struct Distribution {
     pub n: usize,
-    pub min: f32,
-    pub mean: f32,
-    pub max: f32,
+    pub min: f64,
+    pub mean: f64,
+    pub max: f64,
 }
 
 impl Distribution {
-    fn of(values: &[f32]) -> Distribution {
+    fn of(values: &[f64]) -> Distribution {
         if values.is_empty() {
             return Distribution::default();
         }
         // Two decimals: a cosine off a 256-dim vector over a few dozen labels
         // has about that much meaning, and more digits invent precision.
-        let round = |x: f32| (x * 100.0).round() / 100.0;
+        let round = |x: f64| (x * 100.0).round() / 100.0;
         Distribution {
             n: values.len(),
-            min: round(values.iter().copied().fold(f32::INFINITY, f32::min)),
-            mean: round(values.iter().sum::<f32>() / values.len() as f32),
-            max: round(values.iter().copied().fold(f32::NEG_INFINITY, f32::max)),
+            min: round(values.iter().copied().fold(f64::INFINITY, f64::min)),
+            mean: round(values.iter().sum::<f64>() / values.len() as f64),
+            max: round(values.iter().copied().fold(f64::NEG_INFINITY, f64::max)),
         }
     }
 }
 
 #[derive(Debug, serde::Serialize)]
 pub struct FloorPoint {
-    pub floor: f32,
+    pub floor: f64,
     /// Labeled answers still above the floor.
     pub answers_kept: usize,
     /// Distractors the floor removes.
@@ -336,8 +336,8 @@ pub fn run(
     let depth = units.len().max(1);
     let mut coverage_state = "none";
     let (mut summarized, mut summarizable) = (0, 0);
-    let mut calibration_answers: Vec<f32> = Vec::new();
-    let mut calibration_distractors: Vec<f32> = Vec::new();
+    let mut calibration_answers: Vec<f64> = Vec::new();
+    let mut calibration_distractors: Vec<f64> = Vec::new();
 
     // Both tiers, on one corpus: the embed-the-code against embed-the-summary
     // comparison DEC-004 promised. `Best` uses a summary wherever one exists
@@ -352,8 +352,8 @@ pub fn run(
             label: label.to_string(),
             ..Ranking::default()
         };
-        let mut answers: Vec<f32> = Vec::new();
-        let mut distractors: Vec<f32> = Vec::new();
+        let mut answers: Vec<f64> = Vec::new();
+        let mut distractors: Vec<f64> = Vec::new();
 
         for query in &labels.queries {
             if !by_id.contains_key(&query.expected) {
@@ -407,7 +407,7 @@ pub fn run(
                 .iter()
                 .filter(|h| h.id != query.expected)
                 .filter_map(|h| h.cosine)
-                .fold(None, |acc: Option<f32>, c| {
+                .fold(None, |acc: Option<f64>, c| {
                     Some(acc.map_or(c, |a| a.max(c)))
                 })
             {
@@ -760,10 +760,10 @@ fn score_canonical(
 }
 
 /// What each candidate floor would keep and cut. The point of the eval.
-fn sweep(answers: &[f32], distractors: &[f32]) -> Vec<FloorPoint> {
+fn sweep(answers: &[f64], distractors: &[f64]) -> Vec<FloorPoint> {
     (0..=10)
         .map(|step| {
-            let floor = step as f32 / 20.0; // 0.00 … 0.50
+            let floor = step as f64 / 20.0; // 0.00 … 0.50
             FloorPoint {
                 floor,
                 answers_kept: answers.iter().filter(|c| **c >= floor).count(),
@@ -914,7 +914,7 @@ mod tests {
     #[test]
     fn a_sweep_shows_what_a_floor_would_cost() {
         let points = sweep(&[0.30, 0.45, 0.60], &[0.10, 0.35]);
-        let at = |f: f32| points.iter().find(|p| (p.floor - f).abs() < 1e-6).unwrap();
+        let at = |f: f64| points.iter().find(|p| (p.floor - f).abs() < 1e-6).unwrap();
         assert_eq!((at(0.0).answers_kept, at(0.0).distractors_cut), (3, 0));
         // 0.40 loses one real answer and removes both distractors.
         assert_eq!((at(0.40).answers_kept, at(0.40).distractors_cut), (2, 2));
