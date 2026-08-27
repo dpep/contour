@@ -345,30 +345,6 @@ impl Store {
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
     }
 
-    /// The summary stored under this exact key, if there is one.
-    pub fn summary(&self, key: &SummaryKey<'_>) -> Result<Option<Summary>> {
-        let json: Option<String> = self
-            .conn
-            .query_row(
-                "SELECT json FROM summary
-                  WHERE norm_hash = ?1 AND ctx_hash = ?2 AND prompt = ?3
-                    AND model = ?4 AND via = ?5 AND variant = 'body' AND level = 'unit'",
-                params![
-                    key.norm_hash as i64,
-                    key.ctx_hash as i64,
-                    key.prompt,
-                    key.model,
-                    key.via
-                ],
-                |r| r.get(0),
-            )
-            .optional()?;
-        Ok(match json {
-            Some(json) => Some(serde_json::from_str(&json)?),
-            None => None,
-        })
-    }
-
     /// Record one purchased answer. Idempotent: re-running a fill that was
     /// interrupted must not fail on what it already bought.
     pub fn put_summary(&mut self, key: &SummaryKey<'_>, summary: &Summary) -> Result<()> {

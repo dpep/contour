@@ -67,8 +67,9 @@ Initial skeleton — nothing has been released, so everything below is new.
   Contributions are keyed by the contributing model with `via = mcp`, so they
   never mix into a uniform fill (DEC-018). **Migrates the summary table** — the
   first migration of the purchased half, rather than a drop.
-- The cold embed pass now uses one embedder per worker thread, so a corpus
-  warms in parallel rather than serially through a single mutexed ONNX session.
+- The cold embed pass uses one embedder per worker thread, so a corpus warms
+  in parallel rather than serially through a single mutexed ONNX session.
+  Searches after the first are ~0.2 s.
 - ONNX embedders now report which model they are, so two different models can
   no longer share a vector cache key (DEC-005 said they must not; the default
   `model()` had quietly made them).

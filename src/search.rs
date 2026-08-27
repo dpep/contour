@@ -498,31 +498,29 @@ fn vectors_for(
         //
         // Measured, and worth reading before changing anything here.
         //
-        // Release build, ONNX, this machine (8 cores):
+        // Release, ONNX, 8 cores, contour's own 529 units:
         //
-        // | corpus  | units  | wall  | cpu   | rate    |
-        // |---------|--------|-------|-------|---------|
-        // | contour |    529 |  3.7s | 14.5s |  143/s  |
-        // | trekr   |  1,469 | 12.6s | 47.0s |  117/s  |
-        // | rails   | 54,296 |  73s  | 4m50s |  739/s  |
-        // | rails   | 54,296 | 120s  | 7m51s |  452/s  |  (loaded machine)
+        // | path              | wall  | cpu   |
+        // |-------------------|-------|-------|
+        // | serial            |  3.7s | 14.5s |
+        // | pooled (this one) |  3.9s | 16.1s |
+        // | warm (cached)     | 0.18s |  0.2s |
         //
-        // The small corpora are SLOWER per unit, which looks wrong and is not:
-        // each worker thread loads its own ONNX session, and on a few hundred
-        // units that fixed cost is most of the run. rails is where the real
-        // throughput shows.
+        // A wash at this size, and expected to be: each worker thread loads
+        // its own ONNX session, so on a few hundred units that fixed cost IS
+        // the run. The pool is meant to pay at corpus scale.
         //
-        // Before the thread-local pool, a serial pass over rails had not
-        // finished after ten minutes when it was killed — so the pool is a
-        // large win at corpus scale and roughly a wash below a few thousand
-        // units. Two rails runs are listed because they differ by 1.6x purely
-        // with machine load: quote the range, not either end.
+        // **The rails figure is not yet measured on this path.** Earlier
+        // numbers published for rails (73s and 120s for 54,296 texts) were
+        // taken while `embed_all` was dead code that nothing called, so they
+        // measure the SERIAL loop and were attributed to the pool in error.
+        // Re-measure before quoting anything here; a serial pass over rails
+        // had also failed to finish in ten minutes on a loaded machine, so
+        // the spread on that corpus is wide and load-sensitive.
         //
-        // A minute or two is still a minute or two. If this needs to be faster the
-        // lever is embedding *less* — a scope-bounded warm — rather than
-        // restructuring this loop again: at 452/s the machine is already
-        // saturated, and `user` being 3.9x `wall` says the parallelism is
-        // real.
+        // If this needs to be faster, the lever is embedding *less* — a
+        // scope-bounded warm — rather than restructuring this loop: `user`
+        // running ~4x `wall` says the parallelism is already real.
         if missing.len() > 2_000 {
             eprintln!(
                 "contour: embedding {} texts with the {} embedder — this is a one-time \
@@ -532,12 +530,20 @@ fn vectors_for(
             );
         }
         // One vector per distinct text: identical summaries embed once.
-        let mut fresh: HashMap<u64, Vec<f32>> = HashMap::new();
-        for (key, text) in &missing {
-            fresh
-                .entry(*key)
-                .or_insert_with(|| mrl::compress_matryoshka_vector(&embedder.embed(text)));
-        }
+        let mut unique: Vec<(u64, String)> = missing;
+        unique.sort_unstable_by_key(|(key, _)| *key);
+        unique.dedup_by_key(|(key, _)| *key);
+        let texts: Vec<String> = unique.iter().map(|(_, text)| text.clone()).collect();
+
+        // `None`: no `--embed-model` flag exists yet, so the spec is genuinely
+        // constant and the pool resolves the same embedder `embedder` did —
+        // which it must, because `config` above was keyed from that one.
+        let vectors = crate::embed::embed_all(None, &texts);
+        let fresh: HashMap<u64, Vec<f32>> = unique
+            .into_iter()
+            .map(|(key, _)| key)
+            .zip(vectors)
+            .collect();
         store.put_vectors(
             config,
             &fresh
