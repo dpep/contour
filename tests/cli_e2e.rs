@@ -925,6 +925,42 @@ fn search_ranks_a_spec_below_the_code_it_tests() {
     assert_eq!(all["withheld_paths"]["total"], 0);
 }
 
+/// Two runs of one query must agree. They did not: the semantic half is walked
+/// out of a HashMap, so units with an equal cosine were handed RRF *ranks* in
+/// map order, and the fused scores — and with them the answer — moved between
+/// runs. Found while measuring a ranking change, which is exactly the work a
+/// wandering baseline makes impossible.
+#[test]
+fn one_query_gives_one_answer() {
+    let body = "class Limiter\n  def limit(key)\n    acquire(key)\n  end\nend\n";
+    let repo = Repo::new(
+        "search-stable",
+        &[
+            // Same owner and name in three files: identical identifier text,
+            // so the cosines tie exactly and only the tie-break decides.
+            ("lib/a.rb", body),
+            ("lib/b.rb", body),
+            ("lib/c.rb", body),
+            ("lib/d.rb", &body.replace("Limiter", "Limits")),
+        ],
+    );
+    repo.run(&["index"]);
+
+    let order = || -> Vec<String> {
+        repo.json(&["search", "limit", "--json"])["hits"]
+            .as_array()
+            .expect("hits")
+            .iter()
+            .map(|h| format!("{}:{}", h["path"], h["score"]))
+            .collect()
+    };
+    let first = order();
+    assert!(first.len() >= 3, "{first:?}");
+    for _ in 0..4 {
+        assert_eq!(order(), first, "the same query answered differently");
+    }
+}
+
 /// Nothing in the corpus answers this, so nothing should come back.
 #[test]
 fn search_can_return_nothing() {

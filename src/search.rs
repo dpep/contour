@@ -243,7 +243,13 @@ pub fn search(
         .filter(|(_, cosine)| *cosine >= floor)
         .collect();
     let withheld = scored.len() - semantic.len();
-    semantic.sort_by(|a, b| b.1.total_cmp(&a.1));
+    // Ties broken by unit index, because RRF consumes a *rank*: the list is
+    // built by walking a HashMap, so two units with the same cosine — the same
+    // name in two files is enough — were handed ranks in whatever order the map
+    // yielded, and that changes the fused score. Two runs of one query
+    // disagreed about their order, which is the property the sort below
+    // already claims to guarantee.
+    semantic.sort_by(|a, b| b.1.total_cmp(&a.1).then(a.0.cmp(&b.0)));
 
     let cosines: HashMap<usize, f32> = semantic.iter().copied().collect();
     let mut fused: HashMap<usize, (f64, bool, bool)> = HashMap::new();
@@ -480,7 +486,10 @@ pub fn similar(
         withheld = scored.iter().filter(|(_, c)| *c < floor).count();
         scored.retain(|(_, cosine)| *cosine >= floor);
         scored.retain(|(i, _)| !classes.hides(&units[*i].path, &mut withheld_paths));
-        scored.sort_by(|a, b| b.1.total_cmp(&a.1));
+        // Ties by unit index, for the reason `search` above spells out: this
+        // list is walked out of a HashMap, and `take(limit)` below turns a tie
+        // into a coin flip about which neighbour is reported at all.
+        scored.sort_by(|a, b| b.1.total_cmp(&a.1).then(a.0.cmp(&b.0)));
         for (i, cosine) in scored.into_iter().take(limit) {
             out.push(Neighbor {
                 class: classes.of(&units[i].path),
