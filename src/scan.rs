@@ -1,6 +1,9 @@
 //! VENDORED from trekr `src/scan/mod.rs` (~/code/lib/rust/trekr, MIT, same
 //! author). Trimmed: `walk` (a gem directory is not a checkout — contour has
-//! no gem story yet) and its test.
+//! no gem story yet) and its test. Diverges in one place: [`repo_root`] leads
+//! its failure with guidance instead of git's own stderr, because every
+//! contour command funnels through it and that message is the one a user is
+//! most likely to meet.
 //!
 //! Checkout scan: which Ruby files are here, and what blob is each one?
 //!
@@ -119,7 +122,17 @@ pub fn repo_root(path: &Path) -> Result<PathBuf> {
             .filter(|parent| !parent.as_os_str().is_empty())
             .unwrap_or(Path::new("."))
     };
-    let out = git(dir, &["rev-parse", "--show-toplevel"])?;
+    // The guidance goes first and git's own words follow it: contour is keyed
+    // by blob OID, so "there is no repository here" is a precondition failure
+    // rather than a git problem, and a caller reading raw `fatal:` output has
+    // been handed a diagnostic instead of an answer.
+    let out = git(dir, &["rev-parse", "--show-toplevel"]).with_context(|| {
+        format!(
+            "{} is not inside a git checkout; contour indexes repositories, \
+             so run it inside one or name one with a path argument",
+            dir.display()
+        )
+    })?;
     let path = String::from_utf8(out)?.trim().to_string();
     if path.is_empty() {
         bail!("not a git repository: {}", dir.display());

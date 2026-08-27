@@ -48,14 +48,22 @@ impl Repo {
     }
 
     fn run(&self, args: &[&str]) -> (String, i32) {
+        let (out, _, code) = self.run_in(&self.dir.clone(), args);
+        (out, code)
+    }
+
+    /// The same binary and database, invoked from somewhere else. Only a test
+    /// about *finding* the checkout needs this; everything else runs inside it.
+    fn run_in(&self, cwd: &Path, args: &[&str]) -> (String, String, i32) {
         let out = Command::new(env!("CARGO_BIN_EXE_contour"))
             .args(args)
-            .current_dir(&self.dir)
+            .current_dir(cwd)
             .env("CONTOUR_DB", &self.db)
             .output()
             .expect("run contour");
         (
             String::from_utf8_lossy(&out.stdout).into_owned(),
+            String::from_utf8_lossy(&out.stderr).into_owned(),
             out.status.code().unwrap_or(-1),
         )
     }
@@ -230,6 +238,39 @@ fn dupes_hides_bodies_too_short_to_mean_anything() {
         "Delta is in lib"
     );
     assert_eq!(repo.run(&["dupes", "--json"]).1, 0);
+}
+
+/// Finding the checkout is its own failure mode, and it used to surface as raw
+/// git stderr from a command that had no way to be told where to look. Found
+/// by running the Claude skill cold from outside a repository.
+#[test]
+fn similar_can_be_pointed_at_a_checkout_from_outside_it() {
+    let body = "class %C%\n  def save(a)\n    b = a.check\n    persist(b)\n    b\n  end\nend\n";
+    let repo = Repo::new(
+        "similar-path",
+        &[
+            ("app/a.rb", &body.replace("%C%", "Widget")),
+            ("app/b.rb", &body.replace("%C%", "Gadget")),
+        ],
+    );
+    repo.run(&["index"]);
+    let outside = std::env::temp_dir();
+
+    let (out, _, code) = repo.run_in(
+        &outside,
+        &["similar", "Widget#save", &repo.dir.to_string_lossy()],
+    );
+    assert_eq!(code, 0);
+    assert!(out.contains("Gadget#save"), "got {out:?}");
+
+    // With no path and nowhere to infer one from, the message says what to do
+    // about it before it says what git said.
+    let (_, err, code) = repo.run_in(&outside, &["similar", "Widget#save"]);
+    assert_eq!(code, 2);
+    assert!(
+        err.contains("not inside a git checkout") && err.contains("path argument"),
+        "got {err:?}"
+    );
 }
 
 /// The summarize loop, driven by replayed answers. No test may make a live API

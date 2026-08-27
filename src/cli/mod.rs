@@ -114,6 +114,12 @@ enum Command {
     Similar {
         /// `Owner#method`, `Owner.method`, or a bare name at top level.
         unit: String,
+        /// A path inside the repository. Defaults to the working directory.
+        ///
+        /// Locates the checkout only — neighbours are always sought across the
+        /// whole of it, since the useful answer to "has this been written
+        /// before" is rarely in the directory you are standing in.
+        path: Option<PathBuf>,
         #[arg(short = 'l', long, value_name = "N", default_value_t = DEFAULT_LIMIT)]
         limit: usize,
     },
@@ -226,7 +232,9 @@ fn dispatch(cli: &Cli) -> Result<i32> {
             _,
             _,
         ) => search(query, scope.as_deref(), *limit, *floor, format),
-        (Some(Command::Similar { unit, limit }), _, _) => similar(unit, *limit, format),
+        (Some(Command::Similar { unit, path, limit }), _, _) => {
+            similar(unit, path.as_deref(), *limit, format)
+        }
         (Some(Command::Eval { set, min_lines }), _, _) => eval(set, *min_lines, format),
         // Not a flag, per DEC-015: it serves the index.
         (Some(Command::Mcp), _, _) => {
@@ -484,8 +492,13 @@ fn disclose(answer: &crate::search::Answer) {
     }
 }
 
-fn similar(unit: &str, limit: usize, format: Format) -> Result<i32> {
-    let (root, _) = scoped(None)?;
+fn similar(
+    unit: &str,
+    path: Option<&std::path::Path>,
+    limit: usize,
+    format: Format,
+) -> Result<i32> {
+    let (root, _) = scoped(path)?;
     let embedder = crate::embed::default_embedder(None, crate::embed::Workload::Query);
     let mut store = crate::store::open_default()?;
     let neighbors = crate::search::similar(

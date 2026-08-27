@@ -96,6 +96,9 @@ Initial skeleton — nothing has been released, so everything below is new.
   returning a silence that looks like "nothing found".
 - **Forces a reindex**: signatures are new, and the fold that produces
   `norm_hash` changed shape to compute them.
+- `contour similar UNIT [PATH]` can be pointed at a checkout, like `index` and
+  `search` already could, and failing to find one now leads with what to do
+  about it rather than with git's own `fatal:`.
 - The near tier's skip disclosure no longer blames Rust for a Ruby body. A
   body with no comparable sub-shape is skipped for one of two reasons — its
   language has none (Rust), or every sub-shape in it fell below the size floor
