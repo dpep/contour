@@ -599,7 +599,7 @@ fn in_scope(store: &Store, root: &str, scope: Option<&str>) -> Result<Vec<Locate
     Ok(store
         .units(root)?
         .into_iter()
-        .filter(|l| scope.is_none_or(|s| crate::dupes::under(&l.path, s)))
+        .filter(|l| scope.is_none_or(|s| crate::paths::under(&l.path, s)))
         .collect())
 }
 

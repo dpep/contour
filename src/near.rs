@@ -233,7 +233,7 @@ pub fn neighbors(
     let mut out: Vec<Neighbor> = store
         .units(root)?
         .into_iter()
-        .filter(|l| scope.is_none_or(|s| crate::dupes::under(&l.path, s)))
+        .filter(|l| scope.is_none_or(|s| crate::paths::under(&l.path, s)))
         .filter_map(|l| {
             let similarity = *scored.get(&l.unit.norm_hash?)?;
             Some(Neighbor {

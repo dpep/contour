@@ -1,4 +1,8 @@
-//! Path rendering, in one place so no output surface can quietly forget.
+//! What contour knows about a path: how to render it, and what it points at.
+//!
+//! Rendering lives here so no output surface can quietly forget it. Scoping
+//! lives here because a path prefix has to mean one thing to every command
+//! that takes one.
 
 /// A path as a person should read it: `$HOME` shown as `~`.
 ///
@@ -45,9 +49,31 @@ pub fn within<'a>(root: &str, path: &'a str) -> &'a str {
         .unwrap_or(path)
 }
 
+/// Is `path` inside the directory (or equal to the file) named by `prefix`?
+/// Boundary-aware: `app/model` does not contain `app/models/widget.rb`.
+///
+/// One implementation, because a scope must mean the same thing to `dupes`,
+/// `search`, `similar` and `summarize` — two would eventually disagree.
+pub fn under(path: &str, prefix: &str) -> bool {
+    let prefix = prefix.trim_end_matches('/');
+    if prefix.is_empty() || prefix == "." {
+        return true;
+    }
+    path == prefix || (path.starts_with(prefix) && path.as_bytes().get(prefix.len()) == Some(&b'/'))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_scope_stops_at_a_path_boundary() {
+        assert!(under("app/models/widget.rb", "app/models"));
+        assert!(under("app/models/widget.rb", "app/models/"));
+        assert!(under("app/models/widget.rb", "app/models/widget.rb"));
+        assert!(!under("app/models2/widget.rb", "app/models"));
+        assert!(under("anything", "."));
+    }
 
     #[test]
     fn a_path_round_trips_between_the_two_audiences() {

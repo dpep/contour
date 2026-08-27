@@ -76,7 +76,7 @@ pub fn fill(
         let Some(norm_hash) = located.unit.norm_hash else {
             continue;
         };
-        if !scope.is_none_or(|s| crate::dupes::under(&located.path, s)) {
+        if !scope.is_none_or(|s| crate::paths::under(&located.path, s)) {
             continue;
         }
         let context = Context::of(&located.unit);
@@ -196,7 +196,7 @@ pub fn pending(
         let Some(norm_hash) = located.unit.norm_hash else {
             continue;
         };
-        if !scope.is_none_or(|s| crate::dupes::under(&located.path, s)) {
+        if !scope.is_none_or(|s| crate::paths::under(&located.path, s)) {
             continue;
         }
         let context = Context::of(&located.unit);

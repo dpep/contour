@@ -111,7 +111,7 @@ pub fn find(store: &Store, root: &str, scope: Option<&str>, min_lines: u32) -> R
         .into_iter()
         .filter(|l| l.unit.norm_hash.is_some())
         .filter(|l| l.unit.end_line + 1 - l.unit.line >= min_lines)
-        .filter(|l| scope.is_none_or(|s| under(&l.path, s)))
+        .filter(|l| scope.is_none_or(|s| crate::paths::under(&l.path, s)))
         .collect();
 
     // One `def` can produce two units — `module_function` emits a private
@@ -282,26 +282,13 @@ fn candidates(
         .into_iter()
         .filter(|l| l.unit.norm_hash.is_some())
         .filter(|l| l.unit.end_line + 1 - l.unit.line >= min_lines)
-        .filter(|l| scope.is_none_or(|s| under(&l.path, s)))
+        .filter(|l| scope.is_none_or(|s| crate::paths::under(&l.path, s)))
         .collect();
     out.sort_by(|a, b| {
         (&a.path, a.unit.line, a.unit.norm_hash).cmp(&(&b.path, b.unit.line, b.unit.norm_hash))
     });
     out.dedup_by(|a, b| a.path == b.path && a.unit.line == b.unit.line);
     Ok(out)
-}
-
-/// Is `path` inside the directory (or equal to the file) named by `prefix`?
-/// Boundary-aware: `app/model` does not contain `app/models/widget.rb`.
-///
-/// Shared with `summary::fill`: a scope must mean the same thing to every
-/// command that takes one, and two implementations would eventually disagree.
-pub(crate) fn under(path: &str, prefix: &str) -> bool {
-    let prefix = prefix.trim_end_matches('/');
-    if prefix.is_empty() || prefix == "." {
-        return true;
-    }
-    path == prefix || (path.starts_with(prefix) && path.as_bytes().get(prefix.len()) == Some(&b'/'))
 }
 
 #[cfg(test)]
@@ -372,14 +359,5 @@ mod tests {
         // No node count is no estimate. Falling back to lines here would order
         // one report by two units, which is to order it by neither.
         assert_eq!(estimate(None, 5, None), 0);
-    }
-
-    #[test]
-    fn a_scope_stops_at_a_path_boundary() {
-        assert!(under("app/models/widget.rb", "app/models"));
-        assert!(under("app/models/widget.rb", "app/models/"));
-        assert!(under("app/models/widget.rb", "app/models/widget.rb"));
-        assert!(!under("app/models2/widget.rb", "app/models"));
-        assert!(under("anything", "."));
     }
 }
