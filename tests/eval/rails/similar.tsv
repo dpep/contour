@@ -1,5 +1,5 @@
-# Ground truth for `contour similar`, against a rails checkout. Proposed
-# format — no harness reads this yet (see tests/eval/README.md).
+# Ground truth for `contour similar`, against a rails checkout. Read by
+# `contour eval` (see tests/eval/README.md).
 #
 # DRAFTED BY CLAUDE, NOT YET REVIEWED BY THE OWNER. Every case was verified by
 # running `contour similar <probe>` from a rails checkout AND reading the

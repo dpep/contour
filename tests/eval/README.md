@@ -167,6 +167,14 @@ Berater::ConcurrencyLimiter#acquire_lock	must_not	Berater::Lock#capacity
   would be wrong — the DEC-017 pairs are exactly this). Without a tier: must
   not appear at all.
 
+**The harness reads it**, running `contour similar` exactly as a caller would
+— the default limit, the corpus's own path policy — because what is being
+scored is what somebody is *shown*. A `must` row is correct only when the
+neighbour is found by the tier it names: the tier is a claim (DEC-019), so
+finding a labeled-semantic pair at the near tier is a wrong answer, not a
+better one. A `must_not` naming a tier forbids that tier and every stronger
+one.
+
 Every case was verified by running `contour similar` from the corpus checkout
 and reading the bodies. Cases the tool currently fails are labeled with what
 SHOULD happen and marked `CURRENTLY FAILING` in a comment — those are the

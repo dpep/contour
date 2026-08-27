@@ -1,0 +1,20 @@
+# Ground truth for `contour similar`, against the fixture corpus. This set is
+# the one that runs in CI, so its job is to hold the harness honest — the
+# corpus-scale judgements live in the rails, discourse and berater sets.
+#
+# Format: probe<TAB>must|must_not<TAB>neighbour[<TAB>tier][<TAB>provisional]
+#   must      the neighbour must appear within the default limit; `tier` is
+#             the tier expected to find it (structural | near_structural |
+#             semantic).
+#   must_not  with a tier: must not appear at that tier or stronger; without:
+#             must not appear at all.
+
+# The copy-paste pairs, asked the similar way around. These are exact clones,
+# so the structural tier owes an answer without any embedder in the loop.
+Warehouse#available	must	Depot#available	structural
+Polygon#perimeter	must	Trail#length	structural
+
+# The sharp half, and the reason this file is worth having: a near miss must
+# be *reported* — it is a real neighbour — but never claimed as the same
+# implementation. Same shape, different arithmetic.
+Polygon#perimeter	must_not	Polygon#area	near_structural

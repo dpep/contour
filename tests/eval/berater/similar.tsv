@@ -1,7 +1,7 @@
 # Ground truth for `contour similar`, against a berater checkout
 # (~/code/lib/ruby/berater) — the method-family case the tool was built for:
 # one `acquire_lock` contract, sibling implementations across limiter classes.
-# Proposed format — no harness reads this yet; see tests/eval/rails/similar.tsv
+# Format read by `contour eval`; see tests/eval/rails/similar.tsv
 # for the row grammar.
 #
 # DRAFTED BY CLAUDE, NOT YET REVIEWED BY THE OWNER. Every case was verified by

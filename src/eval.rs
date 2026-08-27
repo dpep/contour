@@ -77,6 +77,38 @@ pub struct CanonicalLabel {
 /// parses is a label that quietly means something else.
 const EVIDENCE: [&str; 4] = ["older", "delegates", "mirrors", "ex_subclass"];
 
+/// One "probing this unit must (not) surface that one" label.
+#[derive(Debug, Clone)]
+pub struct SimilarLabel {
+    pub probe: String,
+    pub neighbour: String,
+    pub assertion: Assertion,
+    pub provisional: bool,
+}
+
+/// What a row claims. An enum rather than a `must` flag beside an optional
+/// tier, because only three of those four combinations mean anything: a `must`
+/// without a tier would assert merely "appears somewhere", which is the
+/// assertion this file exists to be sharper than.
+#[derive(Debug, Clone)]
+pub enum Assertion {
+    /// The neighbour must appear, found by this tier.
+    Must(String),
+    /// The neighbour must not appear at this tier **or any stronger one**.
+    MustNotAt(String),
+    /// The neighbour must not appear at all.
+    MustNot,
+}
+
+/// The tiers `similar` reports, weakest first. A `must_not` at one of them
+/// forbids that tier **and every stronger one**: if claiming two methods are
+/// near-copies is wrong, claiming they are identical is worse.
+const TIERS: [&str; 3] = ["semantic", "near_structural", "structural"];
+
+fn tier_strength(tier: &str) -> usize {
+    TIERS.iter().position(|t| *t == tier).unwrap_or(0)
+}
+
 #[derive(Debug, Default)]
 pub struct Labels {
     pub queries: Vec<QueryLabel>,
@@ -86,6 +118,7 @@ pub struct Labels {
     /// numbers never blur the headline ones. This is the population the near
     /// tier was failing: 0.80 missed 11 of 13 of them.
     pub short: Vec<PairLabel>,
+    pub similar: Vec<SimilarLabel>,
 }
 
 /// Read `queries.tsv` and `pairs.tsv` from a labeled-set directory.
@@ -139,6 +172,39 @@ pub fn load(dir: &Path) -> Result<Labels> {
             alternate: alternate.to_string(),
             evidence,
             provisional: fields.next() == Some("provisional"),
+        });
+    }
+
+    // `probe<TAB>must|must_not<TAB>neighbour[<TAB>tier][<TAB>provisional]`
+    for (line_no, line) in optional_rows(&dir.join("similar.tsv"))? {
+        let mut fields = line.split('\t').map(str::trim);
+        let (Some(probe), Some(assertion), Some(neighbour)) =
+            (fields.next(), fields.next(), fields.next())
+        else {
+            bail!("similar.tsv:{line_no}: expected `probe<TAB>must|must_not<TAB>neighbour`");
+        };
+        let rest: Vec<&str> = fields.filter(|f| !f.is_empty()).collect();
+        let tier = rest.iter().find(|f| **f != "provisional").copied();
+        if let Some(tier) = tier
+            && !TIERS.contains(&tier)
+        {
+            bail!(
+                "similar.tsv:{line_no}: `{tier}` is not one of {}",
+                TIERS.join(", ")
+            );
+        }
+        let assertion = match (assertion, tier) {
+            ("must", Some(tier)) => Assertion::Must(tier.to_string()),
+            ("must", None) => bail!("similar.tsv:{line_no}: a `must` row needs the tier it claims"),
+            ("must_not", Some(tier)) => Assertion::MustNotAt(tier.to_string()),
+            ("must_not", None) => Assertion::MustNot,
+            (other, _) => bail!("similar.tsv:{line_no}: `{other}` is not must or must_not"),
+        };
+        labels.similar.push(SimilarLabel {
+            probe: probe.to_string(),
+            neighbour: neighbour.to_string(),
+            assertion,
+            provisional: rest.contains(&"provisional"),
         });
     }
     Ok(labels)
@@ -347,6 +413,32 @@ pub struct CanonicalCase {
     pub basis: String,
 }
 
+/// How `similar` did against its labeled assertions.
+///
+/// No `abstained` column, unlike canonicality: a neighbour list does not
+/// decline to answer, so every assertion lands as right, wrong, or broken.
+#[derive(Debug, Default, serde::Serialize)]
+pub struct SimilarScore {
+    pub correct: usize,
+    pub wrong: usize,
+    /// A label naming a unit this index does not hold — a broken label, not a
+    /// bad answer, the same convention `Ranking::unknown` uses.
+    pub unknown: usize,
+    pub cases: Vec<SimilarCase>,
+}
+
+#[derive(Debug, serde::Serialize)]
+pub struct SimilarCase {
+    pub probe: String,
+    pub neighbour: String,
+    /// `must` or `must_not`, with the tier the label claimed.
+    pub assertion: String,
+    /// `correct`, `wrong`, or `unknown`.
+    pub outcome: &'static str,
+    /// What actually happened, in the terms the label was written in.
+    pub basis: String,
+}
+
 #[derive(Debug, serde::Serialize)]
 pub struct Report {
     pub corpus: String,
@@ -364,6 +456,7 @@ pub struct Report {
     pub near_sweep: Vec<NearPoint>,
     pub calibration: Calibration,
     pub canonical: CanonicalScore,
+    pub similar: SimilarScore,
     pub provisional_queries: usize,
     pub provisional_pairs: usize,
     pub provisional_canonical: usize,
@@ -502,6 +595,8 @@ pub fn run(
     let dupes = score_dupes(store, &root_str, labels, min_lines, &classes)?;
     let near = score_near(store, &root_str, labels, min_lines, &classes)?;
     let near_sweep = near_sweep(store, &root_str, labels)?;
+    let similar = score_similar(store, &root_str, labels, &by_id, embedder, &classes)?;
+
     Ok(Report {
         corpus: root_str,
         embedder: embedder.kind(),
@@ -518,6 +613,7 @@ pub fn run(
             distractors: Distribution::of(&calibration_distractors),
         },
         canonical: score_canonical(root, labels, &units, &by_id),
+        similar,
         provisional_queries: labels.queries.iter().filter(|q| q.provisional).count(),
         provisional_pairs: labels
             .pairs
@@ -823,6 +919,98 @@ fn score_near(
     Ok(out)
 }
 
+/// `contour similar` against its labeled assertions.
+///
+/// Runs the tool exactly as a caller would — the default limit, the corpus's
+/// own path policy — because the assertion being scored is about what somebody
+/// is *shown*, not about what the tiers computed internally.
+fn score_similar(
+    store: &mut Store,
+    root: &str,
+    labels: &Labels,
+    by_id: &HashMap<String, usize>,
+    embedder: &dyn Embedder,
+    classes: &crate::paths::Classes,
+) -> Result<SimilarScore> {
+    let mut out = SimilarScore::default();
+    // One run per probe, not per assertion: the DEC-017 guard labels the same
+    // pair twice (must be semantic, must not be near), and running the tool
+    // twice for one answer would only invite the two rows to disagree.
+    let mut answers: HashMap<&str, HashMap<String, &'static str>> = HashMap::new();
+    for label in &labels.similar {
+        if !by_id.contains_key(&label.probe) || !by_id.contains_key(&label.neighbour) {
+            out.unknown += 1;
+            out.cases.push(SimilarCase {
+                probe: label.probe.clone(),
+                neighbour: label.neighbour.clone(),
+                assertion: assertion_text(label),
+                outcome: "unknown",
+                basis: "a label names a unit not in this index".to_string(),
+            });
+            continue;
+        }
+        if !answers.contains_key(label.probe.as_str()) {
+            let found = crate::search::similar(
+                store,
+                root,
+                &label.probe,
+                embedder,
+                crate::cli::DEFAULT_LIMIT,
+                classes,
+            )?;
+            let tiers = found.neighbors.into_iter().map(|n| (n.id, n.how)).collect();
+            answers.insert(&label.probe, tiers);
+        }
+        let at = answers[label.probe.as_str()].get(&label.neighbour).copied();
+
+        let (outcome, basis) = match (&label.assertion, at) {
+            (Assertion::Must(want), Some(got)) if got == *want => ("correct", got.to_string()),
+            (Assertion::Must(want), Some(got)) => {
+                ("wrong", format!("found by {got}, labeled {want}"))
+            }
+            (Assertion::Must(_), None) => (
+                "wrong",
+                format!("not in the first {} neighbours", crate::cli::DEFAULT_LIMIT),
+            ),
+            // A `must_not` naming a tier forbids that tier and every stronger
+            // one; a weaker tier is the label's whole point (DEC-017's pairs
+            // are semantic neighbours and must stay semantic).
+            (Assertion::MustNotAt(forbidden), Some(got))
+                if tier_strength(got) >= tier_strength(forbidden) =>
+            {
+                ("wrong", format!("claimed {got}"))
+            }
+            (Assertion::MustNotAt(_), Some(got)) => {
+                ("correct", format!("{got}, weaker than the forbidden tier"))
+            }
+            (Assertion::MustNot, Some(got)) => ("wrong", format!("reported at all, by {got}")),
+            (Assertion::MustNotAt(_) | Assertion::MustNot, None) => {
+                ("correct", "absent".to_string())
+            }
+        };
+        match outcome {
+            "correct" => out.correct += 1,
+            _ => out.wrong += 1,
+        }
+        out.cases.push(SimilarCase {
+            probe: label.probe.clone(),
+            neighbour: label.neighbour.clone(),
+            assertion: assertion_text(label),
+            outcome,
+            basis,
+        });
+    }
+    Ok(out)
+}
+
+fn assertion_text(label: &SimilarLabel) -> String {
+    match &label.assertion {
+        Assertion::Must(tier) => format!("must {tier}"),
+        Assertion::MustNotAt(tier) => format!("must_not {tier}"),
+        Assertion::MustNot => "must_not".to_string(),
+    }
+}
+
 /// The canonicality signals against labeled edges.
 ///
 /// Ranks each labeled pair directly rather than looking for a duplicate group
@@ -1068,6 +1256,24 @@ pub fn render(report: &Report) {
             point.floor, point.answers_kept, c.answers.n, point.distractors_cut, c.distractors.n
         );
     }
+    let sim = &report.similar;
+    if !sim.cases.is_empty() {
+        println!("\nsimilar ({} labeled assertion(s))", sim.cases.len());
+        println!(
+            "  correct {}   wrong {}   unknown {}",
+            sim.correct, sim.wrong, sim.unknown
+        );
+        // Only what did not hold: the passing rows say nothing a reader acts
+        // on, and this list is the file's whole purpose — several of its
+        // labels were written as what *should* happen, not what does.
+        for case in sim.cases.iter().filter(|case| case.outcome != "correct") {
+            println!(
+                "  [{}] {} {} {} — {}",
+                case.outcome, case.probe, case.assertion, case.neighbour, case.basis
+            );
+        }
+    }
+
     let canon = &report.canonical;
     if !canon.cases.is_empty() {
         println!("\ncanonicality ({} labeled edge(s))", canon.cases.len());
@@ -1141,6 +1347,46 @@ mod tests {
         // broken one — the fixture set has no such labels and still runs.
         std::fs::remove_file(dir.join("canonical.tsv")).unwrap();
         assert!(load(&dir).unwrap().canonical.is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The grammar's one asymmetry: a `must` claims a tier, a `must_not` need
+    /// not. Both halves fail loudly rather than defaulting, because a label
+    /// that parses into a weaker assertion than its author meant is an eval
+    /// that quietly stops testing what it says it tests.
+    #[test]
+    fn a_similar_label_must_name_the_tier_it_claims() {
+        let dir = std::env::temp_dir().join(format!("contour-similar-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("queries.tsv"), "").unwrap();
+        std::fs::write(dir.join("pairs.tsv"), "").unwrap();
+
+        let path = dir.join("similar.tsv");
+        std::fs::write(&path, "A#x\tmust\tB#x\tstructural\n").unwrap();
+        assert!(matches!(
+            load(&dir).unwrap().similar[0].assertion,
+            Assertion::Must(ref t) if t == "structural"
+        ));
+
+        // A bare `must_not` is the strongest form of the assertion, not an
+        // incomplete one: it forbids every tier.
+        std::fs::write(&path, "A#x\tmust_not\tB#x\n").unwrap();
+        assert!(matches!(
+            load(&dir).unwrap().similar[0].assertion,
+            Assertion::MustNot
+        ));
+
+        std::fs::write(&path, "A#x\tmust\tB#x\n").unwrap();
+        assert!(load(&dir).is_err(), "a `must` with no tier claims nothing");
+
+        std::fs::write(&path, "A#x\tmust\tB#x\tnearly\n").unwrap();
+        assert!(load(&dir).is_err(), "`nearly` is not a tier");
+
+        std::fs::write(&path, "A#x\tmight\tB#x\tsemantic\n").unwrap();
+        assert!(load(&dir).is_err(), "`might` is not an assertion");
+
+        std::fs::remove_file(&path).unwrap();
+        assert!(load(&dir).unwrap().similar.is_empty(), "absent, not broken");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

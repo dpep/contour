@@ -1,5 +1,5 @@
-# Ground truth for `contour similar`, against a discourse checkout. Proposed
-# format — no harness reads this yet; see tests/eval/rails/similar.tsv for the
+# Ground truth for `contour similar`, against a discourse checkout. Read by
+# `contour eval`; see tests/eval/rails/similar.tsv for the
 # row grammar and tests/eval/README.md for the semantics.
 #
 # DRAFTED BY CLAUDE, NOT YET REVIEWED BY THE OWNER. Every case was verified by

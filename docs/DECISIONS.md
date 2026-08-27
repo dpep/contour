@@ -529,9 +529,9 @@ the seven sets changes rank, and both known live cases flip.
 
 ## DEC-023 — What a summary is worth against a name
 
-**Status: built at M11b, awaiting the review checkpoint.** Recorded here while
-the reasoning is fresh; the constants are one line to change if the ruling
-differs.
+**Status: ratified at the M11b review**, both constants as built, with the
+stated-cost paragraph amended to say what the bias is *for* as well as what it
+costs.
 
 The field trial asked for a summary it had contributed and got it fifth. The
 mechanism is not the embedder: RRF fuses two *rankings* and discards the cosine,
@@ -553,9 +553,19 @@ labeled. What it is measured against is regression — fixture (complete coverag
 holds at 0.27/0.55, rails and discourse (no coverage) are identical — plus the
 live repro, which flips, and an e2e that fails if the weights are equalized.
 
-**The cost, stated rather than discovered later:** at partial coverage a
-summarized unit is systematically favoured over an unsummarized one that matches
-about as well. That is the intended direction, but it biases a warming corpus
-toward its covered half, and `tiers` on every answer is what lets a reader see
-it. If that bias ever costs more than the flywheel gains, the fix is one
-constant and this entry says which.
+**The cost and the point, which are the same sentence read twice.** At partial
+coverage a summarized unit is systematically favoured over an unsummarized one
+that matches about as well.
+
+- *The cost:* a warming corpus is biased toward its covered half, and a unit
+  nobody has summarized is harder to find than it was on the same query
+  yesterday. `tiers` on every answer is what lets a reader see this.
+- *The point:* under DEC-018 a summary **is** strictly better evidence than a
+  name — it says what the code does rather than what someone called it — so the
+  bias is half-intended. A contribution that changes nothing about what comes
+  back is a contribution nobody makes twice; the visible payoff is what makes
+  grazing rational.
+
+If the bias ever costs more than the flywheel gains, the fix is one constant and
+this entry says which. Calibrate it properly when a partly-summarized labeled
+set exists.

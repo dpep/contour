@@ -1227,6 +1227,14 @@ fn eval_scores_a_labeled_set() {
     assert_eq!(dupes["false_negatives"], 0);
     assert_eq!(dupes["unknown"], 0);
 
+    // `similar` is scored by running the tool exactly as a caller would, so
+    // this is the one assertion that would catch the neighbour list quietly
+    // changing tier — the claim, not just the membership.
+    let sim = &report["similar"];
+    assert_eq!(sim["correct"], 3, "{sim}");
+    assert_eq!(sim["wrong"], 0, "{sim}");
+    assert_eq!(sim["unknown"], 0, "a label names a unit that is gone");
+
     // The sweep is the point of the exercise, so it must actually be there.
     let sweep = report["calibration"]["sweep"].as_array().unwrap();
     assert!(sweep.len() > 5);
