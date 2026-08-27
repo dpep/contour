@@ -308,6 +308,106 @@ fn dupes_hides_bodies_too_short_to_mean_anything() {
     assert_eq!(repo.run(&["dupes", "--json"]).1, 0);
 }
 
+/// The four findings behind DEC-022, as one checkout: a migration pair that
+/// must not be offered for consolidation, a spec pair that must be offered but
+/// apart, and an app pair that must lead the report.
+#[test]
+fn dupes_ignores_frozen_paths_and_ranks_test_code_apart() {
+    // Four distinct shapes. The **spec** duplication is deliberately the
+    // biggest payoff — a longer body copied three times — because that is the
+    // case the ruling is about: ranked on `saves_nodes` alone it leads the
+    // report, and a reader asking "what should I consolidate in this app" is
+    // handed a spec helper.
+    let app = "class %C%\n  def go(a)\n    b = a.one\n    c = b.two\n    save(c)\n  end\nend\n";
+    let mixed = "class %C%\n  def take(a)\n    b = a.pick\n    store(b)\n  end\nend\n";
+    let spec = "class %C%\n  def check(a)\n    b = a.first\n    c = b.second\n    d = c.third\n    e = d.fourth\n    expect(e).to be_ok\n  end\nend\n";
+    let migration =
+        "class %C%\n  def up\n    add_column :a, :b\n    add_index :a, :b\n  end\nend\n";
+    let repo = Repo::new(
+        "classes",
+        &[
+            ("app/a.rb", &app.replace("%C%", "Alpha")),
+            ("app/b.rb", &app.replace("%C%", "Beta")),
+            ("app/mine.rb", &mixed.replace("%C%", "Mine")),
+            ("vendor/theirs.rb", &mixed.replace("%C%", "Theirs")),
+            ("spec/a_spec.rb", &spec.replace("%C%", "AlphaSpec")),
+            ("spec/b_spec.rb", &spec.replace("%C%", "BetaSpec")),
+            ("spec/c_spec.rb", &spec.replace("%C%", "GammaSpec")),
+            ("db/migrate/1_x.rb", &migration.replace("%C%", "AddX")),
+            ("db/migrate/2_y.rb", &migration.replace("%C%", "AddY")),
+        ],
+    );
+    repo.run(&["index"]);
+
+    let report = repo.json(&["dupes", "--json"]);
+    let classes: Vec<&str> = report["groups"]
+        .as_array()
+        .expect("groups")
+        .iter()
+        .map(|g| g["class"].as_str().unwrap())
+        .collect();
+    // App code leads; the spec pair is reported but after it; the migration
+    // pair is not offered for a consolidation that would rewrite the past.
+    assert_eq!(classes, ["app", "mixed", "test"], "{report}");
+    assert_eq!(report["groups"][2]["members"][0]["class"], "test");
+    assert!(
+        report["groups"][2]["saves_nodes"].as_u64() > report["groups"][0]["saves_nodes"].as_u64(),
+        "the spec group must be the bigger payoff, or this proves nothing"
+    );
+    // A body that also exists in `vendor/` is a finding about the app copy, so
+    // the group is kept and named for the disagreement.
+    assert_eq!(report["groups"][1]["members"][1]["class"], "vendored");
+    // The withholding is disclosed with its reason, not just its count.
+    assert_eq!(report["withheld_paths"]["total"], 1);
+    assert_eq!(report["withheld_paths"]["by_class"]["migration"], 1);
+
+    let (_, stderr, _) = repo.run_in(&repo.dir.clone(), &["dupes"]);
+    assert!(
+        stderr.contains("1 group(s) in ignored paths withheld (1 migration)"),
+        "{stderr}"
+    );
+
+    // And the default is overridable, which is the other half of the ruling.
+    let all = repo.json(&["dupes", "--include-ignored", "--json"]);
+    assert_eq!(all["groups"].as_array().map(Vec::len), Some(4));
+    assert_eq!(all["withheld_paths"]["total"], 0, "nothing was withheld");
+}
+
+/// A repo whose layout differs says so, and is believed over the conventions.
+#[test]
+fn a_repo_config_overrides_the_conventions() {
+    let body = "class %C%\n  def run(a)\n    b = a.check\n    persist(b)\n    b\n  end\nend\n";
+    let repo = Repo::new(
+        "config",
+        &[
+            (
+                ".contour.toml",
+                "# This repo's migrations really are consolidatable.\n\
+                 [paths]\napp = [\"db/migrate\"]\n",
+            ),
+            ("db/migrate/1_x.rb", &body.replace("%C%", "AddX")),
+            ("db/migrate/2_y.rb", &body.replace("%C%", "AddY")),
+        ],
+    );
+    repo.run(&["index"]);
+
+    let report = repo.json(&["dupes", "--json"]);
+    assert_eq!(report["groups"].as_array().map(Vec::len), Some(1));
+    assert_eq!(report["groups"][0]["class"], "app");
+    assert_eq!(report["withheld_paths"]["total"], 0);
+
+    // A config that says something wrong fails the run rather than being
+    // half-applied — the same rule the eval's label vocabulary has.
+    std::fs::write(
+        repo.dir.join(".contour.toml"),
+        "[paths]\nspecs = [\"spec\"]\n",
+    )
+    .unwrap();
+    let (_, stderr, code) = repo.run_in(&repo.dir.clone(), &["dupes"]);
+    assert_eq!(code, 2, "{stderr}");
+    assert!(stderr.contains("`specs` is not a path class"), "{stderr}");
+}
+
 /// Finding the checkout is its own failure mode, and it used to surface as raw
 /// git stderr from a command that had no way to be told where to look. Found
 /// by running the Claude skill cold from outside a repository.
@@ -772,6 +872,59 @@ fn search_finds_by_meaning_once_summaries_exist() {
     assert_eq!(both["hits"][0]["how"], "both");
 }
 
+/// The berater complaint, as a test: a spec defines a helper with the obvious
+/// name and outranks the method it tests. A discount, not an exclusion — the
+/// spec is still an answer, just not the first one (DEC-022).
+#[test]
+fn search_ranks_a_spec_below_the_code_it_tests() {
+    let repo = Repo::new(
+        "search-classes",
+        &[
+            (
+                "lib/limiter.rb",
+                "class Limiter\n  def limit(key)\n    acquire(key)\n  end\nend\n",
+            ),
+            // Named so it sorts *before* the implementation: with no discount
+            // the tie-break on path would hand it the top slot, which is what
+            // makes the ranking assertion below fail when the discount is
+            // removed rather than passing either way.
+            (
+                "a_limiter_spec.rb",
+                "class LimiterSpec\n  def limit(key)\n    acquire(key)\n  end\nend\n",
+            ),
+            (
+                "db/migrate/1_limits.rb",
+                "class AddLimits\n  def limit(key)\n    acquire(key)\n  end\nend\n",
+            ),
+        ],
+    );
+    repo.run(&["index"]);
+
+    let answer = repo.json(&["search", "limit", "--json"]);
+    let ids: Vec<&str> = answer["hits"]
+        .as_array()
+        .expect("hits")
+        .iter()
+        .map(|h| h["id"].as_str().unwrap())
+        .collect();
+    // The spec is present — the ruling is explicit that ignoring tests is the
+    // tempting wrong answer — and it is second.
+    assert_eq!(ids, ["Limiter#limit", "LimiterSpec#limit"], "{answer}");
+    assert_eq!(answer["hits"][0]["class"], "app");
+    assert_eq!(answer["hits"][1]["class"], "test");
+    // The discount is disclosed rather than being a silent thumb on the scale.
+    assert_eq!(answer["discount"], 0.5);
+    assert!(
+        answer["hits"][1]["score"].as_f64().unwrap() < answer["hits"][0]["score"].as_f64().unwrap()
+    );
+    // The migration is not an answer at all, and the count says so.
+    assert_eq!(answer["withheld_paths"]["by_class"]["migration"], 1);
+
+    let all = repo.json(&["search", "limit", "--include-ignored", "--json"]);
+    assert_eq!(all["hits"].as_array().map(Vec::len), Some(3));
+    assert_eq!(all["withheld_paths"]["total"], 0);
+}
+
 /// Nothing in the corpus answers this, so nothing should come back.
 #[test]
 fn search_can_return_nothing() {
@@ -821,6 +974,13 @@ fn similar_discloses_its_tier_and_only_grades_what_is_graded() {
                 "b.rb",
                 &format!("class Beta\n{}end\n", body.replace("run", "go")),
             ),
+            // A third copy, vendored. Identical, and still not an answer to
+            // "has this been written before" — nobody consolidates a copy of
+            // somebody else's gem (DEC-022).
+            (
+                "vendor/c.rb",
+                &format!("class Gamma\n{}end\n", body.replace("run", "spin")),
+            ),
         ],
     );
     repo.run(&["index"]);
@@ -829,11 +989,26 @@ fn similar_discloses_its_tier_and_only_grades_what_is_graded() {
     let first = &answer["neighbors"][0];
     assert_eq!(first["id"], "Beta#go");
     assert_eq!(first["how"], "structural");
+    assert_eq!(first["class"], "app");
     assert!(
         first["cosine"].is_null() && first["similarity"].is_null(),
         "structural identity is a predicate, not a grade"
     );
     assert_eq!(first["lines"], 5, "it discloses evidence instead");
+
+    let ids: Vec<&str> = answer["neighbors"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|n| n["id"].as_str().unwrap())
+        .collect();
+    assert_eq!(ids, ["Beta#go"], "the vendored clone is not offered");
+    assert_eq!(answer["withheld_paths"]["by_class"]["vendored"], 1);
+    // Asked for, it comes back tagged — the default is disclosed and
+    // overridable, never silent.
+    let all = repo.json(&["similar", "Alpha#run", "--include-ignored", "--json"]);
+    assert_eq!(all["neighbors"][1]["id"], "Gamma#spin");
+    assert_eq!(all["neighbors"][1]["class"], "vendored");
 
     assert_eq!(repo.run(&["similar", "Alpha#nope"]).1, 2, "no such unit");
 }

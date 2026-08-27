@@ -235,6 +235,12 @@ fn tool_results_carry_the_disclosure_fields() {
     assert_eq!(answer["tiers"]["summary"], 0);
     assert_eq!(answer["hits"][0]["id"], "Invoice#unpaid_for");
     assert_eq!(answer["hits"][0]["semantic_via"], "identifier");
+    // The path policy reaches an agent as data, not as a stderr line it never
+    // sees: what class each hit is, what was withheld, and the ranking knob
+    // that was applied (DEC-022).
+    assert_eq!(answer["hits"][0]["class"], "app");
+    assert_eq!(answer["withheld_paths"]["total"], 0);
+    assert_eq!(answer["discount"], 0.5);
 
     let status = mcp.tool(4, "status", serde_json::json!({}));
     assert_eq!(status["checkouts"][0]["units"], 4);
@@ -255,6 +261,10 @@ fn tool_results_carry_the_disclosure_fields() {
     // its language rather than to its size — two reasons an agent would act on
     // differently.
     assert_eq!(near["near_stats"]["uncovered_lang"].as_u64(), Some(1));
+    assert!(
+        near["withheld_paths"]["total"].is_number(),
+        "a dupes result says what it withheld, in every format: {near}"
+    );
 
     // The one-serialization rule, verified rather than assumed: canonicality
     // reaches an agent through the same JSON the CLI prints, disclosure and

@@ -87,6 +87,14 @@ pub struct Group {
     /// them on a report that did not ask.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub canonical: Option<crate::canonical::Canonical>,
+    /// The population this group belongs to: a [`crate::paths::Class`] name
+    /// where every copy agrees, `mixed` where they do not (DEC-022).
+    ///
+    /// It is what [`rank`] separates on. A group of specs is a real finding
+    /// about test maintenance and a poor answer to "what should I consolidate
+    /// in this app", so it is reported, tagged, and ranked after the app
+    /// population rather than dropped or interleaved.
+    pub class: &'static str,
 }
 
 #[derive(Debug, serde::Serialize)]
@@ -97,6 +105,20 @@ pub struct Member {
     pub id: String,
     pub line: u32,
     pub end_line: u32,
+    /// What kind of file this copy lives in (DEC-022). Per member rather than
+    /// only per group, because in a mixed group *which* copy is the test one is
+    /// the first thing a reader needs.
+    pub class: crate::paths::Class,
+}
+
+/// Groups, plus what the path policy kept out of them.
+///
+/// One type for both tiers, so a caller that merges them merges the disclosure
+/// too and cannot report half of it.
+#[derive(Debug, Default, serde::Serialize)]
+pub struct Found {
+    pub groups: Vec<Group>,
+    pub withheld: crate::paths::Withheld,
 }
 
 /// Group one checkout's units by normalized body.
@@ -104,73 +126,104 @@ pub struct Member {
 /// `scope` is a checkout-relative path prefix; `None` means the whole
 /// checkout. `min_lines` drops bodies too small for structural identity to
 /// mean anything — see `cli::DEFAULT_MIN_LINES` for where the number comes
-/// from.
-pub fn find(store: &Store, root: &str, scope: Option<&str>, min_lines: u32) -> Result<Vec<Group>> {
-    let mut candidates: Vec<Located> = store
-        .units(root)?
-        .into_iter()
-        .filter(|l| l.unit.norm_hash.is_some())
-        .filter(|l| l.unit.end_line + 1 - l.unit.line >= min_lines)
-        .filter(|l| scope.is_none_or(|s| crate::paths::under(&l.path, s)))
-        .collect();
-
-    // One `def` can produce two units — `module_function` emits a private
-    // instance method and a public singleton one from the same source. They
-    // share a span, and reporting them as clones of each other would be the
-    // tool arguing with itself. Grouping over distinct *spans* removes the
-    // whole class rather than special-casing the macro.
-    candidates.sort_by(|a, b| {
-        (&a.path, a.unit.line, a.unit.norm_hash).cmp(&(&b.path, b.unit.line, b.unit.norm_hash))
-    });
-    candidates.dedup_by(|a, b| a.path == b.path && a.unit.line == b.unit.line);
-
+/// from. `classes` decides which path classes are reported (DEC-022).
+pub fn find(
+    store: &Store,
+    root: &str,
+    scope: Option<&str>,
+    min_lines: u32,
+    classes: &crate::paths::Classes,
+) -> Result<Found> {
     let mut by_hash: std::collections::HashMap<u64, Vec<Located>> = Default::default();
-    for located in candidates {
+    for located in candidates(store, root, scope, min_lines)? {
         by_hash
             .entry(located.unit.norm_hash.expect("filtered above"))
             .or_default()
             .push(located);
     }
 
-    let mut groups: Vec<Group> = by_hash
-        .into_iter()
-        .filter(|(_, members)| members.len() > 1)
-        .map(|(hash, members)| Group {
-            norm_hash: format!("{hash:016x}"),
-            how: members[0].unit.lang.hash_tier(),
-            lang: members[0].unit.lang,
-            lines: members[0].unit.end_line + 1 - members[0].unit.line,
-            similarity: None,
-            nodes: members[0].unit.nodes,
-            saves_nodes: estimate(members[0].unit.nodes, members.len(), None),
-            canonical: None,
-            members: members
-                .into_iter()
-                .map(|l| Member {
-                    id: l.unit.id(),
-                    // Absolute from here on: a record leaving the process has
-                    // to be resolvable by a reader who is not standing in the
-                    // checkout. Human output shortens it back.
-                    path: crate::paths::absolute(root, &l.path),
-                    line: l.unit.line,
-                    end_line: l.unit.end_line,
-                })
-                .collect(),
-        })
-        .collect();
+    let mut found = Found::default();
+    for (hash, members) in by_hash {
+        if members.len() < 2 {
+            continue;
+        }
+        let copies: Vec<Member> = members.iter().map(|l| member(root, l, classes)).collect();
+        found.keep(
+            Group {
+                norm_hash: format!("{hash:016x}"),
+                how: members[0].unit.lang.hash_tier(),
+                lang: members[0].unit.lang,
+                lines: members[0].unit.end_line + 1 - members[0].unit.line,
+                similarity: None,
+                nodes: members[0].unit.nodes,
+                saves_nodes: estimate(members[0].unit.nodes, members.len(), None),
+                canonical: None,
+                class: population(&copies),
+                members: copies,
+            },
+            classes,
+        );
+    }
 
-    rank(&mut groups);
-    Ok(groups)
+    rank(&mut found.groups);
+    Ok(found)
 }
 
-/// Biggest expected payoff first.
+fn member(root: &str, l: &Located, classes: &crate::paths::Classes) -> Member {
+    Member {
+        id: l.unit.id(),
+        class: classes.of(&l.path),
+        // Absolute from here on: a record leaving the process has to be
+        // resolvable by a reader who is not standing in the checkout. Human
+        // output shortens it back.
+        path: crate::paths::absolute(root, &l.path),
+        line: l.unit.line,
+        end_line: l.unit.end_line,
+    }
+}
+
+/// The one population a group belongs to, or `mixed` where its copies
+/// disagree. Not a [`crate::paths::Class`]: a file has one class, and a group
+/// of files need not.
+fn population(members: &[Member]) -> &'static str {
+    let first = members[0].class;
+    match members.iter().all(|m| m.class == first) {
+        true => first.as_str(),
+        false => "mixed",
+    }
+}
+
+impl Found {
+    /// Take one group, or withhold it — the single place the path policy is
+    /// applied to a report, so no tier and no surface can forget it.
+    ///
+    /// A group is withheld only when **every** copy sits in an ignored path. A
+    /// body that appears in both `vendor/` and `app/` is a finding about the
+    /// app copy, and withholding it would hide the one duplication somebody
+    /// can actually act on.
+    fn keep(&mut self, group: Group, classes: &crate::paths::Classes) {
+        match group.members.iter().any(|m| classes.reports(m.class)) {
+            true => self.groups.push(group),
+            false => self.withheld.add(group.members[0].class),
+        }
+    }
+}
+
+/// Biggest expected payoff first, app code before the populations that are
+/// reported apart from it.
 ///
 /// Called by every producer *and* by every caller that merges two tiers, so a
 /// report is ordered whether or not it was assembled from one pass. Idempotent,
 /// which is what makes that safe.
+///
+/// Test and fixture duplication is real maintenance signal and is reported
+/// (DEC-022) — but interleaving it with app code buries the app findings under
+/// a corpus's worth of specs, which is the complaint the ruling started from.
+/// A mixed group ranks with app code, because that is the copy it is about.
 pub fn rank(groups: &mut [Group]) {
     groups.sort_by_key(|g| {
         (
+            !matches!(g.class, "app" | "mixed"),
             std::cmp::Reverse(g.saves_nodes),
             g.members[0].path.clone(),
             g.members[0].line,
@@ -205,7 +258,8 @@ pub fn find_near(
     scope: Option<&str>,
     min_lines: u32,
     threshold: f32,
-) -> Result<(Vec<Group>, crate::near::Stats)> {
+    classes: &crate::paths::Classes,
+) -> Result<(Found, crate::near::Stats)> {
     let located = candidates(store, root, scope, min_lines)?;
     let mut by_hash: std::collections::HashMap<u64, Vec<Located>> = Default::default();
     for unit in located {
@@ -237,14 +291,22 @@ pub fn find_near(
         }
     }
 
-    let groups = pairs
-        .into_iter()
-        .filter_map(|pair| {
-            // One representative per body: a near pair is about two *shapes*,
-            // and listing every clone of each would bury the finding.
-            let a = by_hash.get(&pair.a)?.first()?;
-            let b = by_hash.get(&pair.b)?.first()?;
-            Some(Group {
+    let mut found = Found::default();
+    for pair in pairs {
+        // One representative per body: a near pair is about two *shapes*, and
+        // listing every clone of each would bury the finding.
+        let (Some(a), Some(b)) = (
+            by_hash.get(&pair.a).and_then(|m| m.first()),
+            by_hash.get(&pair.b).and_then(|m| m.first()),
+        ) else {
+            continue;
+        };
+        let copies: Vec<Member> = [a, b]
+            .into_iter()
+            .map(|l| member(root, l, classes))
+            .collect();
+        found.keep(
+            Group {
                 norm_hash: format!("{:016x}", pair.a),
                 how: "near_structural",
                 lang: a.unit.lang,
@@ -253,21 +315,14 @@ pub fn find_near(
                 nodes: a.unit.nodes,
                 saves_nodes: estimate(a.unit.nodes, 2, Some(pair.similarity)),
                 canonical: None,
-                members: [a, b]
-                    .into_iter()
-                    .map(|l| Member {
-                        id: l.unit.id(),
-                        path: crate::paths::absolute(root, &l.path),
-                        line: l.unit.line,
-                        end_line: l.unit.end_line,
-                    })
-                    .collect(),
-            })
-        })
-        .collect();
-    let mut groups: Vec<Group> = groups;
-    rank(&mut groups);
-    Ok((groups, stats))
+                class: population(&copies),
+                members: copies,
+            },
+            classes,
+        );
+    }
+    rank(&mut found.groups);
+    Ok((found, stats))
 }
 
 /// Units in scope with a body worth comparing, deduplicated by span.
@@ -332,7 +387,7 @@ mod tests {
             )
             .unwrap();
 
-        let (_, stats) = find_near(&store, "/r", None, 4, 0.8).unwrap();
+        let (_, stats) = find_near(&store, "/r", None, 4, 0.8, &Default::default()).unwrap();
         assert_eq!(stats.uncovered_small, 2, "the Ruby bodies, too small");
         assert_eq!(stats.uncovered_lang, 1, "the Rust body, wrong language");
     }

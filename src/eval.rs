@@ -318,6 +318,9 @@ pub fn run(
     min_lines: u32,
 ) -> Result<Report> {
     let root_str = root.to_string_lossy().into_owned();
+    // The corpus's own path policy, defaults included: the eval scores what a
+    // user of this checkout would actually be shown (DEC-022).
+    let classes = crate::paths::Classes::load(root)?;
     let units = store.units(&root_str)?;
     let by_id: HashMap<String, usize> = units
         .iter()
@@ -368,7 +371,7 @@ pub fn run(
                 crate::search::Options {
                     limit: depth,
                     prefer,
-                    ..Default::default()
+                    ..crate::search::Options::new(&classes)
                 },
             )?;
             debug_assert_eq!(answer.withheld, 0, "the eval must run unfloored");
@@ -436,8 +439,8 @@ pub fn run(
         |_, i| sources.get(&i).cloned().unwrap_or_default(),
     )?);
 
-    let dupes = score_dupes(store, &root_str, labels, min_lines)?;
-    let near = score_near(store, &root_str, labels, min_lines)?;
+    let dupes = score_dupes(store, &root_str, labels, min_lines, &classes)?;
+    let near = score_near(store, &root_str, labels, min_lines, &classes)?;
     Ok(Report {
         corpus: root_str,
         embedder: embedder.kind(),
@@ -541,13 +544,19 @@ fn read_sources(root: &Path, units: &[Located]) -> HashMap<usize, String> {
     out
 }
 
-fn score_dupes(store: &Store, root: &str, labels: &Labels, min_lines: u32) -> Result<Dupes> {
+fn score_dupes(
+    store: &Store,
+    root: &str,
+    labels: &Labels,
+    min_lines: u32,
+    classes: &crate::paths::Classes,
+) -> Result<Dupes> {
     // Every pair the tool currently reports, at no floor — so the labeled
     // pairs can be scored against the raw signal and the floor swept
     // separately.
-    let groups = crate::dupes::find(store, root, None, 1)?;
+    let found = crate::dupes::find(store, root, None, 1, classes)?;
     let mut reported: HashMap<(&str, &str), u32> = HashMap::new();
-    for group in &groups {
+    for group in &found.groups {
         for (i, a) in group.members.iter().enumerate() {
             for b in &group.members[i + 1..] {
                 reported.insert((a.id.as_str(), b.id.as_str()), group.lines);
@@ -595,11 +604,23 @@ fn score_dupes(store: &Store, root: &str, labels: &Labels, min_lines: u32) -> Re
 /// `distinct` label above it is a false positive. The `super` pairs
 /// (DEC-017) are the negatives that matter — they score 0.63 and 0.67, and
 /// the threshold has to stay clear of them.
-fn score_near(store: &Store, root: &str, labels: &Labels, min_lines: u32) -> Result<Dupes> {
-    let (groups, _) =
-        crate::dupes::find_near(store, root, None, min_lines, crate::near::NEAR_THRESHOLD)?;
+fn score_near(
+    store: &Store,
+    root: &str,
+    labels: &Labels,
+    min_lines: u32,
+    classes: &crate::paths::Classes,
+) -> Result<Dupes> {
+    let (found, _) = crate::dupes::find_near(
+        store,
+        root,
+        None,
+        min_lines,
+        crate::near::NEAR_THRESHOLD,
+        classes,
+    )?;
     let mut reported: HashMap<(&str, &str), u32> = HashMap::new();
-    for group in &groups {
+    for group in &found.groups {
         let (a, b) = (&group.members[0], &group.members[1]);
         let lines = group.lines;
         reported.insert((a.id.as_str(), b.id.as_str()), lines);

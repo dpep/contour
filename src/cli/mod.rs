@@ -86,6 +86,10 @@ enum Command {
         /// is minutes, and the run prints what it spent.
         #[arg(long)]
         canonical: bool,
+        /// Also report groups in paths ignored by default — migrations,
+        /// generated and vendored code. Every run says how many there were.
+        #[arg(long)]
+        include_ignored: bool,
     },
     /// Summarize callables with an LLM, up to a budget.
     Summarize {
@@ -118,6 +122,10 @@ enum Command {
         /// embedder's calibrated floor; `0` shows everything it withheld.
         #[arg(long, value_name = "F", value_parser = fraction)]
         floor: Option<f32>,
+        /// Also rank units in paths ignored by default — migrations,
+        /// generated and vendored code.
+        #[arg(long)]
+        include_ignored: bool,
     },
     /// Serve the Model Context Protocol on stdin/stdout, for an agent client.
     Mcp,
@@ -140,6 +148,10 @@ enum Command {
         path: Option<PathBuf>,
         #[arg(short = 'l', long, value_name = "N", default_value_t = DEFAULT_LIMIT)]
         limit: usize,
+        /// Also report neighbours in paths ignored by default — migrations,
+        /// generated and vendored code.
+        #[arg(long)]
+        include_ignored: bool,
     },
 }
 
@@ -238,6 +250,7 @@ fn dispatch(cli: &Cli) -> Result<i32> {
                 near,
                 near_threshold,
                 canonical,
+                include_ignored,
             }),
             _,
             _,
@@ -247,6 +260,7 @@ fn dispatch(cli: &Cli) -> Result<i32> {
             *near,
             *near_threshold,
             *canonical,
+            *include_ignored,
             format,
         ),
         (
@@ -271,13 +285,28 @@ fn dispatch(cli: &Cli) -> Result<i32> {
                 scope,
                 limit,
                 floor,
+                include_ignored,
             }),
             _,
             _,
-        ) => search(query, scope.as_deref(), *limit, *floor, format),
-        (Some(Command::Similar { unit, path, limit }), _, _) => {
-            similar(unit, path.as_deref(), *limit, format)
-        }
+        ) => search(
+            query,
+            scope.as_deref(),
+            *limit,
+            *floor,
+            *include_ignored,
+            format,
+        ),
+        (
+            Some(Command::Similar {
+                unit,
+                path,
+                limit,
+                include_ignored,
+            }),
+            _,
+            _,
+        ) => similar(unit, path.as_deref(), *limit, *include_ignored, format),
         (Some(Command::Eval { set, min_lines }), _, _) => eval(set, *min_lines, format),
         // Not a flag, per DEC-015: it serves the index.
         (Some(Command::Mcp), _, _) => {
@@ -365,44 +394,59 @@ fn dupes(
     near: bool,
     near_threshold: f32,
     canonical: bool,
+    include_ignored: bool,
     format: Format,
 ) -> Result<i32> {
     let (root, relative) = scoped(scope)?;
+    let classes = crate::paths::Classes::load(&root)?.including_ignored(include_ignored);
     let store = crate::store::open_default()?;
     let root = root.to_string_lossy().into_owned();
-    let mut groups = crate::dupes::find(&store, &root, relative.as_deref(), min_lines)?;
+    let mut found = crate::dupes::find(&store, &root, relative.as_deref(), min_lines, &classes)?;
     let mut stats = None;
     if near {
-        let (near_groups, found) = crate::dupes::find_near(
+        let (near_found, near_stats) = crate::dupes::find_near(
             &store,
             &root,
             relative.as_deref(),
             min_lines,
             near_threshold,
+            &classes,
         )?;
-        groups.extend(near_groups);
+        found.groups.extend(near_found.groups);
+        found.withheld.merge(&near_found.withheld);
         // One order over both tiers, so a big near-duplicate is not buried
         // under every exact one regardless of what consolidating it would buy.
-        crate::dupes::rank(&mut groups);
-        stats = Some(found);
+        crate::dupes::rank(&mut found.groups);
+        stats = Some(near_stats);
     }
+    let groups = &mut found.groups;
     let ranked = match canonical {
         true => Some(crate::canonical::annotate(
             std::path::Path::new(&root),
-            &mut groups,
+            groups,
         )?),
         false => None,
     };
+    let groups = &found.groups;
 
     let whole = serde_json::json!({
         "root": root,
         "groups": groups,
         "near_stats": stats,
         "canonical_stats": ranked,
+        "withheld_paths": found.withheld,
     });
     match format {
         Format::Human => {
-            for group in &groups {
+            // The populations are ranked apart (DEC-022), so the report says
+            // where the boundary is rather than leaving a reader to notice
+            // that the paths changed character.
+            let mut population = "app";
+            for group in groups {
+                if !matches!(group.class, "app" | "mixed") && group.class != population {
+                    println!("\n— {} code, ranked as its own population —", group.class);
+                }
+                population = group.class;
                 // The estimate leads, because it is the order — and every
                 // component it is built from follows, so the order can be
                 // argued with rather than trusted (DEC-010). The `~` is not
@@ -416,8 +460,16 @@ fn dupes(
                     Some(nodes) => format!("{} lines, {nodes} nodes", group.lines),
                     None => format!("{} lines", group.lines),
                 };
+                // The class rides in the tier bracket, where a reader is
+                // already looking for how much to trust the group — and only
+                // when it is not the app population, which is the default a
+                // tag would only add noise to.
+                let class = match group.class {
+                    "app" => String::new(),
+                    other => format!(", {other}"),
+                };
                 println!(
-                    "~{} nodes  ·  {} × ({size}){discount}  [{}]",
+                    "~{} nodes  ·  {} × ({size}){discount}  [{}{class}]",
                     group.saves_nodes,
                     group.members.len(),
                     group.how
@@ -461,7 +513,13 @@ fn dupes(
                 );
             }
         }
-        _ => answer(format, &whole, &groups)?,
+        _ => answer(format, &whole, groups)?,
+    }
+    // What the path policy kept out, on every run and in every format
+    // (DEC-022). A report that withheld a finding silently would be a worse
+    // failure than the one path classes fix.
+    if let Some(note) = found.withheld.note("group") {
+        eprintln!("contour: {note}; --include-ignored to see them");
     }
     // Diagnostics, so stderr in every format — stdout stays the groups, and
     // `-J` stays one result per line. The scale claim is stated rather than
@@ -549,6 +607,7 @@ fn search(
     scope: Option<&std::path::Path>,
     limit: usize,
     floor: Option<f32>,
+    include_ignored: bool,
     format: Format,
 ) -> Result<i32> {
     // An empty query matched everything weakly and reported it as a result.
@@ -557,6 +616,7 @@ fn search(
         bail!("a search needs something to search for");
     }
     let (root, relative) = scoped(scope)?;
+    let classes = crate::paths::Classes::load(&root)?.including_ignored(include_ignored);
     let embedder = crate::embed::default_embedder(None, crate::embed::Workload::Query);
     let mut store = crate::store::open_default()?;
     let answer = crate::search::search(
@@ -568,7 +628,7 @@ fn search(
             scope: relative.as_deref(),
             limit,
             floor: floor.unwrap_or_else(|| crate::search::relevance_floor(embedder.kind())),
-            ..Default::default()
+            ..crate::search::Options::new(&classes)
         },
     )?;
 
@@ -581,8 +641,15 @@ fn search(
                     Some(c) => format!("  cos {c:.2}"),
                     None => String::new(),
                 };
+                // The class rides in the same bracket as `how`, and only when
+                // it is not app code — on the majority of hits it would be a
+                // word that never varies.
+                let class = match hit.class.is_app() {
+                    true => String::new(),
+                    false => format!(", {}", hit.class.as_str()),
+                };
                 println!(
-                    "{}:{}  {}  [{}]{cosine}",
+                    "{}:{}  {}  [{}{class}]{cosine}",
                     crate::paths::within(&answer.root, &hit.path),
                     hit.line,
                     hit.id,
@@ -632,15 +699,29 @@ fn disclose(answer: &crate::search::Answer) {
             answer.withheld, answer.floor
         );
     }
+    if let Some(note) = answer.withheld_paths.note("unit") {
+        eprintln!("contour: {note}; --include-ignored to rank them");
+    }
+    // Only where it changed something: on a repo with no test code the line
+    // would be a constant nobody needs.
+    if answer.hits.iter().any(|hit| !hit.class.is_app()) {
+        eprintln!(
+            "contour: hits outside app code are tagged and ranked at {}x — \
+             test and fixture code is a different population, not a non-answer",
+            answer.discount
+        );
+    }
 }
 
 fn similar(
     unit: &str,
     path: Option<&std::path::Path>,
     limit: usize,
+    include_ignored: bool,
     format: Format,
 ) -> Result<i32> {
     let (root, _) = scoped(path)?;
+    let classes = crate::paths::Classes::load(&root)?.including_ignored(include_ignored);
     let embedder = crate::embed::default_embedder(None, crate::embed::Workload::Query);
     let mut store = crate::store::open_default()?;
     let neighbors = crate::search::similar(
@@ -649,6 +730,7 @@ fn similar(
         unit,
         embedder.as_ref(),
         limit,
+        &classes,
     )?;
 
     match format {
@@ -665,8 +747,12 @@ fn similar(
                     (_, _, Some(lines)) => format!("  {lines} lines"),
                     _ => String::new(),
                 };
+                let class = match n.class.is_app() {
+                    true => String::new(),
+                    false => format!(", {}", n.class.as_str()),
+                };
                 println!(
-                    "{}:{}  {}  [{}]{evidence}",
+                    "{}:{}  {}  [{}{class}]{evidence}",
                     crate::paths::within(&neighbors.root, &n.path),
                     n.line,
                     n.id,
@@ -699,6 +785,9 @@ fn similar(
                      ({:.2}) withheld",
                     neighbors.withheld, neighbors.floor
                 );
+            }
+            if let Some(note) = neighbors.withheld_paths.note("neighbour") {
+                eprintln!("contour: {note}; --include-ignored to see them");
             }
         }
         _ => answer(format, &neighbors, &neighbors.neighbors)?,

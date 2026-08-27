@@ -1,8 +1,19 @@
-//! What contour knows about a path: how to render it, and what it points at.
+//! What contour knows about a path: how to render it, and what kind of file it
+//! names.
 //!
 //! Rendering lives here so no output surface can quietly forget it. Scoping
 //! lives here because a path prefix has to mean one thing to every command
-//! that takes one.
+//! that takes one. And [`Class`] lives here because DEC-021 says path
+//! knowledge belongs at the file layer — not in the extractor, and not in the
+//! blob.
+//!
+//! Not in `scan`, which owns the other path question (`language`), because
+//! `scan` is vendored from trekr and stays close enough to upstream that a
+//! sync is a re-copy (DEC-002).
+
+use anyhow::{Context, Result, bail, ensure};
+use std::collections::BTreeMap;
+use std::path::Path;
 
 /// A path as a person should read it: `$HOME` shown as `~`.
 ///
@@ -62,9 +73,436 @@ pub fn under(path: &str, prefix: &str) -> bool {
     path == prefix || (path.starts_with(prefix) && path.as_bytes().get(prefix.len()) == Some(&b'/'))
 }
 
+/// What kind of file a path names (DEC-022).
+///
+/// A **pure function of the path string**, never of the bytes. `scan::language`
+/// makes the same call for the same reason — sniffing content would mean
+/// reading every file in the repo to answer a question the layout already
+/// answers — and it is what keeps this at the file layer: the same blob
+/// vendored into one repo and authored in another is one parse and two
+/// classifications (DEC-021).
+///
+/// The consequence to know: a fact that is not in the path is not visible
+/// here. A Rust `#[cfg(test)] mod tests` sits in an app file and classifies as
+/// [`Class::App`], because nothing about `src/lib.rs` says otherwise.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Class {
+    /// The code the repository is *for*. Everything not claimed below.
+    App,
+    /// Specs, tests, and their helpers. Reported, and reported **apart**:
+    /// duplication in shared examples is real maintenance signal, and "just
+    /// ignore tests" is the tempting wrong answer (DEC-022).
+    Test,
+    /// Sample inputs a test reads: fixture corpora, testbed trees. Included
+    /// like tests, and a different population again — a corpus of deliberately
+    /// similar files is data, not code somebody maintains.
+    Fixture,
+    /// Schema migrations. Frozen history: consolidating one is not a
+    /// consolidation, it is a rewrite of the past, so under DEC-020 they are
+    /// not duplicates at all.
+    Migration,
+    /// Machine-written code. Nobody consolidates it; it is regenerated.
+    Generated,
+    /// Somebody else's code, copied in. Nobody consolidates it either; it is
+    /// re-copied.
+    Vendored,
+}
+
+impl Class {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Class::App => "app",
+            Class::Test => "test",
+            Class::Fixture => "fixture",
+            Class::Migration => "migration",
+            Class::Generated => "generated",
+            Class::Vendored => "vendored",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Class> {
+        CLASSES.into_iter().find(|c| c.as_str() == s)
+    }
+
+    /// Whether a report shows this class by default, as the owner ruled
+    /// (DEC-022). Every default is disclosed on every run and overridable —
+    /// silently withholding a finding would be a worse failure than the one
+    /// this fixes.
+    pub fn reported(self) -> bool {
+        !matches!(self, Class::Migration | Class::Generated | Class::Vendored)
+    }
+
+    /// Whether this is the population a reader is asking about. The rest are
+    /// ranked after it rather than interleaved with it.
+    pub fn is_app(self) -> bool {
+        matches!(self, Class::App)
+    }
+}
+
+/// Every class, for the vocabulary a config error prints.
+pub const CLASSES: [Class; 6] = [
+    Class::App,
+    Class::Test,
+    Class::Fixture,
+    Class::Migration,
+    Class::Generated,
+    Class::Vendored,
+];
+
+/// The conventions, in the order a reader would apply them: a spec inside a
+/// vendored gem is vendored, and a fixture inside a spec directory is a
+/// fixture.
+///
+/// Deliberately thin. Each rule below is here because a corpus produced a
+/// finding that needed it, not because a layout exists somewhere that uses the
+/// word — a rule that withholds real code is worse than one that misses.
+/// `.contour.toml` is where a repo whose layout differs says so.
+fn by_convention(path: &str) -> Class {
+    let file = path.rsplit('/').next().unwrap_or(path);
+    let dirs: Vec<&str> = path.split('/').rev().skip(1).collect();
+    let has = |name: &str| dirs.contains(&name);
+
+    if ["vendor", "node_modules", "third_party", "target", ".bundle"]
+        .iter()
+        .any(|d| has(d))
+    {
+        return Class::Vendored;
+    }
+    // `sorbet/` is tapioca's output tree; `db/schema.rb` is the dumper's.
+    if has("sorbet") || (file == "schema.rb" && has("db")) || file.ends_with("_pb.rb") {
+        return Class::Generated;
+    }
+    // A `db` directory, then anything migration-shaped: rails writes
+    // `db/migrate`, discourse also writes `db/post_migrate`, and an engine or
+    // a plugin nests the whole pair under itself.
+    if dirs
+        .windows(2)
+        .any(|pair| pair[1] == "db" && pair[0].contains("migrat"))
+    {
+        return Class::Migration;
+    }
+    if ["fixtures", "fixture", "testbed", "corpus"]
+        .iter()
+        .any(|d| has(d))
+    {
+        return Class::Fixture;
+    }
+    if ["spec", "test", "tests"].iter().any(|d| has(d))
+        || file.ends_with("_spec.rb")
+        || file.ends_with("_test.rb")
+    {
+        return Class::Test;
+    }
+    Class::App
+}
+
+/// The file a repository states its own layout in, at the checkout root.
+pub const CONFIG_FILE: &str = ".contour.toml";
+
+/// The path policy in force for one command: the conventions above, whatever
+/// this checkout's [`CONFIG_FILE`] says, and whatever the run asked for.
+///
+/// One value, built once by the surface and handed to every query, so `dupes`,
+/// `search` and `similar` cannot disagree about what a path is.
+#[derive(Debug, Default, Clone)]
+pub struct Classes {
+    /// Config rules, longest prefix first, consulted ahead of the conventions.
+    /// That precedence is the point: it is what lets a repo say `db/migrate`
+    /// is ordinary code here.
+    rules: Vec<(String, Class)>,
+    /// This run asked for everything, so nothing is withheld and nothing is
+    /// reported as withheld.
+    include_ignored: bool,
+}
+
+impl Classes {
+    /// The conventions, plus this checkout's config if it has one.
+    ///
+    /// An absent config is the normal case, not a failure. A config that
+    /// exists and cannot be read *is* a failure: quietly ignoring a file
+    /// somebody wrote is how a report comes to withhold what they said to
+    /// keep.
+    pub fn load(root: &Path) -> Result<Classes> {
+        let file = root.join(CONFIG_FILE);
+        if !file.exists() {
+            return Ok(Classes::default());
+        }
+        let text = std::fs::read_to_string(&file)
+            .with_context(|| format!("reading {}", file.display()))?;
+        Classes::parse(&text).with_context(|| format!("in {}", file.display()))
+    }
+
+    fn parse(text: &str) -> Result<Classes> {
+        #[derive(serde::Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Config {
+            /// Class name → path prefixes. A typo'd table or class name fails
+            /// the run rather than silently classifying nothing, which is the
+            /// convention `eval`'s label vocabulary already set.
+            #[serde(default)]
+            paths: BTreeMap<String, Vec<String>>,
+        }
+
+        let config: Config = toml::from_str(text)?;
+        let mut rules: Vec<(String, Class)> = Vec::new();
+        for (name, prefixes) in config.paths {
+            let Some(class) = Class::parse(&name) else {
+                let known: Vec<&str> = CLASSES.iter().map(|c| c.as_str()).collect();
+                bail!(
+                    "`{name}` is not a path class; expected one of {}",
+                    known.join(", ")
+                );
+            };
+            for prefix in prefixes {
+                let prefix = prefix.trim_end_matches('/').to_string();
+                ensure!(!prefix.is_empty(), "a path rule cannot be empty");
+                ensure!(
+                    !prefix.starts_with('/'),
+                    "`{prefix}` must be relative to the checkout root"
+                );
+                // Prefixes, not globs: a rule means exactly what a SCOPE
+                // means, so there is one path language in the tool rather than
+                // two that almost agree.
+                ensure!(
+                    !prefix.contains(['*', '?']),
+                    "`{prefix}` is a glob; a path rule is a prefix, matched the way a scope is"
+                );
+                rules.push((prefix, class));
+            }
+        }
+        // Longest first, so `spec/fixtures` beats `spec` however the file was
+        // written — a TOML table has no order a reader could rely on anyway.
+        rules.sort_by(|a, b| b.0.len().cmp(&a.0.len()).then(a.0.cmp(&b.0)));
+        if let Some(pair) = rules.windows(2).find(|pair| pair[0].0 == pair[1].0) {
+            bail!(
+                "`{}` is given two classes ({} and {})",
+                pair[0].0,
+                pair[0].1.as_str(),
+                pair[1].1.as_str()
+            );
+        }
+        Ok(Classes {
+            rules,
+            include_ignored: false,
+        })
+    }
+
+    /// The one-off override: report every class, and report nothing as
+    /// withheld because nothing was.
+    pub fn including_ignored(mut self, all: bool) -> Classes {
+        self.include_ignored = all;
+        self
+    }
+
+    pub fn of(&self, path: &str) -> Class {
+        self.rules
+            .iter()
+            .find(|(prefix, _)| under(path, prefix))
+            .map(|(_, class)| *class)
+            .unwrap_or_else(|| by_convention(path))
+    }
+
+    pub fn reports(&self, class: Class) -> bool {
+        self.include_ignored || class.reported()
+    }
+
+    /// Whether an answer found at `path` is withheld — recording it if so.
+    ///
+    /// The policy and its disclosure in one call, deliberately: a surface that
+    /// could apply one without the other would eventually withhold something
+    /// silently, which DEC-022 says is the worse failure.
+    pub fn hides(&self, path: &str, withheld: &mut Withheld) -> bool {
+        let class = self.of(path);
+        if self.reports(class) {
+            return false;
+        }
+        withheld.add(class);
+        true
+    }
+}
+
+/// What the path policy kept out of an answer, by class.
+///
+/// Disclosed on every run (DEC-022). A report that silently withheld findings
+/// would be a worse failure than the one this fixes, so the count travels with
+/// the answer in every format rather than being inferable from a short list.
+#[derive(Debug, Default, serde::Serialize)]
+pub struct Withheld {
+    pub total: usize,
+    /// Class name → how many. The class *is* the reason, which is why the
+    /// breakdown is worth more than the count: "3 withheld" says nothing a
+    /// reader can act on, "3 in db/migrate" says whether to look.
+    pub by_class: BTreeMap<&'static str, usize>,
+}
+
+impl Withheld {
+    pub fn add(&mut self, class: Class) {
+        self.total += 1;
+        *self.by_class.entry(class.as_str()).or_default() += 1;
+    }
+
+    pub fn merge(&mut self, other: &Withheld) {
+        self.total += other.total;
+        for (class, count) in &other.by_class {
+            *self.by_class.entry(class).or_default() += count;
+        }
+    }
+
+    /// The disclosure line, built once so no surface words it differently.
+    /// `None` when there is nothing to say.
+    ///
+    /// Names no flag: this text is shared with the MCP surface, where CLI
+    /// syntax is the wrong instruction.
+    pub fn note(&self, noun: &str) -> Option<String> {
+        if self.total == 0 {
+            return None;
+        }
+        let breakdown: Vec<String> = self
+            .by_class
+            .iter()
+            .map(|(class, count)| format!("{count} {class}"))
+            .collect();
+        Some(format!(
+            "{} {noun}(s) in ignored paths withheld ({})",
+            self.total,
+            breakdown.join(", ")
+        ))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Each row is a finding from a real corpus, not a layout someone imagined:
+    /// discourse's plugin migrations, trekr's fixture corpus, rwr's `corpus/`,
+    /// berater's spec helper, trekr's tapioca output.
+    #[test]
+    fn a_path_says_what_kind_of_file_it_is() {
+        let classes = Classes::default();
+        let cases = [
+            ("app/models/user.rb", Class::App),
+            ("lib/contour/search.rb", Class::App),
+            ("src/search.rs", Class::App),
+            ("spec/lib/limiter_spec.rb", Class::Test),
+            ("test/cases/base_test.rb", Class::Test),
+            ("tests/cli_e2e.rs", Class::Test),
+            // A spec file outside any spec directory still names itself.
+            ("app/models/user_spec.rb", Class::Test),
+            ("tests/fixtures/widget.rb", Class::Fixture),
+            ("corpus/001-return-nil/in/basic.rb", Class::Fixture),
+            ("tests/testbed/001-macros/app.rb", Class::Fixture),
+            ("db/migrate/20240101_add_users.rb", Class::Migration),
+            ("db/post_migrate/20240101_backfill.rb", Class::Migration),
+            ("plugins/chat/db/migrate/20240101_x.rb", Class::Migration),
+            ("db/schema.rb", Class::Generated),
+            ("sorbet/rbi/gems/widget@1.0.0.rbi", Class::Generated),
+            ("vendor/bundle/gems/rack/lib/rack.rb", Class::Vendored),
+            ("node_modules/x/y.rb", Class::Vendored),
+            // A vendored gem's own specs are vendored, not tests: the order of
+            // the conventions is a claim, so it gets an assertion.
+            ("vendor/gems/rack/spec/rack_spec.rb", Class::Vendored),
+        ];
+        for (path, expected) in cases {
+            assert_eq!(classes.of(path), expected, "{path}");
+        }
+
+        // The negatives that keep the conventions from eating real code: a
+        // directory is not a segment because it shares a prefix with one, and
+        // a *file* named for a class is still app code.
+        for path in [
+            "app/models/testimonial.rb",
+            "app/services/vendors/invoice.rb",
+            "lib/specifications.rb",
+            "app/models/vendor.rb",
+            "db/models/user.rb",
+        ] {
+            assert_eq!(classes.of(path), Class::App, "{path}");
+        }
+    }
+
+    /// The defaults the owner ruled (DEC-022). Tests are the one most likely
+    /// to be "fixed" into an exclusion, so it is pinned here.
+    #[test]
+    fn only_frozen_and_regenerated_code_is_ignored_by_default() {
+        let reported: Vec<&str> = CLASSES
+            .iter()
+            .filter(|c| c.reported())
+            .map(|c| c.as_str())
+            .collect();
+        assert_eq!(reported, ["app", "test", "fixture"]);
+
+        // And the one-off override reports everything, without pretending
+        // anything was withheld.
+        let all = Classes::default().including_ignored(true);
+        assert!(CLASSES.iter().all(|c| all.reports(*c)));
+    }
+
+    #[test]
+    fn a_repo_can_say_its_layout_differs() {
+        let classes = Classes::parse(
+            r#"
+            [paths]
+            app = ["db/migrate"]
+            test = ["examples"]
+            fixture = ["examples/data"]
+            "#,
+        )
+        .unwrap();
+        // The override beats the convention, which is the whole point of it.
+        assert_eq!(classes.of("db/migrate/20240101_x.rb"), Class::App);
+        assert!(!classes.hides("db/migrate/20240101_x.rb", &mut Withheld::default()));
+        assert_eq!(classes.of("examples/tour.rb"), Class::Test);
+        // Longest prefix wins, whatever order the table happened to be in.
+        assert_eq!(classes.of("examples/data/tour.rb"), Class::Fixture);
+        // Anything the config does not name still falls through to convention.
+        assert_eq!(classes.of("spec/tour_spec.rb"), Class::Test);
+    }
+
+    /// A config that says something wrong fails the run. Silently classifying
+    /// nothing is how a report comes to withhold what somebody said to keep.
+    #[test]
+    fn a_config_that_says_something_wrong_is_refused() {
+        for bad in [
+            r#"[paths]
+               tests = ["spec"]"#,
+            r#"[path]
+               test = ["spec"]"#,
+            r#"[paths]
+               test = ["spec/**/*.rb"]"#,
+            r#"[paths]
+               test = ["/abs/spec"]"#,
+            r#"[paths]
+               test = [""]"#,
+            r#"[paths]
+               test = ["shared"]
+               fixture = ["shared"]"#,
+        ] {
+            assert!(Classes::parse(bad).is_err(), "{bad}");
+        }
+        // An empty file is a repo that says nothing, not a broken one.
+        assert!(Classes::parse("").is_ok());
+    }
+
+    #[test]
+    fn a_disclosure_names_the_reason_not_just_the_count() {
+        let mut withheld = Withheld::default();
+        assert_eq!(withheld.note("group"), None, "nothing to say");
+        withheld.add(Class::Migration);
+        withheld.add(Class::Migration);
+        withheld.add(Class::Vendored);
+        assert_eq!(
+            withheld.note("group").unwrap(),
+            "3 group(s) in ignored paths withheld (2 migration, 1 vendored)"
+        );
+
+        let mut other = Withheld::default();
+        other.add(Class::Migration);
+        withheld.merge(&other);
+        assert_eq!(withheld.total, 4);
+        assert_eq!(withheld.by_class["migration"], 3);
+    }
 
     #[test]
     fn a_scope_stops_at_a_path_boundary() {

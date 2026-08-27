@@ -133,13 +133,23 @@ fn tools() -> Vec<Value> {
         "type": "string",
         "description": "A path inside the repository. Defaults to the server's working directory."
     });
+    // One description for one flag, so the three tools that take it cannot
+    // drift into describing the same default differently.
+    let include_ignored = json!({
+        "type": "boolean",
+        "description": "Include paths ignored by default — migrations, generated and vendored code, \
+            which are frozen or regenerated rather than consolidated. Every answer reports what it \
+            withheld under `withheld_paths`."
+    });
     vec![
         json!({
             "name": "search",
             "description": "Find callables by what they DO, in English — \"which methods retrieve \
                 unpaid invoices\". Ranks a name match and a meaning match together. The meaning \
                 half only covers summarized code, so read `coverage` on every answer: `none` \
-                means this was a name match only.",
+                means this was a name match only. Each hit carries the `class` of file it lives \
+                in; `test` and `fixture` hits are ranked at the disclosed `discount`, because a \
+                spec that shares a name with the method it tests is rarely the answer.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -147,7 +157,8 @@ fn tools() -> Vec<Value> {
                     "path": path,
                     "scope": {"type": "string", "description": "Repo-relative file or directory to search within."},
                     "limit": {"type": "integer", "description": "Maximum hits. Default 10."},
-                    "floor": {"type": "number", "description": "Cosine floor; 0 shows everything the default withholds."}
+                    "floor": {"type": "number", "description": "Cosine floor; 0 shows everything the default withholds."},
+                    "include_ignored": include_ignored
                 },
                 "required": ["query"]
             },
@@ -164,7 +175,8 @@ fn tools() -> Vec<Value> {
                 "properties": {
                     "unit": {"type": "string", "description": "`Owner#method` or `Owner.method` in Ruby, `Owner::fn` in Rust. A name that means two units is refused with both locations listed; pass `path:line` to pick one."},
                     "path": path,
-                    "limit": {"type": "integer", "description": "Maximum neighbours. Default 10."}
+                    "limit": {"type": "integer", "description": "Maximum neighbours. Default 10."},
+                    "include_ignored": include_ignored
                 },
                 "required": ["unit"]
             },
@@ -180,7 +192,10 @@ fn tools() -> Vec<Value> {
                 estimated from travel with it. With `canonical`, each group also names which member \
                 is likely the original and why — and says so when the signals disagree, which \
                 usually means the old one was superseded and never deleted. Ruby gets AST-grade normalization; Rust gets a \
-                token-stream hash, disclosed per group as `structural` or `token_hash`.",
+                token-stream hash, disclosed per group as `structural` or `token_hash`. Each group \
+                carries the `class` of path its copies live in and is ranked within that \
+                population: app code first, then test and fixture duplication, which is real \
+                maintenance signal but a poor answer to \"what should I consolidate here\".",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -189,7 +204,8 @@ fn tools() -> Vec<Value> {
                     "min_lines": {"type": "integer", "description": "Ignore bodies shorter than this. Default 4."},
                     "near": {"type": "boolean", "description": "Also report nearly-identical bodies."},
                     "near_threshold": {"type": "number", "description": "Jaccard for `near`. Default 0.8."},
-                    "canonical": {"type": "boolean", "description": "Name the likely-original member of each group, with the signals behind it (git age, reference counts, namespace depth) and what each measured. Costs one git blame per body and one trekr call per Ruby name, so scope it."}
+                    "canonical": {"type": "boolean", "description": "Name the likely-original member of each group, with the signals behind it (git age, reference counts, namespace depth) and what each measured. Costs one git blame per body and one trekr call per Ruby name, so scope it."},
+                    "include_ignored": include_ignored
                 }
             },
             "annotations": {"readOnlyHint": true}
@@ -292,6 +308,14 @@ fn call(params: &Value) -> Result<Value> {
     }))
 }
 
+/// The path policy for a tool call: the checkout's, plus this call's
+/// `include_ignored`. Named apart from `scoped` because a tool may want one
+/// without the other.
+fn classes(root: &Path, args: &Value) -> Result<crate::paths::Classes> {
+    Ok(crate::paths::Classes::load(root)?
+        .including_ignored(args["include_ignored"].as_bool() == Some(true)))
+}
+
 /// Resolve a tool's `path` argument the way the CLI resolves its cwd.
 fn scoped(args: &Value) -> Result<(PathBuf, Option<String>)> {
     let here = args["path"].as_str().unwrap_or(".");
@@ -308,6 +332,7 @@ fn search(args: &Value) -> Result<Value> {
         .as_str()
         .ok_or_else(|| anyhow::anyhow!("`query` is required"))?;
     let (root, scope) = scoped(args)?;
+    let classes = classes(&root, args)?;
     let embedder = crate::embed::default_embedder(None, crate::embed::Workload::Query);
     let mut store = crate::store::open_default()?;
     let answer = crate::search::search(
@@ -322,7 +347,7 @@ fn search(args: &Value) -> Result<Value> {
                 Some(floor) => floor as f32,
                 None => crate::search::relevance_floor(embedder.kind()),
             },
-            ..Default::default()
+            ..crate::search::Options::new(&classes)
         },
     )?;
     Ok(serde_json::to_value(answer)?)
@@ -333,6 +358,7 @@ fn similar(args: &Value) -> Result<Value> {
         .as_str()
         .ok_or_else(|| anyhow::anyhow!("`unit` is required"))?;
     let (root, _) = scoped(args)?;
+    let classes = classes(&root, args)?;
     let embedder = crate::embed::default_embedder(None, crate::embed::Workload::Query);
     let mut store = crate::store::open_default()?;
     let neighbors = crate::search::similar(
@@ -341,40 +367,54 @@ fn similar(args: &Value) -> Result<Value> {
         unit,
         embedder.as_ref(),
         args["limit"].as_u64().unwrap_or(10) as usize,
+        &classes,
     )?;
     Ok(serde_json::to_value(neighbors)?)
 }
 
 fn dupes(args: &Value) -> Result<Value> {
     let (root, scope) = scoped(args)?;
+    let classes = crate::paths::Classes::load(&root)?
+        .including_ignored(args["include_ignored"].as_bool() == Some(true));
     let root = root.to_string_lossy().into_owned();
     let store = crate::store::open_default()?;
     let min_lines = args["min_lines"].as_u64().unwrap_or(4) as u32;
-    let mut groups = crate::dupes::find(&store, &root, scope.as_deref(), min_lines)?;
+    let mut found = crate::dupes::find(&store, &root, scope.as_deref(), min_lines, &classes)?;
     let mut stats = None;
     if args["near"].as_bool() == Some(true) {
         let threshold = args["near_threshold"]
             .as_f64()
             .map(|t| t as f32)
             .unwrap_or(crate::near::NEAR_THRESHOLD);
-        let (near, found) =
-            crate::dupes::find_near(&store, &root, scope.as_deref(), min_lines, threshold)?;
-        groups.extend(near);
-        crate::dupes::rank(&mut groups);
-        stats = Some(found);
+        let (near, near_stats) = crate::dupes::find_near(
+            &store,
+            &root,
+            scope.as_deref(),
+            min_lines,
+            threshold,
+            &classes,
+        )?;
+        found.groups.extend(near.groups);
+        found.withheld.merge(&near.withheld);
+        crate::dupes::rank(&mut found.groups);
+        stats = Some(near_stats);
     }
     let mut ranked = None;
     if args["canonical"].as_bool() == Some(true) {
-        ranked = Some(crate::canonical::annotate(Path::new(&root), &mut groups)?);
+        ranked = Some(crate::canonical::annotate(
+            Path::new(&root),
+            &mut found.groups,
+        )?);
     }
     // The scale and coverage disclosure the CLI prints to stderr has nowhere
     // to go in a tool result but the result itself — and an agent needs to
-    // know the near tier skipped its Rust files.
+    // know the near tier skipped its Rust files, and that groups were withheld.
     Ok(json!({
         "root": root,
-        "groups": groups,
+        "groups": found.groups,
         "near_stats": stats,
         "canonical_stats": ranked,
+        "withheld_paths": found.withheld,
     }))
 }
 

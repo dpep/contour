@@ -26,16 +26,26 @@ const RRF_K: f64 = 60.0;
 /// whose summary is most poetic about invoices.
 const SEMANTIC_WEIGHT: f64 = 0.7;
 
-// Open question, recorded here because this is where a ranking change lands:
-// **test code ranks alongside the implementation it tests.** On berater,
-// "limit how many things can run at once" returns `spec/riddle_spec.rb:13
-// limit` above `Berater::Limiter#limit` — a spec defines a helper with the
-// obvious name, and nothing tells the ranker that a caller almost never wants
-// it. A path-shaped discount (`spec/`, `test/`) is the cheap fix and would
-// have to be disclosed rather than silent, since "why is my test not in the
-// results" is a worse surprise than the one it fixes. Left unbuilt on purpose:
-// DEC-011 says a ranking constant comes from the eval set, and no labeled query
-// currently expects a test method either way.
+/// How much a hit outside the app population is discounted in the fusion.
+///
+/// The complaint this answers: on berater, "limit how many things can run at
+/// once" returned `spec/riddle_spec.rb:13 limit` above `Berater::Limiter#limit`
+/// — a spec defines a helper with the obvious name, and nothing told the ranker
+/// that a caller almost never wants it. DEC-022 rules that the fix is a
+/// **discount, not an exclusion**: test code is still an answer, and "why is my
+/// spec not in the results" is a worse surprise than the one this fixes.
+///
+/// Not calibrated, and disclosed as `discount` on every answer, because DEC-011
+/// says a ranking constant comes from the eval set and no labeled query expects
+/// a test method either way. What it is measured against is **regression**: at
+/// 0.5 no labeled query on any of the seven sets changes rank, and the two
+/// known live cases flip. A reader who disagrees can see the number and the
+/// `class` on each hit that it was applied to.
+///
+/// Fixtures take the same discount as tests. They are further still from what a
+/// behavioural query is asking about, and inventing a second constant to say so
+/// would be two numbers neither of which is measured.
+pub const NON_APP_DISCOUNT: f64 = 0.5;
 
 /// Cosine below which a hit is not an answer to anything — but only for an
 /// embedder this was measured for.
@@ -88,12 +98,17 @@ pub struct Hit {
     /// unit was found by name alone.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cosine: Option<f32>,
-    /// The fused rank score. Deliberately **not** called confidence: RRF is
-    /// scale-free and its value means nothing outside this result set
-    /// (DEC-010). `cosine` above is the measurement a reader should weigh.
+    /// The fused rank score, after any path-class discount. Deliberately
+    /// **not** called confidence: RRF is scale-free and its value means nothing
+    /// outside this result set (DEC-010). `cosine` above is the measurement a
+    /// reader should weigh.
     pub score: f64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub summary: Option<String>,
+    /// What kind of file this hit lives in (DEC-022). `test` or `fixture` here
+    /// is also the reason `score` carries the [`NON_APP_DISCOUNT`] the answer
+    /// discloses — the tag and the ranking treatment are the same fact.
+    pub class: crate::paths::Class,
 }
 
 /// A search answer plus everything needed to judge it.
@@ -123,6 +138,13 @@ pub struct Answer {
     /// unfalsifiable constant. Reporting what it hid makes it auditable —
     /// trekr's `--include-excluded` move — and `--floor 0` shows the rest.
     pub withheld: usize,
+    /// Ranked units the path policy removed, by class (DEC-022). The same
+    /// argument as `withheld` above, applied to the other default that hides
+    /// results.
+    pub withheld_paths: crate::paths::Withheld,
+    /// The discount applied to hits outside the app population, so a reader
+    /// can see the ranking knob rather than infer it. `1.0` means none was.
+    pub discount: f64,
 }
 
 /// How many units each vector tier covered.
@@ -158,15 +180,23 @@ pub struct Options<'a> {
     /// because calibrating a threshold above itself proves nothing.
     pub floor: f32,
     pub prefer: Prefer,
+    /// Which path classes are answers, and which are ranked apart (DEC-022).
+    /// Borrowed, because it is one value per command and every query in a run
+    /// must agree about it.
+    pub classes: &'a crate::paths::Classes,
 }
 
-impl Default for Options<'_> {
-    fn default() -> Self {
+impl<'a> Options<'a> {
+    /// Everything at its default, against a given path policy. There is no
+    /// `Default`: a policy is loaded from the checkout, and defaulting it here
+    /// would let a caller search one repo under another's rules.
+    pub fn new(classes: &'a crate::paths::Classes) -> Options<'a> {
         Options {
             scope: None,
             limit: 10,
             floor: 0.0,
             prefer: Prefer::Best,
+            classes,
         }
     }
 }
@@ -184,8 +214,10 @@ pub fn search(
         limit,
         floor,
         prefer,
+        classes,
     } = options;
     let units = in_scope(store, root, scope)?;
+    let class_of: Vec<crate::paths::Class> = units.iter().map(|u| classes.of(&u.path)).collect();
     let summaries = vectors_for(store, &units, embedder, prefer)?;
 
     // Lexical: token overlap against the humanized name, best first.
@@ -226,9 +258,23 @@ pub fn search(
         entry.2 = true;
     }
 
+    // The path policy, applied where ranking is decided: an ignored class is
+    // not an answer, and a class ranked apart is discounted rather than
+    // dropped (DEC-022). Both happen before the truncation, so neither can
+    // spend a slot a reader wanted.
+    let mut withheld_paths = crate::paths::Withheld::default();
     let mut ranked: Vec<(usize, f64, bool, bool)> = fused
         .into_iter()
-        .map(|(i, (score, lex, sem))| (i, score, lex, sem))
+        .filter_map(|(i, (score, lex, sem))| {
+            if classes.hides(&units[i].path, &mut withheld_paths) {
+                return None;
+            }
+            let discount = match class_of[i].is_app() {
+                true => 1.0,
+                false => NON_APP_DISCOUNT,
+            };
+            Some((i, score * discount, lex, sem))
+        })
         .collect();
     // Ties broken by location, so two runs of the same query agree.
     ranked.sort_by(|a, b| {
@@ -241,6 +287,7 @@ pub fn search(
     let hits = ranked
         .into_iter()
         .map(|(i, score, lex, sem)| Hit {
+            class: class_of[i],
             path: crate::paths::absolute(root, &units[i].path),
             id: units[i].unit.id(),
             line: units[i].unit.line,
@@ -280,6 +327,8 @@ pub fn search(
         embedder: embedder.kind(),
         floor: round2(floor),
         withheld,
+        withheld_paths,
+        discount: NON_APP_DISCOUNT,
     })
 }
 
@@ -323,15 +372,24 @@ pub struct Neighbor {
     pub lines: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub summary: Option<String>,
+    /// What kind of file this neighbour lives in (DEC-022). Unlike `search`,
+    /// nothing here is discounted for it: a neighbour list is short and its
+    /// order is the tier's measurement, so the tag is the whole treatment.
+    pub class: crate::paths::Class,
 }
 
 /// Nearest neighbours of one named unit, structural tier first.
+///
+/// The unit asked about is resolved against the whole checkout, ignored paths
+/// included — you can ask about a migration you are looking at. Its
+/// *neighbours* follow the path policy, and say what they withheld.
 pub fn similar(
     store: &mut Store,
     root: &str,
     id: &str,
     embedder: &dyn Embedder,
     limit: usize,
+    classes: &crate::paths::Classes,
 ) -> Result<Neighbors> {
     let units = in_scope(store, root, None)?;
     let target = resolve(&units, id)?;
@@ -339,6 +397,7 @@ pub fn similar(
     let here = &units[target];
     let floor = relevance_floor(embedder.kind());
     let mut withheld = 0;
+    let mut withheld_paths = crate::paths::Withheld::default();
 
     // Which units a tier has already reported. Keyed by **index**, not by the
     // path string: `path` is absolute on a `Neighbor` and relative on a
@@ -358,6 +417,12 @@ pub fn similar(
                 continue;
             }
             claimed.insert(i);
+            // Each tier drops its own, rather than one filter over the merged
+            // list: the semantic tier truncates to `limit` on the way out, so a
+            // late filter would spend slots on answers nobody sees.
+            if classes.hides(&other.path, &mut withheld_paths) {
+                continue;
+            }
             out.push(Neighbor {
                 path: crate::paths::absolute(root, &other.path),
                 id: other.unit.id(),
@@ -367,6 +432,7 @@ pub fn similar(
                 similarity: None,
                 lines: Some(other.unit.end_line + 1 - other.unit.line),
                 summary: summaries.text.get(&i).cloned(),
+                class: classes.of(&other.path),
             });
         }
     }
@@ -382,7 +448,11 @@ pub fn similar(
             if index.is_some_and(|i| !claimed.insert(i)) {
                 continue;
             }
+            if classes.hides(&near.path, &mut withheld_paths) {
+                continue;
+            }
             out.push(Neighbor {
+                class: classes.of(&near.path),
                 path: crate::paths::absolute(root, &near.path),
                 id: near.id,
                 line: near.line,
@@ -409,9 +479,11 @@ pub fn similar(
         // above the bar" are never the same silence (DEC-010).
         withheld = scored.iter().filter(|(_, c)| *c < floor).count();
         scored.retain(|(_, cosine)| *cosine >= floor);
+        scored.retain(|(i, _)| !classes.hides(&units[*i].path, &mut withheld_paths));
         scored.sort_by(|a, b| b.1.total_cmp(&a.1));
         for (i, cosine) in scored.into_iter().take(limit) {
             out.push(Neighbor {
+                class: classes.of(&units[i].path),
                 path: crate::paths::absolute(root, &units[i].path),
                 id: units[i].unit.id(),
                 line: units[i].unit.line,
@@ -437,6 +509,7 @@ pub fn similar(
         embedder: embedder.kind(),
         floor: round2(floor),
         withheld,
+        withheld_paths,
     })
 }
 
@@ -463,6 +536,10 @@ pub struct Neighbors {
     /// near-structural tiers are predicates and no floor touches them.
     pub floor: f32,
     pub withheld: usize,
+    /// Neighbours the path policy removed, by class — from every tier, since
+    /// an identical body in `vendor/` is as much a non-answer as a nearby one
+    /// (DEC-022).
+    pub withheld_paths: crate::paths::Withheld,
 }
 
 /// Resolve what the user typed to exactly one unit.
