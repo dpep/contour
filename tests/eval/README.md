@@ -27,6 +27,7 @@ in the last column and are counted separately in the report.
 | `fixture/` | `fixture/corpus/` — 21 methods, in-repo | nothing; runs in CI |
 | `rails/` | a rails checkout | real summaries, so an API key |
 | `discourse/` | a discourse checkout | real summaries, so an API key |
+| `rust/<repo>/` | the sibling repos (trekr, rwr, rq, gqls, launder, navi) | nothing |
 
 `fixture/` exists to prove the machinery, not to calibrate anything: two dozen
 units across four domains is far too small and too thematically dense for the
@@ -128,6 +129,42 @@ The pairs here are *edges*, not groups, and deliberately not all duplicates: a
 shim that `delegates` to what it shadows has a different body, so no clone
 group holds it, and it is still a pair worth ranking. The harness ranks each
 labeled pair directly for that reason.
+
+## The Rust sets: measuring the token_hash tier
+
+Rust's normalization is a degraded tier on purpose (DEC-012): a
+comment-stripped token stream that catches copy-paste and reformatting, where
+a renamed local, a changed literal, or a `std::time::`-qualified path moves
+the hash. It shipped unmeasured; `rust/<repo>/` is its ground truth. Each
+subdirectory runs against one sibling checkout:
+
+```sh
+cd ~/code/lib/rust/trekr && contour eval <this repo>/tests/eval/rust/trekr
+```
+
+Two conventions specific to these sets:
+
+- **Distinct labels here come in two flavours, and the comments say which.**
+  Most are product judgments as everywhere else (one differing token IS the
+  behaviour — a builder setter, a per-plugin constant). A few are the tier's
+  *contract*: a genuine duplicate that differs only by a renamed local
+  (rwr's `line_start`, gqls's `pascal_case`/`to_pascal`) is labeled
+  `distinct` because the tier not catching it is correct-by-design — those
+  labels flip if normalization ever reaches Prism-grade parity.
+- **A pair may name the same id twice.** Rust free functions have no owner
+  (DEC-012), so a helper copied between two files is two units with one
+  name, and `git<TAB>git<TAB>duplicate` asserts "the two same-named units
+  collide". Sound while exactly two units carry the name; a third would
+  make the label ambiguous, which is the known cost of DEC-012's owner rule.
+
+`queries.tsv` is deliberately empty — the duplicate tier is what shipped
+unmeasured. Two limits, noted rather than worked around: the harness runs one
+checkout, so the cross-repo copy (ae's `HashEmbedder::embed` is a paste of
+gqls's, identical modulo locals) is real but unlabelable; and `ae` itself has
+no in-repo pair worth labeling. Measured baseline on 2026-08 checkouts:
+every labeled collision reported, no false collisions at any size, and one
+deliberate false negative (rwr's 3-line `corpus_dir` sits below
+`--min-lines 4` — the floor's cost, on the record).
 
 ## What discourse adds: do rails-calibrated thresholds transfer?
 

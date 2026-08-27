@@ -1,0 +1,27 @@
+# token_hash pairs against an rq checkout (run from ~/code/lib/rust/rq).
+#
+# DRAFTED BY CLAUDE, NOT YET REVIEWED BY THE OWNER. Verified by reading both
+# bodies. See tests/eval/rust/trekr/pairs.tsv and the README for the tier's
+# contract and the same-id convention.
+
+# cli/mod.rs contains the same epoch-seconds helper twice under two names,
+# 400 lines apart. Different names, one file — the cleanest possible Rust
+# duplicate label, and pure oversight.
+now_secs	unix_now	duplicate
+# The same helper again in search/ and store/, name shared this time.
+now_unix	now_unix	duplicate
+
+# The SAME body as now_secs, but written with `SystemTime` imported rather
+# than `std::time::`-qualified. Path qualification is tokens, so the tier
+# misses it correct-by-design — the qualification twin of the renamed-local
+# boundary (see rwr's line_start). Would flip under real normalization.
+now_secs	now_unix	distinct
+# Per-plugin extract calls its own module's grammar and walker: one differing
+# token (tree_sitter_go vs tree_sitter_rust) that is the entire behaviour.
+Rust::extract	Go::extract	distinct
+# Byte-identical `LANGUAGE` bodies that each resolve to their OWN module's
+# constant — Rust's version of rails' constant-scope pair, and DEC-020 calls
+# it distinct: the trait method IS the per-plugin datum. The tier currently
+# groups them below --min-lines 4 (3 lines), so the default floor is what
+# hides the false positive.
+Go::language	Python::language	distinct	provisional

@@ -1,0 +1,10 @@
+# token_hash pairs against a navi checkout (run from ~/code/lib/rust/navi).
+#
+# DRAFTED BY CLAUDE, NOT YET REVIEWED BY THE OWNER. Verified by reading both
+# bodies. See tests/eval/rust/trekr/pairs.tsv and the README for the tier's
+# contract.
+
+# Adjacent builder setters, identical but for which field they set: one
+# identifier apart, and consolidating builder boilerplate is never a
+# reduction (DEC-020).
+Outcome::backend	Outcome::fallback	distinct

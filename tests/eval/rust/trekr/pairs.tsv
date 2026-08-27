@@ -1,0 +1,23 @@
+# token_hash pairs against a trekr checkout (run from ~/code/lib/rust/trekr).
+#
+# DRAFTED BY CLAUDE, NOT YET REVIEWED BY THE OWNER. Verified by reading both
+# bodies. Rust's tier is a comment-stripped token stream (DEC-012): it catches
+# copy-paste and reformatting, and a single changed token — a renamed local, a
+# different bool literal — moves the hash. The distinct rows here probe exactly
+# that boundary.
+#
+# Rust free functions have no owner (DEC-012), so a copied function appears
+# twice under ONE id and its pair row names the same id twice: the row asserts
+# "the two same-named units collide". See the README for the ambiguity this
+# carries.
+
+# Byte-identical test helper in two integration-test files.
+git	git	duplicate
+# The one src-tree duplicate in these seven repos: the same namespace check in
+# resolve/mod.rs and resolve/refs.rs.
+shares_namespace	shares_namespace	duplicate
+
+# Three constructors, identical but for which bool field is true. One literal
+# is one token, so they must not collide — the tier's sharpest negative.
+Generated::reader	Generated::writer	distinct
+Generated::writer	Generated::class_method	distinct
