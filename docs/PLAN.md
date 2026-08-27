@@ -191,6 +191,14 @@ Measured old → new, on the same checkouts:
 | rails | exact precision | 0.93 | 0.93 (its FP is the constant-scope pair) |
 | six Rust sets | every number | — | unchanged |
 
+One bonus finding, recorded because it is evidence for the `generated` class
+beyond the ruling: rails' two `db/schema.rb` files contributed **144 phantom
+units**. The schema DSL's `t.string "status"` reads as an attribute macro, so
+the extractor minted `ActionMailboxInboundEmail#status`, `#status=` and
+`#status?` — a class that does not exist, with methods nothing defines. Same
+shape as the discourse serializer finding, and classifying the file removes the
+whole population from search without touching the macro table.
+
 Two limits worth knowing, both honest rather than fixable by a rule:
 
 - `CommentMigration#up`/`#down` lives in `lib/comment_migration.rb`, so no path

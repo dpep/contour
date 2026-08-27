@@ -69,6 +69,11 @@ a `semantic` one is a suggestion.
 If `search` returns less than you expect, run `contour --status` before
 concluding the code is not there.
 
+**Answers are never stale.** Every query brings the checkout up to date before
+answering — a file you just edited or deleted is accounted for, and the answer
+says `refreshed` (a tool result) or `index refreshed` (on stderr) when that took
+work. You do not need to run `index` after editing.
+
 ## What kind of file each answer is in
 
 Every hit, neighbour and duplicate group carries a `class`: `app`, `test`,
@@ -206,11 +211,13 @@ thresholds honestly, and keeping them apart is what preserves that.
 
 ## Before the first question on a new machine
 
-**Is `contour` on PATH, and is the repo indexed?**
+**Is `contour` on PATH?** The index takes care of itself: the first query in a
+checkout indexes it, and every later one brings it up to date first.
 
 ```sh
-contour --status              # nothing listed? index it
-contour index                 # cheap and idempotent; a no-op reindex parses nothing
+contour --status              # what is indexed, and how much is summarized
+contour index                 # only if you want the cost paid now rather than
+                              # on the first question
 ```
 
 Indexing is fast (rails: ~2 s for 3,300 files). The first `search` on a fresh

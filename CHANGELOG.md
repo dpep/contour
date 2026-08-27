@@ -21,6 +21,13 @@ Initial skeleton — nothing has been released, so everything below is new.
   - Measured: discourse exact-tier precision **0.73 → 1.00** with recall still
     1.00 (its four migration false positives are gone), and rails search top-5
     **2/77 → 12/77** (its library methods were drowning in `test/`).
+- **A query answer is never silently stale.** Every command that answers from
+  the index — `dupes`, `search`, `similar`, `summarize`, `eval`, and the MCP
+  tools — brings the checkout up to date first and says so (`index refreshed —
+  2 file(s)`). Delete a file and search: the method that is gone no longer
+  comes back. Costs 50 ms on rails when nothing moved and 300 ms after an edit,
+  against a query that takes seconds. `--status` still reports staleness rather
+  than resolving it.
 - **`.contour.toml`** at a checkout root states a layout the conventions get
   wrong. Rules are path prefixes — matched exactly the way a `SCOPE` is, so
   there is one path language rather than two — and they beat the conventions:
