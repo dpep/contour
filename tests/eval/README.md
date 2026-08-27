@@ -224,6 +224,70 @@ every labeled collision reported, no false collisions at any size, and one
 deliberate false negative (rwr's 3-line `corpus_dir` sits below
 `--min-lines 4` — the floor's cost, on the record).
 
+## The near sweep, and what it can and cannot settle
+
+`contour eval` prints a **near-structural calibration** table: both candidate
+measures (`shapes`, `nodes`) across thresholds, with precision, recall, and the
+short band counted separately. That table is where `near::NEAR_THRESHOLD` comes
+from, and it replaced the four-labels-a-side argument that produced 0.80.
+
+**It cannot compare the two measures, and the reason is this file's own rule.**
+Every positive in both label sets was surfaced by the *shape* measure — rails'
+by reading its report at 0.80, discourse's by sweeping it to 0.55. A pair the
+node measure would find and the shape measure scores below the sweep floor
+cannot be in the labels at all, so the comparison can only ever confirm shapes.
+The label-sourcing rule applies to a **measure** exactly as it applies to a
+threshold.
+
+What would settle it: sweep the *node* measure down on discourse, read what
+turns up, and label it. Those labels plus these would let either measure be
+scored against candidates the other found. Until then the shape measure decides
+and the node counts price the consolidation.
+
+## The rails re-audit, and what it did to the near numbers
+
+rails' near labels were sourced from the tier's own report at 0.80, so they
+could only ever confirm it — 1.00 precision, 1.00 recall, and a number that
+meant nothing. M11c re-drew them the only way that answers "how often is this
+tier right": **sweep to 0.55, take a random sample of what it reports, judge
+every pair in the sample.** Seed 11, 20 pairs from what ships at 0.70 and 15
+from 0.55-0.70, each read against the rule.
+
+**The finding: 2 of the 20 shipped pairs are real consolidations. Precision
+0.10.** Eighteen are sibling test methods that differ by exactly the thing they
+test — `test_becomes` against `test_becomes_after_reload_schema_from_cache`,
+`destroy` against `delete`, one option set against another. Nineteen of the
+twenty are test code. The two real ones are duplicated test *helpers*
+(`open_connection` in two ActionCable test classes; two latency stubs in
+ActiveSupport's cache tests), which somebody could actually consolidate.
+
+Lowering the threshold buys almost nothing: **1 real pair in 15** sampled from
+0.55-0.70.
+
+**The printed rails precision is a blend and reads high.** The harness scores
+every labeled pair together, and rails' file now holds two populations: the ten
+original labels, drawn from the tier's own output and therefore true by
+construction, and this random sample. 0.52 as printed mixes them. **0.10 is the
+unbiased estimate**; the printed number is an upper bound on it.
+
+**This is evidence the M11b threshold ruling did not have.** 0.70 was ratified
+because it improved precision *and* recall over 0.80 on the labels as they then
+stood. On the re-audited labels, merged across both corpora, it is a trade
+rather than a free win:
+
+| threshold | precision | recall |
+| --------- | --------- | ------ |
+| 0.70 | 0.47 (24/51) | 0.67 (24/36) |
+| 0.80 | 0.55 (18/33) | 0.50 (18/36) |
+
+That is a decision, not a calculation, and it belongs to whoever owns the
+threshold. What the re-audit settles is that it must be made on these labels
+rather than the old ones.
+
+**It still cannot compare the two measures.** The sample was drawn from what the
+*shape* measure reports, so it estimates that measure's precision honestly and
+says nothing about pairs only the node measure would find.
+
 ## The short-body band: the near tier's limitation, measured
 
 Jaccard is harsher on short bodies — one edited line moves a third of an
