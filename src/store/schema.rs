@@ -27,7 +27,7 @@
 /// migration bug. It also makes adding a column free, so nothing needs to be
 /// carried speculatively. See the module header for what this version
 /// deliberately does *not* govern.
-pub(crate) const VERSION: i64 = 8;
+pub(crate) const VERSION: i64 = 9;
 
 /// Applied whole to a fresh database.
 pub(crate) const SCHEMA: &str = r#"
@@ -81,11 +81,10 @@ CREATE TABLE checkout (
   -- hash(path) ^ hash(blob oid). An identical key means an identical map, so
   -- the rewrite below is skipped outright — which is the whole cost of a
   -- no-op reindex at scale.
-  map_key    INTEGER NOT NULL,
-  -- git's own view of the checkout when it was last indexed: one stat of
-  -- `.git/index`, folded. Lets `--status` say "might be stale" in O(1)
-  -- rather than rescanning to find out.
-  git_state  INTEGER NOT NULL
+  -- It is also the answer to "is this checkout stale": recomputing it costs
+  -- one `git ls-files` (~20 ms on rails) and is exact, where the stat of
+  -- `.git/index` this replaced was O(1) and blind to every uncommitted edit.
+  map_key    INTEGER NOT NULL
 );
 
 CREATE TABLE file (

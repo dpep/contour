@@ -140,37 +140,27 @@ pub fn repo_root(path: &Path) -> Result<PathBuf> {
     Ok(PathBuf::from(path))
 }
 
-/// A cheap fingerprint of git's own view of the checkout.
+/// A single number standing for "which bytes this checkout currently holds".
 ///
-/// `.git/index` is rewritten by `add`, `checkout`, `merge`, `rebase`, and by
-/// the `status`/`diff` that any editor or prompt runs constantly — so its mtime
-/// and size move whenever git has noticed anything. Reading two numbers off one
-/// stat is **O(1) in repo size**, which is the property that matters: a full
-/// scan cannot sit on a query path at monorepo scale.
+/// Order-independent by construction, so it can be compared against a stored
+/// value without keeping the map around. This is what makes staleness an
+/// **exact** question rather than a probe: the map is the ground truth for
+/// what contour would index, so if it has not moved, nothing contour cares
+/// about has.
 ///
-/// **What it cannot see**, stated here so nobody rediscovers it: a tracked file
-/// edited with nothing having refreshed git's index, and a brand-new untracked
-/// file. This is a *probe*, not a proof — it answers "might anything have
-/// changed", and a false negative is why an explicit reindex still exists.
-pub fn git_fingerprint(root: &Path) -> Option<i64> {
-    // A worktree's `.git` is a file pointing at the real gitdir.
-    let dot_git = root.join(".git");
-    let index = match std::fs::read_to_string(&dot_git) {
-        Ok(text) => {
-            let dir = text.strip_prefix("gitdir:")?.trim();
-            PathBuf::from(dir).join("index")
-        }
-        Err(_) => dot_git.join("index"),
-    };
-    let meta = std::fs::metadata(index).ok()?;
-    let modified = meta
-        .modified()
-        .ok()?
-        .duration_since(std::time::UNIX_EPOCH)
-        .ok()?;
-    // Nanoseconds and size together: a same-second rewrite of the same length
-    // is possible, and the nanoseconds are what separate them.
-    Some((modified.as_nanos() as i64).wrapping_mul(31) ^ (meta.len() as i64))
+/// It replaced a stat of `.git/index`, which was O(1) but blind to the state a
+/// live session is always in — a tracked file edited with nothing having
+/// refreshed git's index. That probe reported `stale: false` while `search`
+/// could not see the method you had just written. Measured before swapping:
+/// `git ls-files -s` is ~20 ms on rails and on discourse, which a diagnostic
+/// command can afford and a wrong answer is not.
+pub fn map_key(files: &Files) -> i64 {
+    files.iter().fold(0i64, |key, (path, oid)| {
+        key.wrapping_add(
+            crate::hash::fnv1a(crate::hash::FNV_OFFSET, path.as_bytes()) as i64
+                ^ crate::hash::fnv1a(crate::hash::FNV_OFFSET, oid.0.as_bytes()) as i64,
+        )
+    })
 }
 
 /// Every indexable file in the working tree, keyed by the blob its current bytes

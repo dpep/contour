@@ -427,6 +427,24 @@ fn a_session_can_summarize_what_it_reads() {
         serde_json::json!({"query": "customer has not settled their bill"}),
     );
     assert_eq!(found["tiers"]["summary"], 1, "one unit has a summary now");
+
+    // `status` and `search` must not disagree about the same corpus. They did:
+    // status counted only what an API fill had bought, so a contribution made
+    // it say `none 0/128` about a corpus search was already answering from.
+    // Found by QA; the numbers now come from one question each, both reported.
+    let status = mcp.tool(7, "status", serde_json::json!({}));
+    let answerable = &status["checkouts"][0]["answerable"];
+    assert_eq!(answerable["summarized"], found["coverage"]["summarized"]);
+    assert_eq!(
+        answerable["summarizable"],
+        found["coverage"]["summarizable"]
+    );
+    assert_eq!(answerable["state"], found["coverage_state"]);
+    // And the contribution is visible as its own source rather than absent.
+    let sources = status["checkouts"][0]["coverage"].as_array().unwrap();
+    assert_eq!(sources.len(), 1, "{sources:?}");
+    assert_eq!(sources[0]["via"], "mcp");
+    assert_eq!(sources[0]["summarized"], 1);
     let hit = found["hits"]
         .as_array()
         .unwrap()

@@ -337,7 +337,6 @@ mod tests {
                 "/r",
                 &files,
                 vec![(ruby_oid, ruby_blob), (rust_oid, rust_blob)],
-                0,
             )
             .unwrap();
 

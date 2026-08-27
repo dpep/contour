@@ -78,7 +78,6 @@ pub fn index(store: &mut Store, path: &Path) -> Result<(String, Indexed)> {
         }
     }
 
-    let git_state = scan::git_fingerprint(&root).unwrap_or(0);
-    let counts = store.write(&root_str, &files, parsed, git_state)?;
+    let counts = store.write(&root_str, &files, parsed)?;
     Ok((root_str, counts))
 }

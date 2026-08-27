@@ -390,25 +390,32 @@ fn symbols(args: &Value) -> Result<Value> {
 fn status() -> Result<Value> {
     let store = crate::store::open_default()?;
     let checkouts = store.status()?;
-    let models = store.summary_models()?;
+    let sources = store.summary_sources()?;
     let mut rows = Vec::new();
     for checkout in &checkouts {
         let mut coverage = Vec::new();
-        for model in &models {
-            let counts = crate::summary::coverage(&store, &checkout.root, model)?;
+        for (model, via) in &sources {
+            let counts = crate::summary::coverage(&store, &checkout.root, model, via)?;
             coverage.push(json!({
                 "model": model,
+                "via": via,
                 "state": counts.state(),
                 "summarized": counts.summarized,
                 "summarizable": counts.summarizable,
             }));
         }
+        let answerable = crate::summary::answerable(&store, &checkout.root)?;
         rows.push(json!({
             "root": checkout.root,
             "files": checkout.files,
             "blobs": checkout.blobs,
             "units": checkout.units,
             "stale": checkout.stale,
+            "answerable": {
+                "state": answerable.state(),
+                "summarized": answerable.summarized,
+                "summarizable": answerable.summarizable,
+            },
             "coverage": coverage,
         }));
     }

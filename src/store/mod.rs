@@ -51,8 +51,12 @@ pub struct Checkout {
     /// `unit` rows — on rails, 54,296 against 54,068 — and the gap is exactly
     /// the `files` − `blobs` difference doing its job.
     pub units: i64,
-    /// git has touched its index since we last looked. A probe, not a proof —
-    /// see `scan::git_fingerprint` for what it cannot see.
+    /// The checkout's current bytes no longer match what was indexed.
+    ///
+    /// Exact rather than a probe: the path→blob map is recomputed and compared
+    /// to the one the index was built from, so a working-tree edit counts —
+    /// which is the state a live session is always in, and the one the old
+    /// `.git/index` stat could not see.
     pub stale: bool,
 }
 
@@ -207,7 +211,6 @@ impl Store {
         root: &str,
         files: &Files,
         parsed: Vec<(Oid, Blob)>,
-        git_state: i64,
     ) -> Result<Indexed> {
         let tx = self.conn.transaction()?;
         let mut counts = Indexed {
@@ -222,8 +225,8 @@ impl Store {
         }
 
         tx.execute(
-            "INSERT OR IGNORE INTO checkout (root, indexed_at, map_key, git_state)
-             VALUES (?1, unixepoch(), 0, 0)",
+            "INSERT OR IGNORE INTO checkout (root, indexed_at, map_key)
+             VALUES (?1, unixepoch(), 0)",
             params![root],
         )?;
         let checkout_id: i64 = tx.query_row(
@@ -235,10 +238,8 @@ impl Store {
         // What the map *would* be, folded before any of it is written. When it
         // matches what is stored the map is identical and the rewrite below is
         // pure cost — which on a no-op index is the only cost left, and the
-        // one that grows with the repo.
-        let map_key = files.iter().fold(0i64, |key, (path, oid)| {
-            key.wrapping_add(path_hash(path) ^ path_hash(&oid.0))
-        });
+        // one that grows with the repo. The same fold answers `stale`.
+        let map_key = crate::scan::map_key(files);
         // `EXISTS` rather than `COUNT`: the question is whether the map was
         // ever written, and counting it would put an O(files) scan back into
         // the path this exists to make O(1). A stored key of 0 against a map
@@ -252,12 +253,9 @@ impl Store {
 
         if stored_key == map_key && mapped {
             counts.blobs = files.values().collect::<HashSet<&Oid>>().len();
-            // Still record git's view: the map did not move, but git's index
-            // may have — a commit touching no Ruby file, say — and leaving the
-            // old fingerprint would make `--status` cry stale forever.
             tx.execute(
-                "UPDATE checkout SET indexed_at = unixepoch(), git_state = ?2 WHERE id = ?1",
-                params![checkout_id, git_state],
+                "UPDATE checkout SET indexed_at = unixepoch() WHERE id = ?1",
+                params![checkout_id],
             )?;
             tx.commit()?;
             return Ok(counts);
@@ -290,9 +288,8 @@ impl Store {
         }
 
         tx.execute(
-            "UPDATE checkout SET indexed_at = unixepoch(), map_key = ?2, git_state = ?3
-              WHERE id = ?1",
-            params![checkout_id, map_key, git_state],
+            "UPDATE checkout SET indexed_at = unixepoch(), map_key = ?2 WHERE id = ?1",
+            params![checkout_id, map_key],
         )?;
         tx.commit()?;
         Ok(counts)
@@ -301,7 +298,7 @@ impl Store {
     /// One row per indexed checkout.
     pub fn status(&self) -> Result<Vec<Checkout>> {
         let mut stmt = self.conn.prepare(
-            "SELECT c.root, c.indexed_at, c.git_state,
+            "SELECT c.root, c.indexed_at, c.map_key,
                     COUNT(f.path), COUNT(DISTINCT f.blob_id),
                     COALESCE(SUM((SELECT COUNT(*) FROM unit u WHERE u.blob_id = f.blob_id)), 0)
                FROM checkout c LEFT JOIN file f ON f.checkout_id = c.id
@@ -309,9 +306,13 @@ impl Store {
         )?;
         let rows = stmt.query_map([], |r| {
             let root: String = r.get(0)?;
-            let git_state: i64 = r.get(2)?;
-            let stale =
-                crate::scan::git_fingerprint(Path::new(&root)).is_some_and(|now| now != git_state);
+            let indexed_map: i64 = r.get(2)?;
+            // Rescanning is ~20 ms and answers exactly; a stat of `.git/index`
+            // was instant and answered wrongly for every uncommitted edit.
+            // An unreadable checkout is not stale, it is gone — and `files`
+            // being empty is a real answer about a repo with no source in it.
+            let stale = crate::scan::scan(Path::new(&root))
+                .is_ok_and(|files| crate::scan::map_key(&files) != indexed_map);
             Ok(Checkout {
                 root,
                 indexed_at: r.get(1)?,
@@ -502,15 +503,19 @@ impl Store {
         Ok(out)
     }
 
-    /// Which models this machine has bought summaries from. `--status` reports
-    /// coverage per model rather than for a presumed one: DEC-005 lets indexes
-    /// from different models coexist, so "how covered am I" has no single
-    /// answer.
-    pub fn summary_models(&self) -> Result<Vec<String>> {
+    /// Every `(model, via)` this machine has summaries from.
+    ///
+    /// Both halves of the key, not just the model: DEC-005 lets indexes from
+    /// different models coexist and DEC-018 keeps a session's contributions in
+    /// their own keyspace, so "how covered am I" has no single answer — and
+    /// reporting per model alone made `--status` blind to every contribution,
+    /// which is how it came to say `none 0/128` about a corpus `search` was
+    /// already answering from.
+    pub fn summary_sources(&self) -> Result<Vec<(String, String)>> {
         let mut stmt = self
             .conn
-            .prepare("SELECT DISTINCT model FROM summary ORDER BY model")?;
-        let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
+            .prepare("SELECT DISTINCT model, via FROM summary ORDER BY model, via")?;
+        let rows = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?;
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
     }
 
@@ -615,13 +620,6 @@ fn decode_vector(bytes: &[u8]) -> Vec<f32> {
         .copied()
         .map(f32::from_le_bytes)
         .collect()
-}
-
-/// FNV-1a over a path, for the map fold. Not a stored key, so stability across
-/// releases is not required — but it is the same ten lines as `crate::hash`
-/// and reusing them costs nothing.
-fn path_hash(s: &str) -> i64 {
-    crate::hash::fnv1a(crate::hash::FNV_OFFSET, s.as_bytes()) as i64
 }
 
 /// Parameters round-trip through one column as `kind:name` pairs joined by
@@ -732,13 +730,13 @@ mod tests {
         let files: Files = [("a.rb".to_string(), oid.clone())].into_iter().collect();
 
         store
-            .write("/one", &files, vec![(oid.clone(), parsed)], 0)
+            .write("/one", &files, vec![(oid.clone(), parsed)])
             .unwrap();
         let known = store.known(&[oid.clone()].into_iter().collect()).unwrap();
         assert_eq!(known.len(), 1, "the blob is now known");
 
         // A second worktree offers the same OID, so nothing is re-parsed.
-        let second = store.write("/two", &files, vec![], 0).unwrap();
+        let second = store.write("/two", &files, vec![]).unwrap();
         assert_eq!(second.parsed, 0);
         assert_eq!(store.units("/two").unwrap().len(), 1);
         assert_eq!(store.units("/one").unwrap()[0].unit.id(), "Widget#save");
@@ -753,9 +751,9 @@ mod tests {
         let files: Files = [("a.rb".to_string(), oid.clone())].into_iter().collect();
 
         store
-            .write("/r", &files, vec![(oid.clone(), parsed)], 0)
+            .write("/r", &files, vec![(oid.clone(), parsed)])
             .unwrap();
-        store.write("/r", &files, vec![], 7).unwrap();
+        store.write("/r", &files, vec![]).unwrap();
         assert_eq!(store.units("/r").unwrap().len(), 2);
         assert_eq!(store.status().unwrap()[0].units, 2);
     }
@@ -770,7 +768,7 @@ mod tests {
             .into_iter()
             .collect();
 
-        let counts = store.write("/r", &files, vec![(oid, parsed)], 0).unwrap();
+        let counts = store.write("/r", &files, vec![(oid, parsed)]).unwrap();
         assert_eq!((counts.files, counts.blobs, counts.parsed), (2, 1, 1));
         let located = store.units("/r").unwrap();
         assert_eq!(located.len(), 2);

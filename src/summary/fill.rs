@@ -231,9 +231,19 @@ pub fn pending(
     Ok(out)
 }
 
-/// How much of a scope is summarized, for `--status`.
-pub fn coverage(store: &Store, root: &str, model: &str) -> Result<Coverage> {
-    let have = store.have_summaries(super::PROMPT_VERSION, model, crate::store::VIA_API)?;
+/// How much of a scope one `(model, via)` has bought.
+///
+/// The calibration question (DEC-018) and the one a bulk fill works against —
+/// *not* the same question as [`answerable`], which is what a query can
+/// actually use. `--status` reports both, because reporting one of them under
+/// the other's name is how it came to say `none` about a corpus `search` was
+/// answering from.
+pub fn coverage(store: &Store, root: &str, model: &str, via: &str) -> Result<Coverage> {
+    let prompt = match via {
+        crate::store::VIA_MCP => super::contributed::CONTRIBUTED_PROMPT_VERSION,
+        _ => super::PROMPT_VERSION,
+    };
+    let have = store.have_summaries(prompt, model, via)?;
     let mut counts = Coverage::default();
     for located in store.units(root)? {
         let Some(norm_hash) = located.unit.norm_hash else {
@@ -241,6 +251,26 @@ pub fn coverage(store: &Store, root: &str, model: &str) -> Result<Coverage> {
         };
         counts.summarizable += 1;
         if have.contains(&(norm_hash, Context::of(&located.unit).hash())) {
+            counts.summarized += 1;
+        }
+    }
+    Ok(counts)
+}
+
+/// How much of a scope a *query* can answer from meaning.
+///
+/// Any model, any provenance — which is exactly what `search` reads, because
+/// refusing to answer from a summary somebody already paid for would hide
+/// work that exists. The two must agree, and a test asserts they do.
+pub fn answerable(store: &Store, root: &str) -> Result<Coverage> {
+    let stored = store.all_summaries()?;
+    let mut counts = Coverage::default();
+    for located in store.units(root)? {
+        let Some(norm_hash) = located.unit.norm_hash else {
+            continue;
+        };
+        counts.summarizable += 1;
+        if stored.contains_key(&(norm_hash, Context::of(&located.unit).hash())) {
             counts.summarized += 1;
         }
     }

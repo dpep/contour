@@ -651,23 +651,27 @@ fn status(format: Format) -> Result<i32> {
     let path = crate::store::default_path()?;
     let store = crate::store::open_default()?;
     let checkouts = store.status()?;
-    // Coverage is reported per model that has bought anything, not for a
-    // presumed one: DEC-005 lets indexes from different models coexist, so
-    // "how covered am I" has no single answer.
-    let models = store.summary_models()?;
+    // Per `(model, via)`, not per model: DEC-005 lets indexes from different
+    // models coexist and DEC-018 keeps contributions in their own keyspace.
+    let sources = store.summary_sources()?;
 
     let mut rows = Vec::new();
     for checkout in &checkouts {
         let mut coverage = Vec::new();
-        for model in &models {
-            let counts = crate::summary::coverage(&store, &checkout.root, model)?;
+        for (model, via) in &sources {
+            let counts = crate::summary::coverage(&store, &checkout.root, model, via)?;
             coverage.push(serde_json::json!({
                 "model": model,
+                "via": via,
                 "state": counts.state(),
                 "summarized": counts.summarized,
                 "summarizable": counts.summarizable,
             }));
         }
+        // What a query can actually answer from, across every source. This is
+        // the number `search` discloses, and it belongs here beside the
+        // per-source breakdown rather than being derivable from neither.
+        let answerable = crate::summary::answerable(&store, &checkout.root)?;
         rows.push(serde_json::json!({
             "root": checkout.root,
             "indexed_at": checkout.indexed_at,
@@ -675,6 +679,11 @@ fn status(format: Format) -> Result<i32> {
             "blobs": checkout.blobs,
             "units": checkout.units,
             "stale": checkout.stale,
+            "answerable": {
+                "state": answerable.state(),
+                "summarized": answerable.summarized,
+                "summarizable": answerable.summarizable,
+            },
             "coverage": coverage,
         }));
     }
@@ -703,19 +712,21 @@ fn status(format: Format) -> Result<i32> {
                         ""
                     }
                 );
-                let coverage = row["coverage"].as_array().expect("built above");
-                if coverage.is_empty() {
-                    println!("    coverage none");
-                }
-                for entry in coverage {
-                    // The fraction travels with the label: "warming" alone
-                    // cannot tell a reader whether it means 2% or 98%.
+                // The fraction travels with the label: "warming" alone cannot
+                // tell a reader whether it means 2% or 98%.
+                println!(
+                    "    coverage {} — {}/{} answerable",
+                    row["answerable"]["state"].as_str().unwrap_or("?"),
+                    row["answerable"]["summarized"],
+                    row["answerable"]["summarizable"],
+                );
+                for entry in row["coverage"].as_array().expect("built above") {
                     println!(
-                        "    coverage {} — {}/{} summarized by {}",
-                        entry["state"].as_str().unwrap_or("?"),
+                        "      {}/{} by {} via {}",
                         entry["summarized"],
                         entry["summarizable"],
                         entry["model"].as_str().unwrap_or("?"),
+                        entry["via"].as_str().unwrap_or("?"),
                     );
                 }
             }

@@ -151,6 +151,61 @@ fn exit_codes_say_hit_miss_and_error() {
     );
 }
 
+/// Staleness has to see the state a live session is always in: a tracked file
+/// edited, nothing committed. The old probe stat'd `.git/index`, which an edit
+/// does not touch, so `--status` said `stale: false` while `search` could not
+/// find the method you had just written. Found by QA.
+#[test]
+fn staleness_sees_a_working_tree_edit_not_just_a_commit() {
+    let repo = Repo::new(
+        "stale",
+        &[("a.rb", "class A\n  def one\n    1\n  end\nend\n")],
+    );
+    let stale = || repo.json(&["--status", "--json"])["checkouts"][0]["stale"] == true;
+
+    repo.run(&["index"]);
+    assert!(!stale(), "freshly indexed");
+
+    std::fs::write(
+        repo.dir.join("a.rb"),
+        "class A\n  def one\n    1\n  end\n\n  def two\n    2\n  end\nend\n",
+    )
+    .unwrap();
+    assert!(stale(), "a tracked file changed under us");
+    repo.run(&["index"]);
+    assert!(!stale(), "and reindexing settles it");
+
+    // A brand-new untracked file is the other half git's index cannot see.
+    std::fs::write(
+        repo.dir.join("b.rb"),
+        "class B\n  def three\n    3\n  end\nend\n",
+    )
+    .unwrap();
+    assert!(stale(), "a new file is content the index does not hold");
+    repo.run(&["index"]);
+    assert!(!stale());
+
+    // Committing changes no bytes, so it must not flip anything. The old probe
+    // moved here and nowhere useful.
+    git(&repo.dir, &["add", "-A"]);
+    git(
+        &repo.dir,
+        &[
+            "-c",
+            "user.email=t@e.st",
+            "-c",
+            "user.name=test",
+            "commit",
+            "-qm",
+            "later",
+        ],
+    );
+    assert!(
+        !stale(),
+        "a commit of already-indexed bytes is not a change"
+    );
+}
+
 /// `--symbols` parses the file in front of it. That it works with no index is
 /// the rule the CLI is organised around: flags do not touch the index.
 #[test]
