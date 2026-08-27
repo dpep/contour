@@ -504,7 +504,8 @@ fn vectors_for(
         // |---------|--------|-------|-------|---------|
         // | contour |    529 |  3.7s | 14.5s |  143/s  |
         // | trekr   |  1,469 | 12.6s | 47.0s |  117/s  |
-        // | rails   | 54,296 | 120s  | 7m51s |  452/s  |
+        // | rails   | 54,296 |  73s  | 4m50s |  739/s  |
+        // | rails   | 54,296 | 120s  | 7m51s |  452/s  |  (loaded machine)
         //
         // The small corpora are SLOWER per unit, which looks wrong and is not:
         // each worker thread loads its own ONNX session, and on a few hundred
@@ -514,11 +515,10 @@ fn vectors_for(
         // Before the thread-local pool, a serial pass over rails had not
         // finished after ten minutes when it was killed — so the pool is a
         // large win at corpus scale and roughly a wash below a few thousand
-        // units. (The rails figure above is one completed run; a confirming
-        // re-run was abandoned for time, so treat it as a single measurement
-        // rather than an average.)
+        // units. Two rails runs are listed because they differ by 1.6x purely
+        // with machine load: quote the range, not either end.
         //
-        // Two minutes is still two minutes. If this needs to be faster the
+        // A minute or two is still a minute or two. If this needs to be faster the
         // lever is embedding *less* — a scope-bounded warm — rather than
         // restructuring this loop again: at 452/s the machine is already
         // saturated, and `user` being 3.9x `wall` says the parallelism is
