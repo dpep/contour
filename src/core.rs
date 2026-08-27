@@ -89,7 +89,7 @@ impl Lang {
 /// question for, and a record that carries them invites a query that depends
 /// on them. Containers arrive in Phase 3 with a reason (DEC-013); calls arrive
 /// when canonicality ranking needs reference counts.
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Unit {
     pub lang: Lang,
     pub name: String,
@@ -114,6 +114,30 @@ pub struct Unit {
     /// layout collapsed. `None` when there is no body to hash. Populated in
     /// milestone 2.
     pub norm_hash: Option<u64>,
+}
+
+/// Serialized with its [`Unit::id`] alongside the fields it is derived from.
+///
+/// `id` is what every other surface prints and what `contour similar` accepts,
+/// so a consumer that had to rebuild it from `owner`, `singleton` and `lang`
+/// would be reimplementing a rule that already exists here — and would get
+/// Rust wrong. Found by the MCP tests: `--symbols` was the one output without
+/// it, which made the same concept two shapes depending on which call you made.
+impl Serialize for Unit {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeStruct;
+        let mut out = serializer.serialize_struct("Unit", 9)?;
+        out.serialize_field("id", &self.id())?;
+        out.serialize_field("lang", &self.lang)?;
+        out.serialize_field("name", &self.name)?;
+        out.serialize_field("owner", &self.owner)?;
+        out.serialize_field("singleton", &self.singleton)?;
+        out.serialize_field("params", &self.params)?;
+        out.serialize_field("via", &self.via)?;
+        out.serialize_field("line", &self.line)?;
+        out.serialize_field("end_line", &self.end_line)?;
+        out.end()
+    }
 }
 
 impl Unit {
@@ -224,6 +248,21 @@ mod tests {
             end_line: 1,
             norm_hash: None,
         }
+    }
+
+    /// Every surface prints the same handle, so a consumer never has to
+    /// rebuild it — and cannot get Rust's `::` wrong by trying.
+    #[test]
+    fn a_serialized_unit_carries_the_name_people_use() {
+        let json = serde_json::to_value(unit("Widget", "save", false)).unwrap();
+        assert_eq!(json["id"], "Widget#save");
+        assert_eq!(json["name"], "save");
+        let rust = serde_json::to_value(Unit {
+            lang: Lang::Rust,
+            ..unit("Widget", "run", false)
+        })
+        .unwrap();
+        assert_eq!(rust["id"], "Widget::run");
     }
 
     #[test]

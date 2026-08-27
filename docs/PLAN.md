@@ -78,6 +78,24 @@ similarity comes free).
 - The Ruby testbed provides labeled ground truth; Rust dogfooding provides
   live usage friction. Complementary, not substitutes.
 
+## Sequencing note (recorded, because the plan moved)
+
+Phase 4's agent surface was pulled forward ahead of the summarize/calibration
+work. The owner chose the MCP server and canonicality over unblocking
+summaries with an API key, so:
+
+- **Parked on a key:** the uniform rails fill, the relevance-floor calibration
+  it would settle, and any judgement about summary quality. Everything needed
+  for them is built and tested against fixtures.
+- **Pulled forward:** the MCP server and Claude skill (Phase 4), and
+  canonicality signals (Phase 3).
+
+The reshuffle is what made DEC-018 possible: with sessions on the MCP surface,
+summaries arrive by grazing rather than by purchase, so the expensive layer
+fills without the key it was blocked on. The clean calibration number still
+wants a uniform fill — see DEC-018 on why provenance keying keeps that
+available.
+
 ## Phase 2 — similarity products
 
 - Duplicate detection, tiered: exact structural-hash clones →

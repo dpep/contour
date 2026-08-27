@@ -91,7 +91,7 @@ pub fn fill(
             });
     }
 
-    let have: HashSet<(u64, u64)> = store.have_summaries(prompt, &model)?;
+    let have: HashSet<(u64, u64)> = store.have_summaries(prompt, &model, crate::store::VIA_API)?;
     let mut todo: Vec<((u64, u64), Vec<Located>)> = wanted
         .into_iter()
         .filter(|(key, _)| !have.contains(key))
@@ -106,7 +106,7 @@ pub fn fill(
     };
     for ((norm_hash, ctx_hash), units) in todo.into_iter().take(budget) {
         let here = &units[0];
-        let source = match slice(root, here, norm_hash) {
+        let source = match slice_inner(root, here, norm_hash) {
             Ok(source) => source,
             Err(err) => {
                 eprintln!("contour: skipped {}:{} — {err}", here.path, here.line);
@@ -128,6 +128,7 @@ pub fn fill(
                         ctx_hash,
                         prompt,
                         model: &model,
+                        via: crate::store::VIA_API,
                     },
                     &summary,
                 )?;
@@ -145,9 +146,83 @@ pub fn fill(
     Ok(counts)
 }
 
+/// One unit still needing a summary, with everything a summarizer needs.
+#[derive(Debug, serde::Serialize)]
+pub struct Pending {
+    pub id: String,
+    pub path: String,
+    pub line: u32,
+    pub end_line: u32,
+    /// The context block the prompt renders, so a contributed summary is
+    /// written against the same information the API path would have seen.
+    pub context: String,
+    pub source: String,
+}
+
+/// Units in scope that no summary covers yet, with their source.
+///
+/// What a session needs to do an explicit fill. Deduplicated by cache key, so
+/// a clone at ten call sites is offered once — a session should no more pay
+/// for it twice than contour should.
+pub fn pending(
+    store: &Store,
+    root: &Path,
+    scope: Option<&str>,
+    model: &str,
+    limit: usize,
+) -> Result<Vec<Pending>> {
+    let root_str = root.to_string_lossy().into_owned();
+    let have_api = store.have_summaries(super::PROMPT_VERSION, model, crate::store::VIA_API)?;
+    let have_mcp = store.have_summaries(
+        super::contributed::CONTRIBUTED_PROMPT_VERSION,
+        model,
+        crate::store::VIA_MCP,
+    )?;
+
+    let mut seen: HashSet<(u64, u64)> = HashSet::new();
+    let mut out = Vec::new();
+    for located in store.units(&root_str)? {
+        let Some(norm_hash) = located.unit.norm_hash else {
+            continue;
+        };
+        if !scope.is_none_or(|s| crate::dupes::under(&located.path, s)) {
+            continue;
+        }
+        let context = Context::of(&located.unit);
+        let key = (norm_hash, context.hash());
+        if have_api.contains(&key) || have_mcp.contains(&key) || !seen.insert(key) {
+            continue;
+        }
+        // A body that no longer matches the index is skipped rather than
+        // offered: a session summarizing it would produce something the store
+        // would then refuse, which wastes the session's tokens.
+        let Ok(source) = slice(
+            root,
+            &located.path,
+            located.unit.line,
+            located.unit.end_line,
+            norm_hash,
+        ) else {
+            continue;
+        };
+        out.push(Pending {
+            id: located.unit.id(),
+            path: located.path,
+            line: located.unit.line,
+            end_line: located.unit.end_line,
+            context: context.render(),
+            source,
+        });
+        if out.len() >= limit {
+            break;
+        }
+    }
+    Ok(out)
+}
+
 /// How much of a scope is summarized, for `--status`.
 pub fn coverage(store: &Store, root: &str, model: &str) -> Result<Coverage> {
-    let have = store.have_summaries(super::PROMPT_VERSION, model)?;
+    let have = store.have_summaries(super::PROMPT_VERSION, model, crate::store::VIA_API)?;
     let mut counts = Coverage::default();
     for located in store.units(root)? {
         let Some(norm_hash) = located.unit.norm_hash else {
@@ -181,7 +256,29 @@ struct Located {
 /// the def's own parameters and body, so a method parsed alone hashes
 /// identically to the same method parsed in its file — which is what makes
 /// this check exact rather than approximate.
-fn slice(root: &Path, unit: &Located, norm_hash: u64) -> Result<String> {
+pub(crate) fn slice(
+    root: &Path,
+    path: &str,
+    line: u32,
+    end_line: u32,
+    norm_hash: u64,
+) -> Result<String> {
+    let unit = Located {
+        path: path.to_string(),
+        line,
+        end_line,
+        context: Context {
+            name: String::new(),
+            owner: String::new(),
+            singleton: false,
+            via: None,
+            params: Vec::new(),
+        },
+    };
+    slice_inner(root, &unit, norm_hash)
+}
+
+fn slice_inner(root: &Path, unit: &Located, norm_hash: u64) -> Result<String> {
     let text = std::fs::read_to_string(root.join(&unit.path))?;
     let lines: Vec<&str> = text.lines().collect();
     let (from, to) = (unit.line as usize - 1, unit.end_line as usize);

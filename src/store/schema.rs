@@ -130,7 +130,7 @@ pub(crate) const TABLES: [&str; 6] = ["signature", "vector", "file", "checkout",
 /// is a migration or an admission of data loss, so `Store::init` refuses to
 /// open rather than guessing. That refusal is the point: the first time this
 /// number ever changes, it must not silently destroy paid work.
-pub(crate) const SUMMARY_VERSION: i64 = 1;
+pub(crate) const SUMMARY_VERSION: i64 = 2;
 
 /// The expensive layer. Applied on every open, dropped by nothing.
 pub(crate) const SUMMARY_SCHEMA: &str = r#"
@@ -150,6 +150,11 @@ CREATE TABLE IF NOT EXISTS meta (
 --              request shape — instructions, schema, effort, token ceiling.
 --   model      so summaries from different models sit side by side rather
 --              than overwriting each other.
+--   via        how the answer arrived: 'api' (contour called a model) or
+--              'mcp' (a session handed one over). In the key, not beside it,
+--              so a heterogeneous set of session contributions can never be
+--              mistaken for a uniform single-model fill — which is what the
+--              Phase 1 calibration still needs (DEC-018).
 --   variant    DEC-008: 'body' reads code only, 'commented' reads the
 --              comments too. Only 'body' is generated today; comparing a
 --              comment against a summary that read the comment is circular,
@@ -164,10 +169,46 @@ CREATE TABLE IF NOT EXISTS summary (
   ctx_hash   INTEGER NOT NULL,
   prompt     TEXT    NOT NULL,
   model      TEXT    NOT NULL,
+  via        TEXT    NOT NULL,
   variant    TEXT    NOT NULL,
   level      TEXT    NOT NULL,
   json       TEXT    NOT NULL,
   created_at INTEGER NOT NULL,
-  PRIMARY KEY (norm_hash, ctx_hash, prompt, model, variant, level)
+  PRIMARY KEY (norm_hash, ctx_hash, prompt, model, via, variant, level)
 ) WITHOUT ROWID;
 "#;
+
+/// Migrations for the purchased half, applied in order from the stored
+/// version.
+///
+/// DEC-016 says a mismatch here is "a migration someone has to write, or an
+/// admission of data loss someone has to make on purpose". This is the first
+/// one, and writing it rather than letting the tripwire fire is the whole
+/// point of having said that: summaries cost money or somebody's attention,
+/// and neither is recoverable by reindexing.
+///
+/// SQLite cannot alter a primary key, so adding `via` is a table rebuild.
+/// Existing rows backfill to `api`, which is honest — everything stored before
+/// the contribution path existed came through it.
+pub(crate) const SUMMARY_MIGRATIONS: [(i64, &str); 1] = [(
+    1,
+    r#"
+    ALTER TABLE summary RENAME TO summary_v1;
+    CREATE TABLE summary (
+      norm_hash  INTEGER NOT NULL,
+      ctx_hash   INTEGER NOT NULL,
+      prompt     TEXT    NOT NULL,
+      model      TEXT    NOT NULL,
+      via        TEXT    NOT NULL,
+      variant    TEXT    NOT NULL,
+      level      TEXT    NOT NULL,
+      json       TEXT    NOT NULL,
+      created_at INTEGER NOT NULL,
+      PRIMARY KEY (norm_hash, ctx_hash, prompt, model, via, variant, level)
+    ) WITHOUT ROWID;
+    INSERT INTO summary
+      SELECT norm_hash, ctx_hash, prompt, model, 'api', variant, level, json, created_at
+        FROM summary_v1;
+    DROP TABLE summary_v1;
+    "#,
+)];

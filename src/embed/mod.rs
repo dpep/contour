@@ -131,6 +131,35 @@ pub fn summary_text(summary: &Summary) -> String {
     text
 }
 
+/// The natural-language text a unit is found by when nothing has summarized it.
+///
+/// Names, humanized: the owner path, the method name, and the parameter names,
+/// split into words so a model trained on English sees words rather than
+/// subword debris. `Invoice#unpaid_for(customer)` becomes
+/// `Invoice unpaid for customer`.
+///
+/// **This tier captures what code is CALLED, not what it DOES**, and that is
+/// its honest limitation. It answers "where is the invoice settling logic"
+/// well and "which methods retry on failure" badly, because the second is
+/// never in a name. It is exactly blind where names are bad — which is where a
+/// summary earns its cost.
+///
+/// Comments are deliberately excluded. Folding them in would make the tier
+/// better on well-commented code and silently unfalsifiable about which half
+/// of the signal was doing the work, and DEC-008 already reserves
+/// comment-derived text for a variant of its own.
+pub fn identifier_text(unit: &crate::core::Unit) -> String {
+    let mut parts = Vec::new();
+    if !unit.owner.is_empty() {
+        parts.push(humanize(&unit.owner));
+    }
+    parts.push(humanize(&unit.name));
+    for param in &unit.params {
+        parts.push(humanize(&param.name));
+    }
+    parts.join(" ")
+}
+
 /// Identity of everything that invalidates a vector other than the text
 /// itself: width, embedder, model. Vectors sharing this are interchangeable by
 /// content key.
@@ -205,6 +234,28 @@ mod tests {
         assert_ne!(config_key("onnx", "a"), config_key("onnx", "b"));
         // Adjacent fields must not alias: ("on","nx") is not ("onn","x").
         assert_ne!(config_key("on", "nx"), config_key("onn", "x"));
+    }
+
+    #[test]
+    fn identifier_text_reads_as_words() {
+        let unit = crate::core::Unit {
+            lang: crate::core::Lang::Ruby,
+            name: "unpaid_for".into(),
+            owner: "Billing::Invoice".into(),
+            singleton: false,
+            params: vec![crate::core::Param {
+                kind: crate::core::ParamKind::Req,
+                name: "customer_id".into(),
+            }],
+            via: None,
+            line: 1,
+            end_line: 3,
+            norm_hash: None,
+        };
+        assert_eq!(
+            identifier_text(&unit),
+            "Billing Invoice unpaid for customer id"
+        );
     }
 
     #[test]

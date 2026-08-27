@@ -101,6 +101,8 @@ enum Command {
         #[arg(long, value_name = "F")]
         floor: Option<f32>,
     },
+    /// Serve the Model Context Protocol on stdin/stdout, for an agent client.
+    Mcp,
     /// Score this checkout against a labeled eval set.
     Eval {
         /// Directory holding `queries.tsv` and `pairs.tsv`.
@@ -226,6 +228,11 @@ fn dispatch(cli: &Cli) -> Result<i32> {
         ) => search(query, scope.as_deref(), *limit, *floor, format),
         (Some(Command::Similar { unit, limit }), _, _) => similar(unit, *limit, format),
         (Some(Command::Eval { set, min_lines }), _, _) => eval(set, *min_lines, format),
+        // Not a flag, per DEC-015: it serves the index.
+        (Some(Command::Mcp), _, _) => {
+            crate::mcp::serve()?;
+            Ok(HIT)
+        }
         (None, Some(file), _) => symbols(file, format),
         (None, None, true) => status(format),
         (None, None, false) => {
@@ -401,11 +408,14 @@ fn search(
     let answer = crate::search::search(
         &mut store,
         &root.to_string_lossy(),
-        relative.as_deref(),
         query,
         embedder.as_ref(),
-        limit,
-        floor.unwrap_or_else(|| crate::search::relevance_floor(embedder.kind())),
+        crate::search::Options {
+            scope: relative.as_deref(),
+            limit,
+            floor: floor.unwrap_or_else(|| crate::search::relevance_floor(embedder.kind())),
+            ..Default::default()
+        },
     )?;
 
     match format {
@@ -436,11 +446,19 @@ fn search(
 
 /// The line that stops a thin answer from reading as a complete one.
 fn disclose(answer: &crate::search::Answer) {
+    // Precise about which tier answered. "No summaries" no longer means "names
+    // only" — the identifier tier embeds what code is *called*, which is a
+    // real semantic answer with a real limitation, and saying otherwise would
+    // undersell one and oversell the other.
     let note = match answer.coverage_state {
         "complete" => String::new(),
-        "none" => " — nothing is summarized yet, so this is a name match only".into(),
+        "none" => format!(
+            " — nothing is summarized, so {} unit(s) were matched on what they are \
+             called rather than what they do",
+            answer.tiers.identifier
+        ),
         _ => format!(
-            " — {}/{} summarized, so the meaning half saw part of the corpus",
+            " — {}/{} summarized; the rest were matched on their names",
             answer.coverage.summarized, answer.coverage.summarizable
         ),
     };

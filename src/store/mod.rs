@@ -133,15 +133,34 @@ impl Store {
                     params![schema::SUMMARY_VERSION.to_string()],
                 )?;
             }
-            // Refuse rather than guess. Summaries cannot be recomputed from
-            // local bytes, so a mismatch is a migration someone has to write.
-            Some(found) => anyhow::ensure!(
-                found == schema::SUMMARY_VERSION,
-                "the summary table is v{found} but this contour speaks \
-                 v{}; summaries cannot be regenerated for free, so they are \
-                 not dropped automatically",
-                schema::SUMMARY_VERSION
-            ),
+            Some(found) if found != schema::SUMMARY_VERSION => {
+                // Migrate rather than drop. Summaries cannot be recomputed
+                // from local bytes, so the tripwire only fires when no
+                // migration covers the gap — and then it refuses to open
+                // rather than guessing (DEC-016).
+                let mut at = found;
+                while at < schema::SUMMARY_VERSION {
+                    let step = schema::SUMMARY_MIGRATIONS
+                        .iter()
+                        .find(|(from, _)| *from == at);
+                    let Some((_, sql)) = step else {
+                        anyhow::bail!(
+                            "the summary table is v{at} but this contour speaks v{}, \
+                             and no migration covers the gap. Summaries cannot be \
+                             regenerated for free, so they are not dropped \
+                             automatically — move $CONTOUR_DB aside to start fresh.",
+                            schema::SUMMARY_VERSION
+                        );
+                    };
+                    conn.execute_batch(sql)?;
+                    at += 1;
+                }
+                conn.execute(
+                    "UPDATE meta SET value = ?1 WHERE key = 'summary_version'",
+                    params![schema::SUMMARY_VERSION.to_string()],
+                )?;
+            }
+            Some(_) => {}
         }
         Ok(Store { conn })
     }
@@ -333,12 +352,13 @@ impl Store {
             .query_row(
                 "SELECT json FROM summary
                   WHERE norm_hash = ?1 AND ctx_hash = ?2 AND prompt = ?3
-                    AND model = ?4 AND variant = 'body' AND level = 'unit'",
+                    AND model = ?4 AND via = ?5 AND variant = 'body' AND level = 'unit'",
                 params![
                     key.norm_hash as i64,
                     key.ctx_hash as i64,
                     key.prompt,
-                    key.model
+                    key.model,
+                    key.via
                 ],
                 |r| r.get(0),
             )
@@ -354,13 +374,14 @@ impl Store {
     pub fn put_summary(&mut self, key: &SummaryKey<'_>, summary: &Summary) -> Result<()> {
         self.conn.execute(
             "INSERT OR REPLACE INTO summary
-               (norm_hash, ctx_hash, prompt, model, variant, level, json, created_at)
-             VALUES (?1, ?2, ?3, ?4, 'body', 'unit', ?5, unixepoch())",
+               (norm_hash, ctx_hash, prompt, model, via, variant, level, json, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, 'body', 'unit', ?6, unixepoch())",
             params![
                 key.norm_hash as i64,
                 key.ctx_hash as i64,
                 key.prompt,
                 key.model,
+                key.via,
                 serde_json::to_string(summary)?
             ],
         )?;
@@ -369,14 +390,25 @@ impl Store {
 
     /// Which summary keys, of the ones asked about, are already bought.
     ///
+    /// Scoped to one `via` on purpose: a uniform API fill must not count a
+    /// session's contribution as already done, or the set it produces stops
+    /// being uniform — which is exactly the property the Phase 1 calibration
+    /// needs (DEC-018).
+    ///
     /// Loaded in one query rather than probed per unit, for the same reason
     /// `known` is: at 50k units the probe is 50k round trips.
-    pub fn have_summaries(&self, prompt: &str, model: &str) -> Result<HashSet<(u64, u64)>> {
+    pub fn have_summaries(
+        &self,
+        prompt: &str,
+        model: &str,
+        via: &str,
+    ) -> Result<HashSet<(u64, u64)>> {
         let mut stmt = self.conn.prepare(
             "SELECT norm_hash, ctx_hash FROM summary
-              WHERE prompt = ?1 AND model = ?2 AND variant = 'body' AND level = 'unit'",
+              WHERE prompt = ?1 AND model = ?2 AND via = ?3
+                AND variant = 'body' AND level = 'unit'",
         )?;
-        let rows = stmt.query_map(params![prompt, model], |r| {
+        let rows = stmt.query_map(params![prompt, model, via], |r| {
             Ok((r.get::<_, i64>(0)? as u64, r.get::<_, i64>(1)? as u64))
         })?;
         Ok(rows.collect::<rusqlite::Result<HashSet<_>>>()?)
@@ -499,7 +531,14 @@ pub struct SummaryKey<'a> {
     pub ctx_hash: u64,
     pub prompt: &'a str,
     pub model: &'a str,
+    /// How the answer arrived: [`VIA_API`] or [`VIA_MCP`].
+    pub via: &'a str,
 }
+
+/// contour called a model itself (or replayed a fixture through the same path).
+pub const VIA_API: &str = "api";
+/// A session handed contour a summary through the MCP surface.
+pub const VIA_MCP: &str = "mcp";
 
 /// A unit plus where this checkout currently keeps it.
 #[derive(Debug, serde::Serialize)]

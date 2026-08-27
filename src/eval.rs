@@ -240,65 +240,95 @@ pub fn run(
     // Deep enough that a label's rank is knowable rather than "somewhere past
     // the cutoff" — a miss and a rank-200 hit are different facts.
     let depth = units.len().max(1);
-    let mut contour = Ranking {
-        label: "contour".into(),
-        ..Ranking::default()
-    };
-    let mut answer_cosines: Vec<f32> = Vec::new();
-    let mut distractor_cosines: Vec<f32> = Vec::new();
     let mut coverage_state = "none";
     let (mut summarized, mut summarizable) = (0, 0);
+    let mut calibration_answers: Vec<f32> = Vec::new();
+    let mut calibration_distractors: Vec<f32> = Vec::new();
 
-    for label in &labels.queries {
-        if !by_id.contains_key(&label.expected) {
-            contour.unknown += 1;
-            continue;
-        }
-        contour.total += 1;
-        // No floor: this run exists to decide where the floor belongs, and
-        // measuring above an existing one can only confirm it.
-        let answer =
-            crate::search::search(store, &root_str, None, &label.query, embedder, depth, 0.0)?;
-        debug_assert_eq!(answer.withheld, 0, "the eval must run unfloored");
-        coverage_state = answer.coverage_state;
-        summarized = answer.coverage.summarized;
-        summarizable = answer.coverage.summarizable;
+    // Both tiers, on one corpus: the embed-the-code against embed-the-summary
+    // comparison DEC-004 promised. `Best` uses a summary wherever one exists
+    // and falls back to identifiers; `IdentifierOnly` forces the free tier, so
+    // the difference between the two rows is exactly what summaries bought.
+    let mut ranked: Vec<Ranking> = Vec::new();
+    for (label, prefer) in [
+        ("contour", crate::search::Prefer::Best),
+        ("contour:identifier", crate::search::Prefer::IdentifierOnly),
+    ] {
+        let mut ranking = Ranking {
+            label: label.to_string(),
+            ..Ranking::default()
+        };
+        let mut answers: Vec<f32> = Vec::new();
+        let mut distractors: Vec<f32> = Vec::new();
 
-        let rank = answer.hits.iter().position(|h| h.id == label.expected);
-        match rank {
-            Some(0) => {
-                contour.top1 += 1;
-                contour.top5 += 1;
-                contour.found += 1;
+        for query in &labels.queries {
+            if !by_id.contains_key(&query.expected) {
+                ranking.unknown += 1;
+                continue;
             }
-            Some(r) if r < 5 => {
-                contour.top5 += 1;
-                contour.found += 1;
-            }
-            Some(_) => contour.found += 1,
-            None => {}
-        }
+            ranking.total += 1;
+            // No floor: this run exists to decide where the floor belongs, and
+            // measuring above an existing one can only confirm it.
+            let answer = crate::search::search(
+                store,
+                &root_str,
+                &query.query,
+                embedder,
+                crate::search::Options {
+                    limit: depth,
+                    prefer,
+                    ..Default::default()
+                },
+            )?;
+            debug_assert_eq!(answer.withheld, 0, "the eval must run unfloored");
+            coverage_state = answer.coverage_state;
+            summarized = answer.coverage.summarized;
+            summarizable = answer.coverage.summarizable;
 
-        // The two populations a floor has to separate.
-        if let Some(hit) = answer.hits.iter().find(|h| h.id == label.expected)
-            && let Some(cosine) = hit.cosine
-        {
-            answer_cosines.push(cosine);
+            match answer.hits.iter().position(|h| h.id == query.expected) {
+                Some(0) => {
+                    ranking.top1 += 1;
+                    ranking.top5 += 1;
+                    ranking.found += 1;
+                }
+                Some(r) if r < 5 => {
+                    ranking.top5 += 1;
+                    ranking.found += 1;
+                }
+                Some(_) => ranking.found += 1,
+                None => {}
+            }
+
+            // The two populations a floor has to separate.
+            if let Some(cosine) = answer
+                .hits
+                .iter()
+                .find(|h| h.id == query.expected)
+                .and_then(|h| h.cosine)
+            {
+                answers.push(cosine);
+            }
+            if let Some(best) = answer
+                .hits
+                .iter()
+                .filter(|h| h.id != query.expected)
+                .filter_map(|h| h.cosine)
+                .fold(None, |acc: Option<f32>, c| {
+                    Some(acc.map_or(c, |a| a.max(c)))
+                })
+            {
+                distractors.push(best);
+            }
         }
-        if let Some(best) = answer
-            .hits
-            .iter()
-            .filter(|h| h.id != label.expected)
-            .filter_map(|h| h.cosine)
-            .fold(None, |acc: Option<f32>, c| {
-                Some(acc.map_or(c, |a| a.max(c)))
-            })
-        {
-            distractor_cosines.push(best);
+        // The floor is calibrated for the tier a user actually gets.
+        if prefer == crate::search::Prefer::Best {
+            calibration_answers = answers;
+            calibration_distractors = distractors;
         }
+        ranked.push(ranking);
     }
 
-    let mut rankings = vec![contour];
+    let mut rankings = ranked;
     rankings.push(baseline(
         "baseline:name",
         labels,
@@ -327,9 +357,9 @@ pub fn run(
         dupes,
         near,
         calibration: Calibration {
-            sweep: sweep(&answer_cosines, &distractor_cosines),
-            answers: Distribution::of(&answer_cosines),
-            distractors: Distribution::of(&distractor_cosines),
+            sweep: sweep(&calibration_answers, &calibration_distractors),
+            answers: Distribution::of(&calibration_answers),
+            distractors: Distribution::of(&calibration_distractors),
         },
         provisional_queries: labels.queries.iter().filter(|q| q.provisional).count(),
         provisional_pairs: labels.pairs.iter().filter(|p| p.provisional).count(),

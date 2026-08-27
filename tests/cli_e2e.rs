@@ -380,20 +380,23 @@ fn searchable(label: &str) -> (Repo, String) {
     (repo, path.to_str().unwrap().to_string())
 }
 
-/// Before anything is summarized, search still answers — from names alone —
-/// and says so. A thin answer that reads as a complete one is the failure this
-/// disclosure exists to prevent (DEC-009).
+/// Before anything is summarized, search still works — through the identifier
+/// tier, which embeds what code is *called*. Zero LLM spend, and the answer
+/// says which tier produced it so a reader knows what it could not see.
 #[test]
-fn search_answers_from_names_before_anything_is_summarized() {
+fn search_works_with_no_summaries_through_the_identifier_tier() {
     let (repo, _) = searchable("search-names");
     let answer = repo.json(&["search", "unpaid", "--json"]);
-    assert_eq!(answer["coverage_state"], "none");
+    assert_eq!(answer["coverage_state"], "none", "nothing is summarized");
     assert_eq!(answer["hits"][0]["id"], "Invoice#unpaid_for");
-    assert_eq!(answer["hits"][0]["how"], "lexical");
-    assert!(
-        answer["hits"][0]["cosine"].is_null(),
-        "no summary means no measurement to report"
-    );
+    // Both halves reached it: the name matched lexically, and the embedded
+    // identifier matched semantically.
+    assert_eq!(answer["hits"][0]["how"], "both");
+    assert_eq!(answer["hits"][0]["semantic_via"], "identifier");
+    assert!(answer["hits"][0]["cosine"].as_f64().unwrap() > 0.0);
+    // Every unit is covered by identifiers; none by summaries.
+    assert_eq!(answer["tiers"]["summary"], 0);
+    assert!(answer["tiers"]["identifier"].as_u64().unwrap() > 0);
 }
 
 /// With summaries in place, a query that names no identifier still finds the
@@ -411,8 +414,13 @@ fn search_finds_by_meaning_once_summaries_exist() {
     let top = &answer["hits"][0];
     assert_eq!(top["id"], "Invoice#unpaid_for");
     // The query shares no token with the method's name, so the semantic half
-    // is what found it.
+    // is what found it — and now through a summary rather than an identifier.
     assert_eq!(top["how"], "semantic");
+    assert_eq!(top["semantic_via"], "summary");
+    assert_eq!(
+        answer["tiers"]["identifier"], 0,
+        "summaries win where they exist"
+    );
     assert!(top["cosine"].as_f64().unwrap() > 0.0);
     assert!(top["summary"].as_str().unwrap().contains("not yet paid"));
 
@@ -530,7 +538,9 @@ fn eval_scores_a_labeled_set() {
     assert_eq!(contour["label"], "contour");
     assert_eq!(contour["unknown"], 0, "a label names a unit that is gone");
     assert_eq!(contour["total"], 18);
-    assert_eq!(report["rankings"].as_array().map(Vec::len), Some(3));
+    // contour, contour:identifier, and the two baselines.
+    assert_eq!(report["rankings"].as_array().map(Vec::len), Some(4));
+    assert_eq!(report["rankings"][1]["label"], "contour:identifier");
     assert_eq!(report["coverage_state"], "complete");
 
     // The duplicate labels are the embedder-independent half: all three

@@ -239,8 +239,6 @@ records its category and moves on, like any other per-unit failure.
 
 ## DEC-017 — `super` makes the method's own name structure
 
-**Provisional: ruled by the supervising session, pending the owner's veto.**
-
 `norm_hash` excludes a method's own name everywhere — that is what makes
 `Widget#save` and `Gadget#persist` with the same body report as clones, and
 what lets a rename never re-summarize. There is exactly one exception.
@@ -262,3 +260,52 @@ stops folding the name in, they fail first.
 Cost: a `norm_hash` change, so a schema bump. Taken now deliberately, at the
 one moment it is free — no purchased summary exists under the old key outside
 fixtures, and after the first real fill this same change costs money to make.
+
+## DEC-018 — Organic, incremental indexing
+
+contour is useful at zero coverage and quietly better every session. That is
+one principle, and four mechanisms compose into it:
+
+1. **Cheap layers index eagerly.** Structure, structural hashes, signatures —
+   a full `index` of rails is ~3 s and needs nothing but git.
+2. **The identifier tier is free.** Every unit's humanized name, owner and
+   parameters are embedded locally, so English search works on a fresh
+   checkout with no LLM spend at all. It captures what code is *called*, not
+   what it *does* — an honest floor, not a substitute.
+3. **The expensive layer grazes.** Sessions using contour contribute summaries
+   for the methods they read anyway, through the MCP `store_summary` tool. The
+   index improves as a by-product of work already being done.
+4. **Coverage-aware fills are the proactive complement.** A session starting
+   substantive work in a thin scope fills that scope first — the highest-value
+   target, because it is about to read most of it regardless.
+
+This generalizes gqls's background auto-warm. gqls warms one schema's vectors
+after a cold query; contour warms a corpus's *meaning* across sessions, and the
+warming is done by the same agents that consume it.
+
+### Why contributions are keyed apart
+
+A contributed summary is written under the contributing model's id with
+`via = mcp`, never merged into an API fill's keyspace (DEC-005's rule, applied
+one layer up). The reason is calibration: **a heterogeneous pile of summaries
+from whatever model happened to be running is the daily-use path, and a clean
+Phase 1 threshold number still wants a uniform single-model fill.** Provenance
+in the key is what keeps those two separable, so the eval can ask for one
+without the other quietly contaminating it.
+
+### Contributions are purchased, not derived
+
+DEC-016's rules apply in full. A contributed summary cost a session's tokens
+and a person's attention; that it was not billed in dollars does not make it
+recomputable. It lives in the purchased half, survives every reindex, and is
+gated on the way in — validated against the same schema the API path uses, and
+refused rather than repaired, because a store that never forgets must not be
+handed something quietly wrong.
+
+### Deliberately not built yet
+
+Session hooks that auto-contribute a budget per session, and scheduled or
+nightly fills. Skill-level proactivity first: if instructing sessions to be
+coverage-aware turns out to be insufficient, that is the evidence that
+justifies infrastructure. Building both at once would leave us unable to say
+which one worked.

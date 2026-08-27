@@ -57,6 +57,24 @@ Initial skeleton — nothing has been released, so everything below is new.
 - Rust normalization is a deliberately degraded tier: a comment-stripped token
   stream, disclosed as `token_hash` and never as `structural`. Reformatting
   and re-commenting collide; a renamed local does not, where Ruby's would.
+- **`contour mcp`** serves the Model Context Protocol over stdio: `search`,
+  `similar`, `dupes`, `symbols`, `status`, `index`, plus `pending` and
+  `store_summary`. Tool results are byte-for-byte the JSON `--json` returns, so
+  no disclosure field can exist for a human and go missing for an agent.
+- **Sessions can feed the index.** `store_summary` accepts a summary a session
+  wrote, validated against the same schema the API path uses and refused rather
+  than repaired; `pending` lists what still needs one, with source and context.
+  Contributions are keyed by the contributing model with `via = mcp`, so they
+  never mix into a uniform fill (DEC-018). **Migrates the summary table** — the
+  first migration of the purchased half, rather than a drop.
+- **An identifier tier makes search work with zero LLM spend.** Every unit's
+  humanized name, owner and parameters are embedded locally, so a fresh
+  checkout is searchable in English immediately. Summaries are now an upgrade
+  rather than an entry fee, and each hit says which tier answered
+  (`semantic_via`: `summary` or `identifier`).
+- A Claude skill and MCP wiring instructions live in `claude/`.
+- `contour --symbols --json` now includes each unit's `id`, the same handle
+  every other command prints and `similar` accepts.
 - **`contour dupes --near`** reports bodies that are nearly the same shape,
   with the measured Jaccard on each. Similarity is computed over subtree
   signatures collected during normalization; candidates come from an inverted

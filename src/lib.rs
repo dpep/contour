@@ -25,6 +25,7 @@
 //! - [`search`] — English queries and nearest neighbours, fusing a name match
 //!   with a meaning match and disclosing which found what.
 //! - [`eval`] — the labeled set that settles every threshold (DEC-011).
+//! - [`mcp`] — the agent surface, returning exactly the JSON the CLI does.
 
 pub mod cli;
 pub mod core;
@@ -33,6 +34,7 @@ pub mod embed;
 pub mod eval;
 pub(crate) mod hash;
 pub mod index;
+pub mod mcp;
 pub mod near;
 pub mod paths;
 pub mod ruby;

@@ -18,11 +18,12 @@
 //! on.
 
 pub mod anthropic;
-mod fill;
+pub mod contributed;
+pub(crate) mod fill;
 pub mod fixture;
 mod prompt;
 
-pub use fill::{Coverage, Filled, coverage, fill};
+pub use fill::{Coverage, Filled, Pending, coverage, fill, pending};
 
 use crate::core::{Param, Unit};
 use crate::hash::{FNV_OFFSET, fnv1a};

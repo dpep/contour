@@ -19,7 +19,7 @@
 //! keyword parameter names, and arity.
 //!
 //! **The one principled exception to excluding the method's own name**
-//! (DEC-017, provisional): a body containing `super` gets the enclosing def's
+//! (DEC-017): a body containing `super` gets the enclosing def's
 //! name folded in. `super` dispatches *by* that name, so two byte-identical
 //! bodies ending in `super` run different code — `LocalCache#increment` and
 //! `#decrement` in rails are exactly this. Reporting them as clones offers a

@@ -11,7 +11,7 @@
 //! summarized units, so a search over a half-summarized repo answers from what
 //! exists and says so — rather than looking like the corpus is small.
 
-use crate::embed::{Embedder, config_key, humanize, mrl, summary_text, text_key};
+use crate::embed::{Embedder, config_key, humanize, identifier_text, mrl, summary_text, text_key};
 use crate::store::{Located, Store};
 use crate::summary::Coverage;
 use anyhow::{Result, bail};
@@ -66,6 +66,12 @@ pub struct Hit {
     pub line: u32,
     /// Which half found it: `lexical`, `semantic`, or `both`.
     pub how: &'static str,
+    /// Which vector the semantic half used, when it contributed:
+    /// `summary` (what the code does) or `identifier` (what it is called).
+    /// The distinction matters to a reader — an identifier-tier hit is blind
+    /// to behaviour that never appears in a name.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub semantic_via: Option<&'static str>,
     /// The semantic half's measurement, when it contributed. Absent when the
     /// unit was found by name alone.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -88,6 +94,10 @@ pub struct Answer {
     /// Which embedder answered — `hash` means the semantic half is lexical
     /// feature hashing, not a trained model, and should be read accordingly.
     pub embedder: &'static str,
+    /// How many ranked units were reached through each vector tier. An answer
+    /// drawn mostly from identifiers is a weaker answer than one drawn from
+    /// summaries, and a reader cannot tell from the hits alone.
+    pub tiers: Tiers,
     /// The absolute cosine floor applied, so a reader knows whether "no
     /// matches" means "nothing above the bar" or "no bar was set".
     pub floor: f32,
@@ -100,18 +110,68 @@ pub struct Answer {
     pub withheld: usize,
 }
 
+/// How many units each vector tier covered.
+#[derive(Debug, Default, serde::Serialize)]
+pub struct Tiers {
+    pub summary: usize,
+    pub identifier: usize,
+}
+
+/// Which vector to prefer where a unit has both.
+///
+/// `Best` is what every caller but the eval wants. `IdentifierOnly` exists so
+/// the eval can score the tiers against each other on one corpus — the
+/// embed-code-against-embed-summary comparison DEC-004 promised — without
+/// needing two indexes to do it.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum Prefer {
+    Best,
+    IdentifierOnly,
+}
+
+/// Everything about a query except the query.
+///
+/// A struct rather than five more parameters: the call sites read as English
+/// this way, and the next option to arrive does not grow a signature nobody
+/// can hold in their head.
+#[derive(Clone, Copy, Debug)]
+pub struct Options<'a> {
+    /// Repo-relative path prefix, or `None` for the whole checkout.
+    pub scope: Option<&'a str>,
+    pub limit: usize,
+    /// Cosine floor. `0.0` withholds nothing — which is what the eval uses,
+    /// because calibrating a threshold above itself proves nothing.
+    pub floor: f32,
+    pub prefer: Prefer,
+}
+
+impl Default for Options<'_> {
+    fn default() -> Self {
+        Options {
+            scope: None,
+            limit: 10,
+            floor: 0.0,
+            prefer: Prefer::Best,
+        }
+    }
+}
+
 /// Rank units in a checkout against an English query.
 pub fn search(
     store: &mut Store,
     root: &str,
-    scope: Option<&str>,
     query: &str,
     embedder: &dyn Embedder,
-    limit: usize,
-    floor: f32,
+    options: Options<'_>,
 ) -> Result<Answer> {
+    let Options {
+        scope,
+        limit,
+        floor,
+        prefer,
+    } = options;
     let units = in_scope(store, root, scope)?;
-    let summaries = summaries_for(store, &units, embedder)?;
+    let summaries = vectors_for(store, &units, embedder, prefer)?;
 
     // Lexical: token overlap against the humanized name, best first.
     let mut lexical: Vec<(usize, f64)> = units
@@ -127,7 +187,7 @@ pub fn search(
     let scored: Vec<(usize, f32)> = summaries
         .vectors
         .iter()
-        .map(|(i, vec)| (*i, mrl::cosine_similarity(&query_vec, vec)))
+        .map(|(i, (vec, _))| (*i, mrl::cosine_similarity(&query_vec, vec)))
         .filter(|(_, cosine)| *cosine > 0.0)
         .collect();
     let mut semantic: Vec<(usize, f32)> = scored
@@ -175,13 +235,26 @@ pub fn search(
                 _ => "lexical",
             },
             cosine: cosines.get(&i).copied(),
+            semantic_via: match cosines.contains_key(&i) {
+                true => summaries.vectors.get(&i).map(|(_, via)| *via),
+                false => None,
+            },
             score,
             summary: summaries.text.get(&i).cloned(),
         })
         .collect();
 
+    let mut tiers = Tiers::default();
+    for (_, via) in summaries.vectors.values() {
+        match *via {
+            "summary" => tiers.summary += 1,
+            _ => tiers.identifier += 1,
+        }
+    }
+
     Ok(Answer {
         hits,
+        tiers,
         coverage_state: summaries.coverage.state(),
         coverage: summaries.coverage,
         embedder: embedder.kind(),
@@ -227,7 +300,7 @@ pub fn similar(
     let Some(target) = units.iter().position(|u| u.unit.id() == id) else {
         bail!("no unit named `{id}` in this checkout");
     };
-    let summaries = summaries_for(store, &units, embedder)?;
+    let summaries = vectors_for(store, &units, embedder, Prefer::Best)?;
     let here = &units[target];
 
     // Structural: an identical normalized body, at a different place.
@@ -281,7 +354,7 @@ pub fn similar(
     // Semantic: nearest summaries, minus anything a structural tier already
     // claimed — a result reported twice under two tiers is a result a reader
     // has to de-duplicate by hand.
-    if let Some(vec) = summaries.vectors.get(&target) {
+    if let Some((vec, _)) = summaries.vectors.get(&target) {
         let claimed: std::collections::HashSet<(&str, u32)> =
             out.iter().map(|n| (n.path.as_str(), n.line)).collect();
         let mut scored: Vec<(usize, f32)> = summaries
@@ -289,7 +362,7 @@ pub fn similar(
             .iter()
             .filter(|(i, _)| **i != target)
             .filter(|(i, _)| !claimed.contains(&(units[**i].path.as_str(), units[**i].unit.line)))
-            .map(|(i, other)| (*i, mrl::cosine_similarity(vec, other)))
+            .map(|(i, (other, _))| (*i, mrl::cosine_similarity(vec, other)))
             .filter(|(_, cosine)| *cosine >= relevance_floor(embedder.kind()))
             .collect();
         scored.sort_by(|a, b| b.1.total_cmp(&a.1));
@@ -359,14 +432,19 @@ fn in_scope(store: &Store, root: &str, scope: Option<&str>) -> Result<Vec<Locate
 /// step with summaries by construction: switching embedders re-embeds on the
 /// next query instead of needing anyone to remember a step.
 struct Indexed {
-    /// Unit index → its summary vector.
-    vectors: HashMap<usize, Vec<f32>>,
+    /// Unit index → its vector and which tier produced it.
+    vectors: HashMap<usize, (Vec<f32>, &'static str)>,
     /// Unit index → the human summary line, for display.
     text: HashMap<usize, String>,
     coverage: Coverage,
 }
 
-fn summaries_for(store: &mut Store, units: &[Located], embedder: &dyn Embedder) -> Result<Indexed> {
+fn vectors_for(
+    store: &mut Store,
+    units: &[Located],
+    embedder: &dyn Embedder,
+    prefer: Prefer,
+) -> Result<Indexed> {
     let model = embedder.model().to_string();
     let config = config_key(embedder.kind(), &model);
     let have = store.vectors(config)?;
@@ -378,34 +456,60 @@ fn summaries_for(store: &mut Store, units: &[Located], embedder: &dyn Embedder) 
         coverage: Coverage::default(),
     };
     let mut missing: Vec<(u64, String)> = Vec::new();
-    let mut pending: Vec<(usize, u64)> = Vec::new();
+    let mut pending: Vec<(usize, u64, &'static str)> = Vec::new();
 
     for (i, located) in units.iter().enumerate() {
-        let Some(norm_hash) = located.unit.norm_hash else {
-            continue;
-        };
-        indexed.coverage.summarizable += 1;
-        let ctx = crate::summary::Context::of(&located.unit).hash();
-        let Some(summary) = stored.get(&(norm_hash, ctx)) else {
-            continue;
-        };
-        indexed.coverage.summarized += 1;
-        indexed.text.insert(i, summary.summary.clone());
+        // A summary is only possible where there is a body to summarize;
+        // the identifier tier covers everything, including the
+        // macro-generated units that have no body at all.
+        let summary = located.unit.norm_hash.and_then(|norm_hash| {
+            indexed.coverage.summarizable += 1;
+            let ctx = crate::summary::Context::of(&located.unit).hash();
+            stored.get(&(norm_hash, ctx))
+        });
+        if let Some(summary) = summary {
+            indexed.coverage.summarized += 1;
+            indexed.text.insert(i, summary.summary.clone());
+        }
 
-        let text = summary_text(summary);
+        // Prefer meaning over naming where both exist — DEC-005's interop
+        // rule, finally exercised against two real indexes.
+        let (text, via) = match (summary, prefer) {
+            (Some(summary), Prefer::Best) => (summary_text(summary), "summary"),
+            _ => (identifier_text(&located.unit), "identifier"),
+        };
+        if text.trim().is_empty() {
+            continue;
+        }
         let key = text_key(&text);
         match have.get(&key) {
             Some(vec) => {
-                indexed.vectors.insert(i, vec.clone());
+                indexed.vectors.insert(i, (vec.clone(), via));
             }
             None => {
                 missing.push((key, text));
-                pending.push((i, key));
+                pending.push((i, key, via));
             }
         }
     }
 
     if !missing.is_empty() {
+        // A cold corpus is a long wait, and a silent one reads as a hang.
+        //
+        // Measured, and the honest state of this path: the embed loop below is
+        // sequential, and the vendored ONNX embedder holds one session behind
+        // a mutex, so parallelising the loop alone would not help. gqls solves
+        // this with a thread-local pool of embedders plus `Workload::Bulk`;
+        // porting that is the fix when this stops being tolerable. Until then
+        // the cost is disclosed rather than hidden.
+        if missing.len() > 2_000 {
+            eprintln!(
+                "contour: embedding {} texts with the {} embedder — this is a one-time \
+                 cost per corpus and is cached; subsequent queries are instant",
+                missing.len(),
+                embedder.kind()
+            );
+        }
         // One vector per distinct text: identical summaries embed once.
         let mut fresh: HashMap<u64, Vec<f32>> = HashMap::new();
         for (key, text) in &missing {
@@ -420,9 +524,9 @@ fn summaries_for(store: &mut Store, units: &[Located], embedder: &dyn Embedder) 
                 .map(|(k, v)| (*k, v.clone()))
                 .collect::<Vec<_>>(),
         )?;
-        for (i, key) in pending {
+        for (i, key, via) in pending {
             if let Some(vec) = fresh.get(&key) {
-                indexed.vectors.insert(i, vec.clone());
+                indexed.vectors.insert(i, (vec.clone(), via));
             }
         }
     }
