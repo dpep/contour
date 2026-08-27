@@ -83,8 +83,9 @@ pub fn under(path: &str, prefix: &str) -> bool {
 /// classifications (DEC-021).
 ///
 /// The consequence to know: a fact that is not in the path is not visible
-/// here. A Rust `#[cfg(test)] mod tests` sits in an app file and classifies as
-/// [`Class::App`], because nothing about `src/lib.rs` says otherwise.
+/// here. A Rust `#[cfg(test)] mod tests` sits in an app file, and nothing about
+/// `src/lib.rs` says otherwise — so [`Classes::of_unit`] takes the unit as well
+/// as the path, and is what ranking asks. This layer stays about files.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, serde::Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Class {
@@ -149,6 +150,23 @@ pub const CLASSES: [Class; 6] = [
     Class::Generated,
     Class::Vendored,
 ];
+
+/// Whether a Rust unit sits in a test module, by the name of any enclosing
+/// module.
+///
+/// `tests` and `test` are conventional, and so is a *qualified* name where one
+/// file holds several: trekr writes `singleton_tests` and `rails_dsl_tests`
+/// beside its plain `tests`, and a rule that matched only the bare name left
+/// two thirds of that file's tests ranked as app code.
+///
+/// A production module genuinely called `test` would be discounted wrongly —
+/// survivable precisely because DEC-022 made this a discount rather than an
+/// exclusion, and every hit shows the `class` it was given.
+fn in_test_module(unit: &crate::core::Unit) -> bool {
+    unit.owner.split("::").any(|part| {
+        matches!(part, "test" | "tests") || part.ends_with("_test") || part.ends_with("_tests")
+    })
+}
 
 /// The conventions, in the order a reader would apply them: a spec inside a
 /// vendored gem is vendored, and a fixture inside a spec directory is a
@@ -303,6 +321,27 @@ impl Classes {
             .unwrap_or_else(|| by_convention(path))
     }
 
+    /// The class of one *unit*, which is not always the class of its file.
+    ///
+    /// Rust puts its unit tests inside the file they test, in a `#[cfg(test)]
+    /// mod tests`. The file is app code and the module is not, so a path-only
+    /// policy calls `tests::a_body_is_not_its_own_neighbour` app code and
+    /// `search` never discounts it — which is exactly the ranking the Rust
+    /// field trial tripped on, a page of `tests::*` above the answer.
+    ///
+    /// Ruby needs no such rule: its tests live in files of their own, which is
+    /// why the path policy was enough for two milestones.
+    pub fn of_unit(&self, path: &str, unit: &crate::core::Unit) -> Class {
+        let class = self.of(path);
+        // Only ever *toward* test: an explicit rule saying this tree is app
+        // code is a person's decision about their own repo, and a module name
+        // should not overrule it.
+        match class == Class::App && unit.lang == crate::core::Lang::Rust && in_test_module(unit) {
+            true => Class::Test,
+            false => class,
+        }
+    }
+
     pub fn reports(&self, class: Class) -> bool {
         self.include_ignored || class.reported()
     }
@@ -374,6 +413,52 @@ impl Withheld {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Rust keeps its tests in the file they test, so the path cannot answer
+    /// this and the unit must. Every module name here is one a real sibling
+    /// repo uses: trekr writes `singleton_tests` and `rails_dsl_tests` beside
+    /// its plain `tests`, in the very file the field trial's worst ranking
+    /// came from.
+    #[test]
+    fn a_rust_test_module_is_test_code_wherever_its_file_lives() {
+        let classes = Classes::default();
+        let unit = |owner: &str, lang| crate::core::Unit {
+            lang,
+            name: "x".into(),
+            owner: owner.into(),
+            singleton: false,
+            params: vec![],
+            via: None,
+            line: 1,
+            end_line: 2,
+            norm_hash: None,
+            nodes: None,
+        };
+        let rust =
+            |owner: &str| classes.of_unit("src/near.rs", &unit(owner, crate::core::Lang::Rust));
+        assert_eq!(rust("tests"), Class::Test);
+        assert_eq!(rust("test"), Class::Test);
+        assert_eq!(rust("singleton_tests"), Class::Test);
+        assert_eq!(rust("rails_dsl_tests"), Class::Test);
+        assert_eq!(rust("near::tests"), Class::Test, "nested in a module");
+        assert_eq!(rust(""), Class::App, "a free function is not a test");
+        assert_eq!(rust("Contour"), Class::App);
+        // `latest` ends in `test`, and is not one. The suffix rule is about a
+        // word boundary, which is what the underscore is doing.
+        assert_eq!(rust("latest"), Class::App);
+
+        // Ruby's tests live in files of their own, and a Ruby class called
+        // `Test` must not be discounted for its name.
+        assert_eq!(
+            classes.of_unit("app/models/user.rb", &unit("Test", crate::core::Lang::Ruby)),
+            Class::App
+        );
+        // The file still decides when it already says test.
+        assert_eq!(
+            classes.of_unit("tests/cli_e2e.rs", &unit("", crate::core::Lang::Rust)),
+            Class::Test
+        );
+    }
 
     /// Each row is a finding from a real corpus, not a layout someone imagined:
     /// discourse's plugin migrations, trekr's fixture corpus, rwr's `corpus/`,

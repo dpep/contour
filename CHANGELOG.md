@@ -44,6 +44,14 @@ Initial skeleton — nothing has been released, so everything below is new.
   modules is the case it was built for. On by default; needs `rq` on PATH, and
   says the check went unchecked when it is missing rather than reporting
   nothing.
+- **Rust's inline tests no longer outrank the code they test.** A
+  `#[cfg(test)] mod tests` lives in the file it tests, so the path said "app
+  code" and search's test discount never reached it — a query phrased like a
+  test name returned a page of test functions. Units in a test module are now
+  classed `test` wherever their file lives (`tests`, `test`, and the
+  `*_tests` forms one file uses for several). Across the seven Rust sets, top1
+  goes 2/21 to 4/21 and top5 4/21 to 6/21, with no set worse. Ruby is
+  untouched: its tests were always in files of their own.
 - **A summary now outranks a name that merely looks like the query.** The
   semantic half of the ranking is weighted by which vector matched — a summary
   counts for 1.0 against an identifier's 0.7 — so a unit somebody summarized

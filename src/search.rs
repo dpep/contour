@@ -239,7 +239,12 @@ pub fn search(
         classes,
     } = options;
     let units = in_scope(store, root, scope)?;
-    let class_of: Vec<crate::paths::Class> = units.iter().map(|u| classes.of(&u.path)).collect();
+    // Per unit, not per path: Rust's tests live inside the file they test, and
+    // the discount has to reach them (see `Classes::of_unit`).
+    let class_of: Vec<crate::paths::Class> = units
+        .iter()
+        .map(|u| classes.of_unit(&u.path, &u.unit))
+        .collect();
     let summaries = vectors_for(store, &units, embedder, prefer)?;
 
     // Lexical: token overlap against the humanized name, best first.
