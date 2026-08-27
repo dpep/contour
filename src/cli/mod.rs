@@ -55,6 +55,10 @@ enum Command {
         path: Option<PathBuf>,
     },
     /// Report units whose normalized bodies are identical.
+    // Negative numbers reach the value parser instead of being read as flags,
+    // so `--near-threshold -1` is answered by the rule it broke rather than by
+    // clap's tip about quoting it.
+    #[command(allow_negative_numbers = true)]
     Dupes {
         /// A file or directory to limit the report to. Defaults to the whole
         /// checkout containing the working directory.
@@ -67,7 +71,12 @@ enum Command {
         #[arg(long)]
         near: bool,
         /// Jaccard at or above which two bodies count as near-structural.
-        #[arg(long, value_name = "J", default_value_t = crate::near::NEAR_THRESHOLD)]
+        #[arg(
+            long,
+            value_name = "J",
+            default_value_t = crate::near::NEAR_THRESHOLD,
+            value_parser = fraction
+        )]
         near_threshold: f32,
         /// Name the likely-original member of each group, with the basis.
         ///
@@ -98,6 +107,7 @@ enum Command {
         model: String,
     },
     /// Find callables by what they do, in English.
+    #[command(allow_negative_numbers = true)]
     Search {
         query: String,
         /// A file or directory to search within.
@@ -106,7 +116,7 @@ enum Command {
         limit: usize,
         /// Cosine below which a hit is not an answer. Defaults to the
         /// embedder's calibrated floor; `0` shows everything it withheld.
-        #[arg(long, value_name = "F")]
+        #[arg(long, value_name = "F", value_parser = fraction)]
         floor: Option<f32>,
     },
     /// Serve the Model Context Protocol on stdin/stdout, for an agent client.
@@ -160,6 +170,23 @@ pub const DEFAULT_MODEL: &str = "claude-opus-5";
 /// from the eval set (DEC-011), and `--min-lines` exists so nobody has to
 /// wait for it.
 pub const DEFAULT_MIN_LINES: u32 = 4;
+
+/// A Jaccard and a cosine are both fractions of one, and a value outside that
+/// range is a mistake the tool can see. `--near-threshold 1.5` used to be
+/// accepted in silence and then match nothing, which reads as "no duplicates".
+///
+/// Written out rather than using clap's range parser because that one rejects
+/// a negative by complaining about the *flag*, and the tip it prints sends the
+/// reader looking for a value it has already got.
+fn fraction(value: &str) -> Result<f32, String> {
+    let parsed: f32 = value
+        .parse()
+        .map_err(|_| format!("`{value}` is not a number"))?;
+    match (0.0..=1.0).contains(&parsed) {
+        true => Ok(parsed),
+        false => Err(format!("`{value}` is not between 0 and 1")),
+    }
+}
 
 /// How an answer is rendered. One value, so no command can render only half of
 /// itself in JSON.
@@ -272,14 +299,20 @@ fn index(path: Option<&std::path::Path>, format: Format) -> Result<i32> {
     let (root, counts) = crate::index::index(&mut store, &path).map_err(known_checkouts)?;
 
     match format {
-        Format::Human => println!(
-            "{}: {} files, {} blobs ({} parsed), {} units",
-            crate::paths::pretty(&root),
-            counts.files,
-            counts.blobs,
-            counts.parsed,
-            counts.units
-        ),
+        Format::Human => {
+            // `0 parsed, 0 units` is the whole point of blob keying and reads
+            // like an empty index, so the line says which it is.
+            let work = match counts.parsed {
+                0 => "nothing new to read".to_string(),
+                parsed => format!("{parsed} blob(s) read, {} unit(s)", counts.units),
+            };
+            println!(
+                "{}: {} files, {} blobs — {work}",
+                crate::paths::pretty(&root),
+                counts.files,
+                counts.blobs,
+            )
+        }
         _ => emit(
             format,
             &serde_json::json!({ "root": root, "indexed": counts }),
@@ -509,6 +542,11 @@ fn search(
     floor: Option<f32>,
     format: Format,
 ) -> Result<i32> {
+    // An empty query matched everything weakly and reported it as a result.
+    // There is no ranking of a corpus against nothing.
+    if query.trim().is_empty() {
+        bail!("a search needs something to search for");
+    }
     let (root, relative) = scoped(scope)?;
     let embedder = crate::embed::default_embedder(None, crate::embed::Workload::Query);
     let mut store = crate::store::open_default()?;
@@ -608,9 +646,10 @@ fn similar(
                 // evidence (the body size) rather than a manufactured
                 // confidence; a semantic neighbour shows the cosine, which is
                 // a real graded measurement (DEC-010).
-                let evidence = match (n.confidence, n.lines) {
-                    (Some(c), _) => format!("  cos {c:.2}"),
-                    (_, Some(lines)) => format!("  {lines} lines"),
+                let evidence = match (n.cosine, n.similarity, n.lines) {
+                    (Some(cosine), _, _) => format!("  cos {cosine:.2}"),
+                    (_, Some(jaccard), _) => format!("  jaccard {jaccard:.2}"),
+                    (_, _, Some(lines)) => format!("  {lines} lines"),
                     _ => String::new(),
                 };
                 println!("{}:{}  {}  [{}]{evidence}", n.path, n.line, n.id, n.how);
@@ -675,6 +714,14 @@ fn symbols(file: &std::path::Path, format: Format) -> Result<i32> {
         Format::Human => {
             for unit in &blob.units {
                 println!("{:>5}  {}{}", unit.line, unit.id(), signature(unit));
+            }
+            // Zero bytes and exit 1 is a correct answer nobody can read.
+            if blob.units.is_empty() {
+                eprintln!(
+                    "contour: no callables in {} ({} line(s))",
+                    file.display(),
+                    blob.lines
+                );
             }
         }
         _ => emit(format, &blob.units)?,

@@ -785,13 +785,16 @@ pub fn render(report: &Report) {
     }
 
     let d = &report.dupes;
+    // `n/a` rather than `NaN`: a tier with no labels has no precision, and
+    // printing a float's error value as though it were a measurement is the
+    // thing DEC-010 exists to stop.
     let rate = |n: usize, total: usize| match total {
-        0 => f64::NAN,
-        t => (n as f64 / t as f64 * 100.0).round() / 100.0,
+        0 => "n/a".to_string(),
+        t => format!("{:.2}", (n as f64 / t as f64 * 100.0).round() / 100.0),
     };
     println!("\nduplicates (min_lines {})", d.min_lines);
     println!(
-        "  precision {:.2} ({}/{})   recall {:.2} ({}/{})",
+        "  precision {} ({}/{})   recall {} ({}/{})",
         rate(d.true_positives, d.true_positives + d.false_positives),
         d.true_positives,
         d.true_positives + d.false_positives,
@@ -820,7 +823,7 @@ pub fn render(report: &Report) {
         crate::near::NEAR_THRESHOLD
     );
     println!(
-        "  precision {:.2} ({}/{})   recall {:.2} ({}/{})",
+        "  precision {} ({}/{})   recall {} ({}/{})",
         rate(n.true_positives, n.true_positives + n.false_positives),
         n.true_positives,
         n.true_positives + n.false_positives,

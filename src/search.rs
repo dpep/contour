@@ -288,11 +288,19 @@ pub struct Neighbor {
     ///   confidence, because there the judgment really is graded.
     ///
     /// - `near_structural` — a nearly identical shape, with the Jaccard over
-    ///   subtree signatures as its confidence (`crate::near`). Also graded,
-    ///   also reported as the measurement.
+    ///   subtree signatures (`crate::near`). Also graded, also reported as the
+    ///   measurement.
     pub how: &'static str,
+    /// The semantic tier's cosine. Named the same as `Hit::cosine`, because it
+    /// is the same measurement: one field called `confidence` here and
+    /// `cosine` there made a consumer handle two names for one number.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub confidence: Option<f32>,
+    pub cosine: Option<f32>,
+    /// The near tier's Jaccard, named the same as `dupes::Group::similarity`
+    /// for the same reason. Two different measurements sharing one field was
+    /// the other half of the drift.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub similarity: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub lines: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -325,7 +333,8 @@ pub fn similar(
                 id: other.unit.id(),
                 line: other.unit.line,
                 how: "structural",
-                confidence: None,
+                cosine: None,
+                similarity: None,
                 lines: Some(other.unit.end_line + 1 - other.unit.line),
                 summary: summaries.text.get(&i).cloned(),
             });
@@ -353,7 +362,8 @@ pub fn similar(
                 id: near.id,
                 line: near.line,
                 how: "near_structural",
-                confidence: Some(near.similarity),
+                cosine: None,
+                similarity: Some(near.similarity),
                 lines: Some(near.end_line + 1 - near.line),
                 summary: index.and_then(|i| summaries.text.get(&i).cloned()),
             });
@@ -383,7 +393,8 @@ pub fn similar(
                 how: "semantic",
                 // A graded judgment, so it gets a number — and the number is
                 // the measurement itself, not a mapping of it.
-                confidence: Some(cosine),
+                cosine: Some(cosine),
+                similarity: None,
                 lines: None,
                 summary: summaries.text.get(&i).cloned(),
             });
