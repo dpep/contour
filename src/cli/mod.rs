@@ -366,6 +366,30 @@ fn scoped(scope: Option<&std::path::Path>) -> Result<(PathBuf, Option<String>)> 
     Ok((root, relative))
 }
 
+/// [`scoped`], plus the store with this checkout brought up to date
+/// (`index::open`) and the refresh disclosed if it did anything.
+///
+/// Every command that answers *from* the index calls this instead of opening
+/// the store itself, which is what makes "an answer is never silently stale" a
+/// property of the CLI rather than of each command's memory. The line prints
+/// before the answer, so a first query in an unindexed checkout explains the
+/// wait rather than looking like a hang.
+fn opened(scope: Option<&std::path::Path>) -> Result<(crate::index::Opened, Option<String>)> {
+    let (root, relative) = scoped(scope)?;
+    let opened = crate::index::open(&root).map_err(known_checkouts)?;
+    if opened.refreshed.changed {
+        let work = match opened.refreshed.parsed {
+            0 => String::new(),
+            parsed => format!(", {parsed} blob(s) read"),
+        };
+        eprintln!(
+            "contour: index refreshed — {} file(s){work}",
+            opened.refreshed.files
+        );
+    }
+    Ok((opened, relative))
+}
+
 /// Add "and here is what contour does know about" to a failure to find a
 /// checkout, which is almost always someone standing in the wrong directory.
 ///
@@ -397,10 +421,10 @@ fn dupes(
     include_ignored: bool,
     format: Format,
 ) -> Result<i32> {
-    let (root, relative) = scoped(scope)?;
-    let classes = crate::paths::Classes::load(&root)?.including_ignored(include_ignored);
-    let store = crate::store::open_default()?;
-    let root = root.to_string_lossy().into_owned();
+    let (opened, relative) = opened(scope)?;
+    let (store, root) = (opened.store, opened.root);
+    let classes = crate::paths::Classes::load(std::path::Path::new(&root))?
+        .including_ignored(include_ignored);
     let mut found = crate::dupes::find(&store, &root, relative.as_deref(), min_lines, &classes)?;
     let mut stats = None;
     if near {
@@ -563,15 +587,17 @@ fn summarize(
     model: &str,
     format: Format,
 ) -> Result<i32> {
-    let (root, relative) = scoped(scope)?;
+    // Refreshed first, like every other command that reads the index — and
+    // this is the one that spends money on what it finds there.
+    let (opened, relative) = opened(scope)?;
+    let (mut store, root) = (opened.store, opened.root);
     let summarizer: Box<dyn crate::summary::Summarizer> = match fixtures {
         Some(path) => Box::new(crate::summary::fixture::Fixtures::load(path)?),
         None => Box::new(crate::summary::anthropic::Anthropic::from_env(model)?),
     };
-    let mut store = crate::store::open_default()?;
     let filled = crate::summary::fill(
         &mut store,
-        &root,
+        std::path::Path::new(&root),
         relative.as_deref(),
         summarizer.as_ref(),
         budget,
@@ -615,13 +641,14 @@ fn search(
     if query.trim().is_empty() {
         bail!("a search needs something to search for");
     }
-    let (root, relative) = scoped(scope)?;
-    let classes = crate::paths::Classes::load(&root)?.including_ignored(include_ignored);
+    let (opened, relative) = opened(scope)?;
+    let (mut store, root) = (opened.store, opened.root);
+    let classes = crate::paths::Classes::load(std::path::Path::new(&root))?
+        .including_ignored(include_ignored);
     let embedder = crate::embed::default_embedder(None, crate::embed::Workload::Query);
-    let mut store = crate::store::open_default()?;
     let answer = crate::search::search(
         &mut store,
-        &root.to_string_lossy(),
+        &root,
         query,
         embedder.as_ref(),
         crate::search::Options {
@@ -720,18 +747,13 @@ fn similar(
     include_ignored: bool,
     format: Format,
 ) -> Result<i32> {
-    let (root, _) = scoped(path)?;
-    let classes = crate::paths::Classes::load(&root)?.including_ignored(include_ignored);
+    let (opened, _) = opened(path)?;
+    let (mut store, root) = (opened.store, opened.root);
+    let classes = crate::paths::Classes::load(std::path::Path::new(&root))?
+        .including_ignored(include_ignored);
     let embedder = crate::embed::default_embedder(None, crate::embed::Workload::Query);
-    let mut store = crate::store::open_default()?;
-    let neighbors = crate::search::similar(
-        &mut store,
-        &root.to_string_lossy(),
-        unit,
-        embedder.as_ref(),
-        limit,
-        &classes,
-    )?;
+    let neighbors =
+        crate::search::similar(&mut store, &root, unit, embedder.as_ref(), limit, &classes)?;
 
     match format {
         Format::Human => {
@@ -800,11 +822,17 @@ fn similar(
 }
 
 fn eval(set: &std::path::Path, min_lines: u32, format: Format) -> Result<i32> {
-    let (root, _) = scoped(None)?;
+    let (opened, _) = opened(None)?;
+    let (mut store, root) = (opened.store, opened.root);
     let labels = crate::eval::load(set)?;
     let embedder = crate::embed::default_embedder(None, crate::embed::Workload::Bulk);
-    let mut store = crate::store::open_default()?;
-    let report = crate::eval::run(&mut store, &root, &labels, embedder.as_ref(), min_lines)?;
+    let report = crate::eval::run(
+        &mut store,
+        std::path::Path::new(&root),
+        &labels,
+        embedder.as_ref(),
+        min_lines,
+    )?;
 
     match format {
         Format::Human => crate::eval::render(&report),

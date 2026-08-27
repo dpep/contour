@@ -770,22 +770,20 @@ fn summarize_respects_a_budget_and_refuses_stale_lines() {
     assert_eq!(first["remaining"], 1, "the budget bounds spend, not scope");
 
     // Rewrite c.rb so the recorded span still exists and still parses, but now
-    // holds a *different* method of the same shape. This is the dangerous
-    // case: the context the index remembers (C3#run3) is unchanged, so the
-    // request would look perfectly valid and store a wrong summary under the
-    // right body's key — paid for, cached forever, indistinguishable from a
-    // correct one. Only re-hashing the slice catches it.
-    //
-    // Deliberately the same line count as the original, so this fails if the
-    // guard is weakened to a bounds check.
+    // holds a *different* body under the same name. Every command that reads
+    // the index refreshes it first, so the fill spends on the body that is
+    // there now — where it used to refuse, having been asked about a body the
+    // file no longer held. The guard that refuses is still in `fill::slice`,
+    // for the race this cannot close; what changed is that the CLI no longer
+    // walks into it.
     std::fs::write(
         repo.dir.join("c.rb"),
         "class C3\n  def run3(a)\n    a.destroy\n    log(a)\n    nil\n  end\nend\n",
     )
     .unwrap();
-    let stale = repo.json(&["summarize", "--fixtures", fixtures, "--json"]);
-    assert_eq!(stale["summarized"], 0, "the body is not the one indexed");
-    assert_eq!(stale["failed"], 1);
+    let after = repo.json(&["summarize", "--fixtures", fixtures, "--json"]);
+    assert_eq!(after["failed"], 0, "nothing was stale by the time it read");
+    assert_eq!(after["summarized"], 1, "the body that is there now");
 }
 
 /// Fixtures for the search tests: two billing methods and one unrelated.
@@ -923,6 +921,54 @@ fn search_ranks_a_spec_below_the_code_it_tests() {
     let all = repo.json(&["search", "limit", "--include-ignored", "--json"]);
     assert_eq!(all["hits"].as_array().map(Vec::len), Some(3));
     assert_eq!(all["withheld_paths"]["total"], 0);
+}
+
+/// Delete a file and ask a question: the answer must not be about code that is
+/// gone. Found by the owner on a scratch copy of berater — `--status` said
+/// `[may be stale]` correctly, but no query consulted that probe, so `search`
+/// still matched every unit of the deleted file. A thin answer looks thin; a
+/// confidently wrong one does not.
+#[test]
+fn a_query_never_answers_from_a_stale_index() {
+    let repo = Repo::new(
+        "fresh",
+        &[
+            (
+                "lib/keep.rb",
+                "class Keep\n  def limit(a)\n    a\n  end\nend\n",
+            ),
+            (
+                "lib/gone.rb",
+                "class Gone\n  def limit(a)\n    a\n  end\nend\n",
+            ),
+        ],
+    );
+    repo.run(&["index"]);
+    let ids = |repo: &Repo| -> Vec<String> {
+        repo.json(&["search", "limit", "--json"])["hits"]
+            .as_array()
+            .expect("hits")
+            .iter()
+            .map(|h| h["id"].as_str().unwrap().to_string())
+            .collect()
+    };
+    assert!(ids(&repo).contains(&"Gone#limit".to_string()));
+
+    std::fs::remove_file(repo.dir.join("lib/gone.rb")).unwrap();
+    let (_, stderr, _) = repo.run_in(&repo.dir.clone(), &["search", "limit"]);
+    assert!(
+        stderr.contains("index refreshed"),
+        "the refresh is disclosed, not silent: {stderr}"
+    );
+    assert_eq!(ids(&repo), ["Keep#limit"], "the deleted method is gone");
+
+    // `dupes` and `similar` answer from the same refreshed view, and `--status`
+    // has nothing left to report.
+    assert_eq!(repo.run(&["dupes", "--min-lines", "1"]).1, 1, "one is left");
+    assert_eq!(
+        repo.json(&["--status", "--json"])["checkouts"][0]["stale"],
+        false
+    );
 }
 
 /// Two runs of one query must agree. They did not: the semantic half is walked

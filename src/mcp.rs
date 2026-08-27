@@ -327,17 +327,42 @@ fn scoped(args: &Value) -> Result<(PathBuf, Option<String>)> {
     Ok((root, scope))
 }
 
+/// [`scoped`], plus the store with this checkout brought up to date
+/// (`index::open`). Every tool that answers from the index goes through here,
+/// for the reason spelled out there: an agent cannot tell a confidently stale
+/// answer from a correct one.
+fn opened(args: &Value) -> Result<(crate::index::Opened, Option<String>)> {
+    let (root, scope) = scoped(args)?;
+    Ok((crate::index::open(&root)?, scope))
+}
+
+/// Attach what the refresh took to a tool result.
+///
+/// The CLI prints this on stderr, where all its diagnostics go in every
+/// format; a tool call has no stderr, so an agent gets the same fact as a
+/// field. Only when something moved — a field that is always `false` teaches a
+/// model to stop reading it.
+fn answered(mut result: Value, refreshed: &crate::store::Indexed) -> Value {
+    if refreshed.changed {
+        result["refreshed"] = json!({
+            "files": refreshed.files,
+            "parsed": refreshed.parsed,
+        });
+    }
+    result
+}
+
 fn search(args: &Value) -> Result<Value> {
     let query = args["query"]
         .as_str()
         .ok_or_else(|| anyhow::anyhow!("`query` is required"))?;
-    let (root, scope) = scoped(args)?;
-    let classes = classes(&root, args)?;
+    let (opened, scope) = opened(args)?;
+    let classes = classes(Path::new(&opened.root), args)?;
     let embedder = crate::embed::default_embedder(None, crate::embed::Workload::Query);
-    let mut store = crate::store::open_default()?;
+    let mut store = opened.store;
     let answer = crate::search::search(
         &mut store,
-        &root.to_string_lossy(),
+        &opened.root,
         query,
         embedder.as_ref(),
         crate::search::Options {
@@ -350,34 +375,35 @@ fn search(args: &Value) -> Result<Value> {
             ..crate::search::Options::new(&classes)
         },
     )?;
-    Ok(serde_json::to_value(answer)?)
+    Ok(answered(serde_json::to_value(answer)?, &opened.refreshed))
 }
 
 fn similar(args: &Value) -> Result<Value> {
     let unit = args["unit"]
         .as_str()
         .ok_or_else(|| anyhow::anyhow!("`unit` is required"))?;
-    let (root, _) = scoped(args)?;
-    let classes = classes(&root, args)?;
+    let (opened, _) = opened(args)?;
+    let classes = classes(Path::new(&opened.root), args)?;
     let embedder = crate::embed::default_embedder(None, crate::embed::Workload::Query);
-    let mut store = crate::store::open_default()?;
+    let mut store = opened.store;
     let neighbors = crate::search::similar(
         &mut store,
-        &root.to_string_lossy(),
+        &opened.root,
         unit,
         embedder.as_ref(),
         args["limit"].as_u64().unwrap_or(10) as usize,
         &classes,
     )?;
-    Ok(serde_json::to_value(neighbors)?)
+    Ok(answered(
+        serde_json::to_value(neighbors)?,
+        &opened.refreshed,
+    ))
 }
 
 fn dupes(args: &Value) -> Result<Value> {
-    let (root, scope) = scoped(args)?;
-    let classes = crate::paths::Classes::load(&root)?
-        .including_ignored(args["include_ignored"].as_bool() == Some(true));
-    let root = root.to_string_lossy().into_owned();
-    let store = crate::store::open_default()?;
+    let (opened, scope) = opened(args)?;
+    let classes = classes(Path::new(&opened.root), args)?;
+    let (store, root) = (opened.store, opened.root);
     let min_lines = args["min_lines"].as_u64().unwrap_or(4) as u32;
     let mut found = crate::dupes::find(&store, &root, scope.as_deref(), min_lines, &classes)?;
     let mut stats = None;
@@ -409,13 +435,16 @@ fn dupes(args: &Value) -> Result<Value> {
     // The scale and coverage disclosure the CLI prints to stderr has nowhere
     // to go in a tool result but the result itself — and an agent needs to
     // know the near tier skipped its Rust files, and that groups were withheld.
-    Ok(json!({
-        "root": root,
-        "groups": found.groups,
-        "near_stats": stats,
-        "canonical_stats": ranked,
-        "withheld_paths": found.withheld,
-    }))
+    Ok(answered(
+        json!({
+            "root": root,
+            "groups": found.groups,
+            "near_stats": stats,
+            "canonical_stats": ranked,
+            "withheld_paths": found.withheld,
+        }),
+        &opened.refreshed,
+    ))
 }
 
 fn symbols(args: &Value) -> Result<Value> {
@@ -481,19 +510,23 @@ fn pending(args: &Value) -> Result<Value> {
     let model = args["model"]
         .as_str()
         .ok_or_else(|| anyhow::anyhow!("`model` is required"))?;
-    let (root, scope) = scoped(args)?;
-    let store = crate::store::open_default()?;
+    // Refreshed like any other read of the index — offering a session a unit
+    // that has moved is asking it to pay for a summary the store will refuse.
+    let (opened, scope) = opened(args)?;
     let units = crate::summary::pending(
-        &store,
-        &root,
+        &opened.store,
+        Path::new(&opened.root),
         scope.as_deref(),
         model,
         args["limit"].as_u64().unwrap_or(20) as usize,
     )?;
-    Ok(json!({
-        "prompt_version": crate::summary::contributed::CONTRIBUTED_PROMPT_VERSION,
-        "units": units,
-    }))
+    Ok(answered(
+        json!({
+            "prompt_version": crate::summary::contributed::CONTRIBUTED_PROMPT_VERSION,
+            "units": units,
+        }),
+        &opened.refreshed,
+    ))
 }
 
 fn store_summary(args: &Value) -> Result<Value> {
@@ -502,19 +535,20 @@ fn store_summary(args: &Value) -> Result<Value> {
             .as_str()
             .ok_or_else(|| anyhow::anyhow!("`{name}` is required"))
     };
+    // The contribution is checked against the body the index holds, so the
+    // index has to hold the body that is there now.
     let here = args["root"].as_str().unwrap_or(".");
-    let root = crate::scan::repo_root(Path::new(here))?;
-    let mut store = crate::store::open_default()?;
+    let mut opened = crate::index::open(Path::new(here))?;
     let accepted = crate::summary::contributed::store(
-        &mut store,
-        &root,
+        &mut opened.store,
+        Path::new(&opened.root),
         field("unit")?,
         args["path"].as_str(),
         field("model")?,
         field("prompt_version")?,
         &args["summary"],
     )?;
-    Ok(serde_json::to_value(accepted)?)
+    Ok(answered(serde_json::to_value(accepted)?, &opened.refreshed))
 }
 
 fn index(args: &Value) -> Result<Value> {

@@ -328,6 +328,36 @@ pub(crate) fn slice(
 mod tests {
     use super::*;
 
+    /// The guard itself, at the level it lives on. Every command now refreshes
+    /// the index before reading it (`index::open`), so the CLI no longer walks
+    /// into this — but a file can still change between the refresh and the
+    /// read, and buying a summary for a body that is no longer there is the one
+    /// mistake that is paid for and cached forever.
+    #[test]
+    fn a_body_that_moved_under_the_index_is_refused() {
+        let dir = std::env::temp_dir().join(format!("contour-slice-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let body = "class C\n  def run(a)\n    a.check\n    persist(a)\n    a\n  end\nend\n";
+        std::fs::write(dir.join("c.rb"), body).unwrap();
+        let hash = crate::ruby::units(body.as_bytes()).units[0]
+            .norm_hash
+            .expect("a body to hash");
+
+        assert!(slice(&dir, "c.rb", 2, 6, hash).is_ok());
+
+        // A different body of the same shape, at the same span: the span still
+        // parses and the name is unchanged, so only re-hashing catches it.
+        std::fs::write(
+            dir.join("c.rb"),
+            "class C\n  def run(a)\n    a.destroy\n    log(a)\n    nil\n  end\nend\n",
+        )
+        .unwrap();
+        let refused = slice(&dir, "c.rb", 2, 6, hash);
+        assert!(refused.is_err(), "the body is not the one indexed");
+        assert!(format!("{:#}", refused.unwrap_err()).contains("changed since"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn coverage_states_read_from_the_counts() {
         let state = |summarized, summarizable| {

@@ -35,6 +35,11 @@ pub struct Indexed {
     /// Units found in the blobs `parsed` above — so zero on a no-op reindex,
     /// and never the size of the checkout. `Checkout::units` is that number.
     pub units: usize,
+    /// The checkout's file map was not what the index held, so it was
+    /// rewritten. False on a no-op reindex, and the fact a query path needs:
+    /// `parsed` cannot answer it, because a deleted or renamed file moves the
+    /// map without giving anything new to read.
+    pub changed: bool,
 }
 
 /// One indexed checkout, as `--status` reports it.
@@ -279,6 +284,7 @@ impl Store {
         // The map is rewritten wholesale. It is one row per file, and a delta
         // would have to be right about deletes and renames to save a few
         // milliseconds.
+        counts.changed = true;
         tx.execute(
             "DELETE FROM file WHERE checkout_id = ?1",
             params![checkout_id],
