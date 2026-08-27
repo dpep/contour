@@ -1,0 +1,40 @@
+# The short-body band: 4-8 line pairs, against a discourse checkout. Same
+# grammar as pairs.tsv; see tests/eval/rails/pairs_short.tsv and the README
+# for why the band is measured apart.
+#
+# DRAFTED BY CLAUDE, NOT YET REVIEWED BY THE OWNER. Every verdict verified by
+# reading both bodies against DEC-020. Measured jaccard noted per row; the
+# threshold is 0.80.
+
+# --- genuine near-duplicates -------------------------------------------------
+# `return` vs `return []` is the only difference (0.69).
+Chat::UpdateMessage#fetch_uploads	Chat::CreateMessage#fetch_uploads	near
+# One add_normalization line dropped in the copy (0.75).
+ImportScripts::Answerbase#add_permalink_normalizations	ImportScripts::Telligent#add_permalink_normalizations	near
+# One guard line added in the copy (0.62).
+Chat::CreateDirectMessageChannel#recompute_users_count	Chat::AddUsersToChannel#recompute_users_count	near
+# One guard line added in the Update twin (0.60).
+DiscourseWorkflows::Workflow::Create#static_data_is_valid_map	DiscourseWorkflows::Workflow::Update#static_data_is_valid_map	near
+# One stores the result in context, one returns it (0.56).
+Chat::LookupUserThreads#fetch_memberships	Chat::LookupChannelThreads#fetch_memberships	near
+# Copy plus two guard lines; the guards read as caller policy, not a
+# different behaviour (0.57).
+Jobs::PullHotlinkedImages#log	FinalDestination#log	near	provisional
+# The two rows the tier DOES catch: when the only edit is a renamed parameter
+# or keyword, the token multiset is unchanged and short length costs nothing
+# (both jaccard 1.0). Shortness alone is not the problem — edits-per-token is.
+Chat::UpdateMessage#index_message	Chat::CreateMessage#index_message	near
+DiscourseWorkflows::Form::Submit#authenticated_if_required	DiscourseWorkflows::Form::Show#authenticated_if_required	near
+
+# --- distinct: same shape, the difference IS the behaviour -------------------
+# Opposite controller actions sharing the fetch-guard-act-render scaffold.
+# Both pairs sit at exactly 0.80 and are currently reported — the band's
+# false-positive edge.
+TopicsController#make_banner	TopicsController#re_pin	distinct
+TopicsController#clear_pin	TopicsController#re_pin	distinct
+# Parallel plugin-preload registries; the bookmark one runs an extra
+# polymorphic step (0.67).
+BookmarkQuery.preload	TopicList.preload	distinct
+# The chat copy dropped the permission guard — and the guard is behaviour
+# (0.57).
+PostItemExcerpt#excerpt	Chat::UserMessageBookmarkSerializer#excerpt	distinct	provisional

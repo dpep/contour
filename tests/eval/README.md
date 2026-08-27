@@ -199,6 +199,29 @@ every labeled collision reported, no false collisions at any size, and one
 deliberate false negative (rwr's 3-line `corpus_dir` sits below
 `--min-lines 4` — the floor's cost, on the record).
 
+## The short-body band: the near tier's limitation, measured
+
+Jaccard is harsher on short bodies — one edited line moves a third of an
+8-line body's tokens — and until now that was a paragraph in the docs rather
+than a number. `pairs_short.tsv` in the rails and discourse sets holds 4–8
+line pairs, same grammar as `pairs.tsv`, kept apart so the band's numbers
+never blur the headline ones. No harness reads the file yet; to measure,
+point `contour eval` at a directory holding it as `pairs.tsv`.
+
+Measured at the calibrated settings (threshold 0.80, `--min-lines 4`):
+
+- **11 of 13 genuine short near-duplicates are missed** (rails 0/5,
+  discourse 2/8). The copies score 0.56–0.76 — a one-line edit in a 5–9 line
+  body lands far below a threshold that was calibrated on longer bodies.
+- **The two the tier does catch are the rename-only pairs** (jaccard 1.0): a
+  changed parameter or keyword name leaves the token multiset intact, so
+  shortness costs nothing. The variable is edits-per-token, not length.
+- **Both labeled false positives sit at exactly 0.80**: opposite controller
+  actions (pin/unpin, banner/pin) whose shared scaffold is most of a short
+  body. Lowering the threshold to recover the misses would let these in —
+  on this evidence the band is not fixable by moving the constant, which is
+  the finding.
+
 ## What discourse adds: do rails-calibrated thresholds transfer?
 
 The rails thresholds were calibrated on one corpus, and a library's twins
