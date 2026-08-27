@@ -10,6 +10,40 @@
 # different files, no shared identifier for grep to catch.
 ActiveRecord::ConnectionAdapters::Quoting#sanitize_as_sql_comment	ActiveRecord::QueryLogs.escape_sql_comment	duplicate
 
+# Byte-identical merge helper, copied when the JDOM backend was added (2009).
+ActiveSupport::XmlMini_JDOM#merge!	ActiveSupport::XmlMini_REXML#merge!	duplicate
+# Identical registration logic in two sibling type maps (HashLookupTypeMap was
+# once a TypeMap subclass; the copy dates from the decoupling).
+ActiveRecord::Type::HashLookupTypeMap#register_type	ActiveRecord::Type::TypeMap#register_type	duplicate
+# Identical GROUP BY builder in two Arel managers.
+Arel::DeleteManager#group	Arel::UpdateManager#group	duplicate
+# The test stub is a deliberate copy of the production method.
+ActionCable::Channel::ConnectionStub#connection_gid	ActionCable::Connection::Identification#connection_gid	duplicate
+# Same constant-coercion helper under two names in two files.
+ActionMailer::Base.observer_class_for	ActionMailer::Previews::ClassMethods#interceptor_class_for	duplicate
+# CollectionSelect does not include CollectionHelpers; it re-pastes its
+# initialize. Both supers reach Tags::Base#initialize, so behaviour matches.
+ActionView::Helpers::Tags::CollectionHelpers#initialize	ActionView::Helpers::Tags::CollectionSelect#initialize	duplicate
+# Identical Arel count query against each table.
+ActiveRecord::InternalMetadata#count	ActiveRecord::SchemaMigration#count	duplicate
+# Identical, and `self.class.new_client` keeps the meaning identical in every
+# copy — the consolidation (one inherited method) exists.
+ActiveRecord::ConnectionAdapters::Mysql2Adapter#connect	ActiveRecord::ConnectionAdapters::PostgreSQLAdapter#connect	duplicate
+ActiveRecord::ConnectionAdapters::PostgreSQLAdapter#connect	ActiveRecord::ConnectionAdapters::SQLite3Adapter#connect	duplicate
+# Identical virtual-type aliasing; both supers reach the same base method.
+ActiveRecord::ConnectionAdapters::PostgreSQL::TableDefinition#new_column_definition	ActiveRecord::ConnectionAdapters::SQLite3::TableDefinition#new_column_definition	duplicate
+# Byte-identical, and the api_link each calls on self is itself an identical
+# copy, so behaviour matches all the way down.
+RailsGuides::Markdown::Renderer#link	RailsGuides::Markdown::EpubRenderer#link	duplicate
+# Identical text, but READ_QUERY resolves to a different regex per adapter, so
+# the copies answer differently for the same SQL. Labeled duplicate because the
+# parameterized consolidation exists and the copies are maintained in sync —
+# but this is the constant-scope cousin of DEC-017, so: provisional.
+ActiveRecord::ConnectionAdapters::MySQL::DatabaseStatements#write_query?	ActiveRecord::ConnectionAdapters::PostgreSQL::DatabaseStatements#write_query?	duplicate	provisional
+# Same shape and same judgment as write_query?: DATE_FORMATS is a different
+# table per class.
+Date#to_fs	Time#to_fs	duplicate	provisional
+
 # --- the `super` pairs: DISTINCT, and the sharpest labels here ---------------
 # Each of these four is byte-identical apart from the method name, and each
 # body ends in `super`. A zero-arg `super` dispatches BY the enclosing
@@ -44,6 +78,25 @@ String#squish	String#squish!	distinct
 # Both drop blanks, but from different receivers with different bodies.
 Enumerable#compact_blank	Hash#compact_blank	distinct
 
+# One raises where the other returns nil, again (the MessageVerifier twin of
+# constantize/safe_constantize): catch_and_raise against catch_and_ignore.
+ActiveSupport::MessageVerifier#verify	ActiveSupport::MessageVerifier#verified	distinct
+# Inverse mapping direction: result[yield(e)] = e against result[e] = yield(e).
+# A bag-of-tokens normalizer sees nearly the same multiset.
+Enumerable#index_by	Enumerable#index_with	distinct
+# Opposite delta: modify_value(name, amount) against modify_value(name, -amount).
+ActiveSupport::Cache::MemoryStore#increment	ActiveSupport::Cache::MemoryStore#decrement	distinct
+# Same guard shape, opposite operator AND swapped guard constants.
+Arel::Visitors::ToSql#visit_Arel_Nodes_LessThan	Arel::Visitors::ToSql#visit_Arel_Nodes_GreaterThan	distinct
+
+# --- the constant-scope pair: DISTINCT, the lexical cousin of DEC-017 --------
+# Byte-identical bodies, but each `prepend TableDefinition` resolves to its own
+# version's nested module, and `super` continues a different ancestor chain —
+# every copy exists to be a distinct link in that chain, so the consolidation a
+# duplicate report offers does not exist. The exact tier currently groups them:
+# this label makes that cost visible rather than blessing it.
+ActiveRecord::Migration::Compatibility::V7_0#compatible_table_definition	ActiveRecord::Migration::Compatibility::V6_1#compatible_table_definition	distinct	provisional
+
 # --- true near-duplicates: copy-paste, then tweaked ---------------------------
 # Each verified by reading both bodies. `near` means the NEAR tier must find it
 # and the exact tier must not — a pair that is merely identical belongs above.
@@ -58,3 +111,19 @@ ApplicationTests::AssetsTest#test_precompile_does_not_hit_the_database	Applicati
 ApplicationTests::QueryLogsTest#boot_app	LoadingTest#boot_app	near
 # Same shape, two libraries: building an options hash for a schema statement.
 ActiveRecord::SchemaDumper.generate_options	ActiveRecord::Migration#table_name_options	near
+# Identical calendar arithmetic; the one drift is `to_date.gregorian.advance`
+# in the Time copy against `to_date.advance` in the DateTime copy.
+DateTime#advance	Time#advance	near
+# The same latency-injecting test stub, copied between two cache-store suites.
+SlowRedis#get	MemCacheStoreTest::SlowDalliClient#get	near
+# Identical except one extra assert_response line in one copy.
+ContentSecurityPolicyIntegrationTest#assert_policy	DefaultContentSecurityPolicyIntegrationTest#assert_policy	near
+# Copied, then one flag flipped: `if remote` became `unless local`.
+FormHelperTest#form_text	FormWithActsLikeFormForTest#form_text	near
+# Two dirty-tracking hooks with the same body modulo parameter names — a
+# literal copy, though they implement different protocol methods.
+ActiveRecord::ConnectionAdapters::PostgreSQL::OID::Macaddr#changed?	ActiveRecord::ConnectionAdapters::PostgreSQL::OID::Macaddr#changed_in_place?	near	provisional
+# Copy-paste-then-tweak where the tweak is the SQL operator (" <= " vs " < ").
+# The tier discloses shape, not equivalence — but whether an operator change
+# still counts as "near" is the owner's policy call.
+Arel::Visitors::ToSql#visit_Arel_Nodes_LessThanOrEqual	Arel::Visitors::ToSql#visit_Arel_Nodes_LessThan	near	provisional

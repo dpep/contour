@@ -65,3 +65,45 @@ the closing characters of a string	String#last
 # --- Hash --------------------------------------------------------------------
 keep only the named keys, changing the hash in place	Hash#slice!
 remove the named keys and hand them back	Hash#extract!
+fill in defaults for options that were not given	Hash#reverse_merge
+copy a nested structure so changes to the copy leave the original alone	Hash#deep_dup
+
+# --- easy on purpose: queries that share tokens with the answer's name -------
+# baseline:name should do well here; the contrast with the sections below is
+# the point.
+pluralize a word	ActiveSupport::Inflector#pluralize
+convert a hash into a query string	Hash#to_query
+how long ago a time was, in words	ActionView::Helpers::DateHelper#time_ago_in_words
+strip html tags out of text	ActionView::Helpers::SanitizeHelper#strip_tags
+retry a failed job	ActiveJob::Exceptions::ClassMethods#retry_on
+turn a number of bytes into a readable size	ActiveSupport::NumberHelper#number_to_human_size
+
+# --- no token shared with the answer's identifier: the thesis case -----------
+treat one item and a list of items the same	Array.wrap
+join a list into prose with commas and a final and	Array#to_sentence
+the value itself when present, otherwise nothing	Object#presence
+call a method only when the receiver responds to it	ActiveSupport::Tryable#try
+make text usable as a url slug	ActiveSupport::Inflector#parameterize
+replace accented characters with their ascii approximation	ActiveSupport::Inflector#transliterate
+fetch the matching row or make one when none exists	ActiveRecord::Relation#find_or_create_by
+reject form submissions that did not originate from our own site	ActionController::RequestForgeryProtection#verify_authenticity_token
+return the visitor to the previous page, with a fallback	ActionController::Redirecting#redirect_back_or_to
+decode signed data, raising when the signature is invalid	ActiveSupport::MessageVerifier#verify
+decode signed data, returning nothing when it has been tampered with	ActiveSupport::MessageVerifier#verified
+remove dangerous markup from user content but keep the safe parts	ActionView::Helpers::SanitizeHelper#sanitize
+prevent quotes and newlines from breaking an inline script tag	ActionView::Helpers::JavaScriptHelper#escape_javascript
+run several updates so they either all commit or all roll back	ActiveRecord::ConnectionAdapters::DatabaseStatements#transaction	provisional
+queue work to happen in the background	ActiveJob::Enqueuing::ClassMethods#perform_later	provisional
+
+# --- behaviour that appears in NO identifier ---------------------------------
+# Retry, memoization, idempotency, escaping, timing: the queries built to
+# separate the summary tier from the identifier tier. The body knows; no name
+# in the corpus says so.
+check two secrets match without leaking timing information	ActiveSupport::SecurityUtils#secure_compare
+make user supplied text safe to render in a page	ActiveSupport::CoreExt::ERBUtil#html_escape	provisional
+retry a database query with backoff after a transient failure	ActiveRecord::ConnectionAdapters::AbstractAdapter#with_raw_connection
+execute the query only once no matter how often it is called	ActiveRecord::Relation#load
+compute a value the first time and reuse the stored result afterwards	ActiveSupport::Cache::Store#fetch
+measure how long a block takes and broadcast the timing to listeners	ActiveSupport::Notifications.instrument
+pretend the clock reads a specific moment during a test	ActiveSupport::Testing::TimeHelpers#travel_to
+stop the clock so it does not advance during a test	ActiveSupport::Testing::TimeHelpers#freeze_time

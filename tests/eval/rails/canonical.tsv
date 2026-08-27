@@ -1,0 +1,36 @@
+# Groups of similar methods where one is unambiguously the canonical
+# implementation, against a rails checkout. Proposed format — no harness reads
+# this yet (see tests/eval/README.md).
+#
+# DRAFTED BY CLAUDE, NOT YET REVIEWED BY THE OWNER. Every verdict below was
+# verified by reading both bodies and `git log` in the rails checkout, never
+# assumed. Veto or amend any line.
+#
+# Format: canonical<TAB>alternate<TAB>evidence[<TAB>provisional]
+# One row per (canonical, alternate) edge; a canonical with two alternates is
+# two rows. `evidence` is comma-joined from a small vocabulary:
+#   older       the canonical predates the alternate in git
+#   delegates   the alternate calls the canonical (directly or via a shim)
+#   mirrors     the alternate is a declared copy of the canonical (test stub)
+#   ex_subclass the alternate's class once inherited the method's home
+
+# escape_sql_comment (2021) re-implements what Quoting had since 2019, in the
+# module the adapters already answer for.
+ActiveRecord::ConnectionAdapters::Quoting#sanitize_as_sql_comment	ActiveRecord::QueryLogs.escape_sql_comment	older
+
+# The REXML backend is the original (2008); the JDOM backend copied its merge
+# helper when it was added (2009).
+ActiveSupport::XmlMini_REXML#merge!	ActiveSupport::XmlMini_JDOM#merge!	older
+
+# register_type lived in TypeMap first (2014-05); HashLookupTypeMap — once a
+# TypeMap subclass — gained its own copy when the two were decoupled for
+# performance (2014-11).
+ActiveRecord::Type::TypeMap#register_type	ActiveRecord::Type::HashLookupTypeMap#register_type	older,ex_subclass
+
+# The channel-test ConnectionStub (2021) copies the production identification
+# helper (2015) so stubbed connections compute the same gid.
+ActionCable::Connection::Identification#connection_gid	ActionCable::Channel::ConnectionStub#connection_gid	older,mirrors
+
+# The view helper is a documented shim: it calls delegate_number_helper_method
+# and adds only the :raise option. The conversion logic lives in ActiveSupport.
+ActiveSupport::NumberHelper#number_to_human_size	ActionView::Helpers::NumberHelper#number_to_human_size	delegates
