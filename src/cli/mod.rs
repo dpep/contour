@@ -471,13 +471,23 @@ fn dupes(
                     println!("\n— {} code, ranked as its own population —", group.class);
                 }
                 population = group.class;
-                // The estimate leads, because it is the order — and every
-                // component it is built from follows, so the order can be
-                // argued with rather than trusted (DEC-010). The `~` is not
-                // decoration: a near consolidation leaves two thin callers
-                // behind, so this is an upper bound.
-                let discount = match group.similarity {
-                    Some(jaccard) => format!(" × {jaccard:.2} jaccard"),
+                // The payoff leads, because it is the order — and everything it
+                // is weighed against follows, so the order can be argued with
+                // rather than trusted (DEC-010). The `~` is not decoration: a
+                // near consolidation leaves two thin callers behind, so this is
+                // an upper bound.
+                //
+                // For a near pair the two node counts are the finding: what
+                // consolidating buys against what it costs. The Jaccard is the
+                // tier's judgment and rides at the end with `how`, where it no
+                // longer reads as the multiplication that produced the payoff —
+                // which it stopped being when the payoff became a measurement.
+                let effort = match group.differing_nodes {
+                    Some(differing) => format!("  ·  {differing} differing"),
+                    None => String::new(),
+                };
+                let judgment = match group.similarity {
+                    Some(jaccard) => format!("  jaccard {jaccard:.2}"),
                     None => String::new(),
                 };
                 let size = match group.nodes {
@@ -493,7 +503,7 @@ fn dupes(
                     other => format!(", {other}"),
                 };
                 println!(
-                    "~{} nodes  ·  {} × ({size}){discount}  [{}{class}]",
+                    "~{} nodes{effort}  ·  {} × ({size})  [{}{class}]{judgment}",
                     group.saves_nodes,
                     group.members.len(),
                     group.how

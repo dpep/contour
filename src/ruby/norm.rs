@@ -35,6 +35,7 @@
 use super::extract::line_index::LineIndex;
 use super::generated;
 use super::node_tag::tag;
+use crate::core::Subtree;
 use crate::hash::{FNV_OFFSET, SEP, fnv1a};
 use ruby_prism::Node;
 use std::collections::HashMap;
@@ -141,10 +142,13 @@ fn def_hash(def: &ruby_prism::DefNode<'_>) -> Normalized {
         }
         None => fnv1a(hash, b"{}"),
     };
-    // Sorted and deduplicated: a signature is a *set*, and Jaccard over it
-    // must not depend on traversal order or on a shape appearing twice.
-    fold.subtrees.sort_unstable();
-    fold.subtrees.dedup();
+    // Sorted and deduplicated by shape: a signature is a *set*, and a measure
+    // over it must not depend on traversal order or on a shape appearing
+    // twice. The first occurrence's size and parent survive — the size is a
+    // function of the shape either way, and see [`Subtree::parent`] for what
+    // keeping one parent costs.
+    fold.subtrees.sort_unstable_by_key(|s| s.hash);
+    fold.subtrees.dedup_by_key(|s| s.hash);
     Normalized {
         hash,
         nodes,
@@ -166,7 +170,7 @@ pub(crate) struct Normalized {
     /// apply `MIN_SUBTREE_NODES` — and a layout-invariant size measure, where
     /// lines are a formatting artefact.
     pub(crate) nodes: u32,
-    pub(crate) signature: Vec<u64>,
+    pub(crate) signature: Vec<Subtree>,
 }
 
 /// Smallest subtree worth remembering, in nodes.
@@ -185,8 +189,8 @@ struct Fold {
     /// The name `super` would dispatch by here — the innermost enclosing
     /// `def`, which changes when the walk descends into a nested one.
     enclosing: Vec<u8>,
-    /// Every subtree hash at or above [`MIN_SUBTREE_NODES`], in walk order.
-    subtrees: Vec<u64>,
+    /// Every subtree at or above [`MIN_SUBTREE_NODES`], in walk order.
+    subtrees: Vec<Subtree>,
 }
 
 impl Fold {
@@ -247,6 +251,11 @@ impl Fold {
             )),
             None => None,
         };
+        // Where this node's own recorded children start, so they can be
+        // stamped with this node's hash once it is known. A parent's hash is
+        // only complete after its children are folded into it, which is why
+        // the link is written on the way back up.
+        let recorded = self.subtrees.len();
         let mut size = 1;
         for child in &children {
             let (child_hash, child_size) = self.node(child);
@@ -257,7 +266,18 @@ impl Fold {
             self.enclosing = outer;
         }
         if size >= MIN_SUBTREE_NODES {
-            self.subtrees.push(hash);
+            for descendant in &mut self.subtrees[recorded..] {
+                // Only the direct children: a grandchild was already stamped
+                // by the child that contains it.
+                if descendant.parent == 0 {
+                    descendant.parent = hash;
+                }
+            }
+            self.subtrees.push(Subtree {
+                hash,
+                nodes: size,
+                parent: 0,
+            });
         }
         (hash, size)
     }
@@ -310,14 +330,50 @@ mod tests {
         map.values().next().unwrap().hash
     }
 
-    /// The signature of the sole method in a snippet.
+    /// The signature of the sole method in a snippet, as shapes.
     fn sig(src: &str) -> Vec<u64> {
+        subtrees(src).iter().map(|s| s.hash).collect()
+    }
+
+    /// The signature with the sizes and parent links the near tier measures by.
+    fn subtrees(src: &str) -> Vec<Subtree> {
         hashes(src.as_bytes())
             .values()
             .next()
             .unwrap()
             .signature
             .clone()
+    }
+
+    /// The near tier measures in nodes, and every one of its sums leans on
+    /// these three facts holding on real parsed Ruby rather than on a fixture.
+    #[test]
+    fn a_signature_carries_a_tree_it_can_be_measured_over() {
+        let src = "def run(a)\n  b = a.fetch(:x)\n  c = b.map { |v| v.to_s }\n  \
+                   log(c, b)\n  c\nend\n";
+        let normalized = hashes(src.as_bytes());
+        let body = normalized.values().next().unwrap();
+        let sig = &body.signature;
+        let sizes: HashMap<u64, u32> = sig.iter().map(|s| (s.hash, s.nodes)).collect();
+
+        // Exactly one root, and it is the whole body — which is what lets the
+        // near tier read a body's size out of its signature.
+        let roots: Vec<&Subtree> = sig.iter().filter(|s| s.parent == 0).collect();
+        assert_eq!(roots.len(), 1, "{sig:?}");
+        assert_eq!(roots[0].nodes, body.nodes);
+
+        for subtree in sig.iter().filter(|s| s.parent != 0) {
+            // A parent is always recorded: it is strictly larger than its
+            // child, so it clears the same floor.
+            let parent = sizes
+                .get(&subtree.parent)
+                .unwrap_or_else(|| panic!("parent of {subtree:?} is not in {sig:?}"));
+            assert!(*parent > subtree.nodes, "{subtree:?} against {parent}");
+        }
+        assert!(
+            sig.iter().all(|s| s.nodes >= MIN_SUBTREE_NODES),
+            "the floor is what keeps the index from degenerating: {sig:?}"
+        );
     }
 
     #[test]

@@ -27,7 +27,7 @@
 /// migration bug. It also makes adding a column free, so nothing needs to be
 /// carried speculatively. See the module header for what this version
 /// deliberately does *not* govern.
-pub(crate) const VERSION: i64 = 9;
+pub(crate) const VERSION: i64 = 10;
 
 /// Applied whole to a fresh database.
 pub(crate) const SCHEMA: &str = r#"
@@ -110,9 +110,17 @@ CREATE TABLE vector (
 -- Keyed by `norm_hash` rather than by unit because it is a pure function of
 -- the body: a clone at ten places is one signature. Derived, so it is rebuilt
 -- freely with the tables above (DEC-016).
+--
+-- `nodes` and `parent_hash` are what make the tier's measure node-denominated
+-- rather than shape-denominated: a shape's size is what consolidating it buys,
+-- and its parent says whether a larger shared shape already counted those same
+-- nodes. Counting shapes instead makes one edit look like many, because a
+-- Merkle fold invalidates every shape above the edit (see `crate::near`).
 CREATE TABLE signature (
   norm_hash    INTEGER NOT NULL,
   subtree_hash INTEGER NOT NULL,
+  nodes        INTEGER NOT NULL,
+  parent_hash  INTEGER NOT NULL,   -- 0 at the body root
   PRIMARY KEY (norm_hash, subtree_hash)
 ) WITHOUT ROWID;
 

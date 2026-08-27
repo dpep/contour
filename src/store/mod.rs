@@ -505,18 +505,25 @@ impl Store {
         Ok(out)
     }
 
-    /// Every stored signature, as `norm_hash -> its subtree hashes`.
+    /// Every stored signature, as `norm_hash -> its sub-shapes`.
     ///
     /// Loaded whole, like `vectors`: the near tier's inverted index needs all
     /// of it, and one query beats a probe per body.
-    pub fn signatures(&self) -> Result<HashMap<u64, Vec<u64>>> {
+    pub fn signatures(&self) -> Result<HashMap<u64, Vec<crate::core::Subtree>>> {
         let mut stmt = self
             .conn
-            .prepare("SELECT norm_hash, subtree_hash FROM signature")?;
+            .prepare("SELECT norm_hash, subtree_hash, nodes, parent_hash FROM signature")?;
         let rows = stmt.query_map([], |r| {
-            Ok((r.get::<_, i64>(0)? as u64, r.get::<_, i64>(1)? as u64))
+            Ok((
+                r.get::<_, i64>(0)? as u64,
+                crate::core::Subtree {
+                    hash: r.get::<_, i64>(1)? as u64,
+                    nodes: r.get(2)?,
+                    parent: r.get::<_, i64>(3)? as u64,
+                },
+            ))
         })?;
-        let mut out: HashMap<u64, Vec<u64>> = HashMap::new();
+        let mut out: HashMap<u64, Vec<crate::core::Subtree>> = HashMap::new();
         for row in rows {
             let (norm_hash, subtree) = row?;
             out.entry(norm_hash).or_default().push(subtree);
@@ -594,11 +601,17 @@ fn insert_blob(tx: &rusqlite::Transaction<'_>, oid: &Oid, blob: &Blob) -> rusqli
         // Idempotent by primary key: the same body reached from a second blob
         // writes the same rows, and a clone writes them once.
         let mut sig = tx.prepare_cached(
-            "INSERT OR IGNORE INTO signature (norm_hash, subtree_hash) VALUES (?1, ?2)",
+            "INSERT OR IGNORE INTO signature (norm_hash, subtree_hash, nodes, parent_hash)
+             VALUES (?1, ?2, ?3, ?4)",
         )?;
         for (norm_hash, subtrees) in &blob.signatures {
             for subtree in subtrees {
-                sig.execute(params![*norm_hash as i64, *subtree as i64])?;
+                sig.execute(params![
+                    *norm_hash as i64,
+                    subtree.hash as i64,
+                    subtree.nodes,
+                    subtree.parent as i64
+                ])?;
             }
         }
     }

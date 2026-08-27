@@ -82,6 +82,10 @@ pub struct Labels {
     pub queries: Vec<QueryLabel>,
     pub pairs: Vec<PairLabel>,
     pub canonical: Vec<CanonicalLabel>,
+    /// The 4–8 line band, in the same grammar as `pairs` and kept apart so its
+    /// numbers never blur the headline ones. This is the population the near
+    /// tier was failing: 0.80 missed 11 of 13 of them.
+    pub short: Vec<PairLabel>,
 }
 
 /// Read `queries.tsv` and `pairs.tsv` from a labeled-set directory.
@@ -108,25 +112,12 @@ pub fn load(dir: &Path) -> Result<Labels> {
         });
     }
 
-    for (line_no, line) in rows(&dir.join("pairs.tsv"))? {
-        let mut fields = line.split('\t').map(str::trim);
-        let (Some(a), Some(b), Some(verdict)) = (fields.next(), fields.next(), fields.next())
-        else {
-            bail!("pairs.tsv:{line_no}: expected `a<TAB>b<TAB>duplicate|near|distinct`");
-        };
-        let verdict = match verdict {
-            "duplicate" => Verdict::Duplicate,
-            "near" => Verdict::Near,
-            "distinct" => Verdict::Distinct,
-            other => bail!("pairs.tsv:{line_no}: `{other}` is not duplicate, near, or distinct"),
-        };
-        labels.pairs.push(PairLabel {
-            a: a.to_string(),
-            b: b.to_string(),
-            verdict,
-            provisional: fields.next() == Some("provisional"),
-        });
-    }
+    labels.pairs = pair_labels(&dir.join("pairs.tsv"), rows(&dir.join("pairs.tsv"))?)?;
+    // Optional, and read into its own bucket: the band is a *population*, not
+    // more of the same labels, and averaging it into the headline is what hid
+    // it for two milestones.
+    let short = dir.join("pairs_short.tsv");
+    labels.short = pair_labels(&short, optional_rows(&short)?)?;
     // Optional: a set may label duplicates without labelling canonicality, and
     // an absent file is a set that says nothing rather than a broken one.
     for (line_no, line) in optional_rows(&dir.join("canonical.tsv"))? {
@@ -151,6 +142,32 @@ pub fn load(dir: &Path) -> Result<Labels> {
         });
     }
     Ok(labels)
+}
+
+/// `a<TAB>b<TAB>duplicate|near|distinct`, one grammar for both pair files.
+fn pair_labels(path: &Path, rows: Vec<(usize, String)>) -> Result<Vec<PairLabel>> {
+    let name = path.file_name().unwrap_or_default().to_string_lossy();
+    let mut out = Vec::new();
+    for (line_no, line) in rows {
+        let mut fields = line.split('\t').map(str::trim);
+        let (Some(a), Some(b), Some(verdict)) = (fields.next(), fields.next(), fields.next())
+        else {
+            bail!("{name}:{line_no}: expected `a<TAB>b<TAB>duplicate|near|distinct`");
+        };
+        let verdict = match verdict {
+            "duplicate" => Verdict::Duplicate,
+            "near" => Verdict::Near,
+            "distinct" => Verdict::Distinct,
+            other => bail!("{name}:{line_no}: `{other}` is not duplicate, near, or distinct"),
+        };
+        out.push(PairLabel {
+            a: a.to_string(),
+            b: b.to_string(),
+            verdict,
+            provisional: fields.next() == Some("provisional"),
+        });
+    }
+    Ok(out)
 }
 
 fn optional_rows(path: &Path) -> Result<Vec<(usize, String)>> {
@@ -253,6 +270,46 @@ pub struct FloorPoint {
     pub distractors_cut: usize,
 }
 
+/// One candidate pair under both measures.
+#[derive(Debug, Clone, Copy, Default)]
+struct Scored {
+    nodes: f32,
+    shapes: f32,
+}
+
+/// How to read one of them, named, so the sweep is a loop over measures rather
+/// than the same block twice.
+type Measure = (&'static str, fn(&Scored) -> f32);
+
+impl Scored {
+    const MEASURES: [Measure; 2] = [("nodes", |s| s.nodes), ("shapes", |s| s.shapes)];
+}
+
+/// One measure at one threshold, against the near labels.
+///
+/// The near tier's equivalent of the relevance-floor sweep, and it exists for
+/// the same reason: a threshold argued from one number that the threshold
+/// itself produced is not calibrated, it is confirmed. Both measures are swept
+/// over the same labels so the choice between them is a comparison rather than
+/// a claim.
+#[derive(Debug, serde::Serialize)]
+pub struct NearPoint {
+    /// `nodes` (what consolidating buys against what it costs) or `shapes`
+    /// (the sub-shape Jaccard this replaces).
+    pub measure: &'static str,
+    pub threshold: f64,
+    pub true_positives: usize,
+    pub false_positives: usize,
+    pub false_negatives: usize,
+    /// The 4–8 line band on its own, from `pairs_short.tsv`. The population the
+    /// change of measure is for, so it is never averaged into the rest.
+    pub short_found: usize,
+    pub short_total: usize,
+    /// Short pairs wrongly reported at this threshold. A recall that costs
+    /// precision is not an improvement, and this is where that shows.
+    pub short_false: usize,
+}
+
 /// How the canonicality signals did against labeled edges.
 #[derive(Debug, Default, serde::Serialize)]
 pub struct CanonicalScore {
@@ -302,6 +359,9 @@ pub struct Report {
     /// The near tier, scored on its own labels. Separate from `dupes` because
     /// the two answer different questions and share no threshold.
     pub near: Dupes,
+    /// Both measures against the near labels, swept — the evidence behind
+    /// `near::NEAR_THRESHOLD`, and behind the choice of what it measures.
+    pub near_sweep: Vec<NearPoint>,
     pub calibration: Calibration,
     pub canonical: CanonicalScore,
     pub provisional_queries: usize,
@@ -441,6 +501,7 @@ pub fn run(
 
     let dupes = score_dupes(store, &root_str, labels, min_lines, &classes)?;
     let near = score_near(store, &root_str, labels, min_lines, &classes)?;
+    let near_sweep = near_sweep(store, &root_str, labels)?;
     Ok(Report {
         corpus: root_str,
         embedder: embedder.kind(),
@@ -450,6 +511,7 @@ pub fn run(
         rankings,
         dupes,
         near,
+        near_sweep,
         calibration: Calibration {
             sweep: sweep(&calibration_answers, &calibration_distractors),
             answers: Distribution::of(&calibration_answers),
@@ -457,7 +519,12 @@ pub fn run(
         },
         canonical: score_canonical(root, labels, &units, &by_id),
         provisional_queries: labels.queries.iter().filter(|q| q.provisional).count(),
-        provisional_pairs: labels.pairs.iter().filter(|p| p.provisional).count(),
+        provisional_pairs: labels
+            .pairs
+            .iter()
+            .chain(&labels.short)
+            .filter(|p| p.provisional)
+            .count(),
         provisional_canonical: labels.canonical.iter().filter(|c| c.provisional).count(),
     })
 }
@@ -604,6 +671,101 @@ fn score_dupes(
 /// `distinct` label above it is a false positive. The `super` pairs
 /// (DEC-017) are the negatives that matter — they score 0.63 and 0.67, and
 /// the threshold has to stay clear of them.
+/// Every labeled near pair scored by both measures, swept across thresholds.
+///
+/// Scored from `near::pairs` directly rather than through `dupes`, so the
+/// numbers are about the *measure* and not about `--min-lines` — which is a
+/// separate knob with its own evidence, and which would otherwise silently
+/// remove the very band this is here to measure.
+fn near_sweep(store: &Store, root: &str, labels: &Labels) -> Result<Vec<NearPoint>> {
+    let units = store.units(root)?;
+    let mut by_id: HashMap<&str, u64> = HashMap::new();
+    let ids: Vec<(String, Option<u64>)> = units
+        .iter()
+        .map(|u| (u.unit.id(), u.unit.norm_hash))
+        .collect();
+    for (id, norm_hash) in &ids {
+        if let Some(hash) = norm_hash {
+            by_id.entry(id).or_insert(*hash);
+        }
+    }
+
+    // Threshold 0: every candidate pair, scored, so the sweep can be taken
+    // over the result rather than by re-running the tier per threshold.
+    let (pairs, _) = crate::near::pairs(&store.signatures()?, 0.0);
+    let mut scores: HashMap<(u64, u64), Scored> = HashMap::new();
+    for pair in &pairs {
+        let scored = Scored {
+            nodes: crate::near::node_ratio(pair.shared_nodes, pair.differing_nodes),
+            shapes: pair.similarity,
+        };
+        scores.insert((pair.a, pair.b), scored);
+        scores.insert((pair.b, pair.a), scored);
+    }
+    let score_of = |label: &PairLabel| -> Option<Scored> {
+        let (a, b) = (by_id.get(label.a.as_str())?, by_id.get(label.b.as_str())?);
+        match a == b {
+            // Identical bodies are the exact tier's, and score 1.0 here by
+            // definition rather than by measurement.
+            true => Some(Scored {
+                nodes: 1.0,
+                shapes: 1.0,
+            }),
+            false => Some(scores.get(&(*a, *b)).copied().unwrap_or_default()),
+        }
+    };
+
+    let mut out = Vec::new();
+    // The measure being replaced is swept over the same labels, so the
+    // comparison is one table rather than two runs somebody has to align.
+    for (measure, pick) in Scored::MEASURES {
+        for step in 5..=19 {
+            let threshold = step as f64 / 20.0;
+            let mut point = NearPoint {
+                measure,
+                threshold,
+                true_positives: 0,
+                false_positives: 0,
+                false_negatives: 0,
+                short_found: 0,
+                short_total: 0,
+                short_false: 0,
+            };
+            let mut count = |label: &PairLabel, short: bool| {
+                let Some(scored) = score_of(label) else {
+                    return;
+                };
+                let value = pick(&scored) as f64;
+                let reported = value >= threshold;
+                match (label.verdict, reported) {
+                    (Verdict::Duplicate, _) => {}
+                    (Verdict::Near, true) => {
+                        point.true_positives += 1;
+                        point.short_found += usize::from(short);
+                    }
+                    (Verdict::Near, false) => point.false_negatives += 1,
+                    (Verdict::Distinct, true) => {
+                        point.false_positives += 1;
+                        point.short_false += usize::from(short);
+                    }
+                    (Verdict::Distinct, false) => {}
+                }
+                if short && label.verdict == Verdict::Near {
+                    point.short_total += 1;
+                }
+            };
+            for label in &labels.pairs {
+                count(label, false);
+            }
+            for label in &labels.short {
+                count(label, true);
+            }
+            out.push(point);
+        }
+    }
+    Ok(out)
+}
+
 fn score_near(
     store: &Store,
     root: &str,
@@ -852,6 +1014,43 @@ pub fn render(report: &Report) {
         n.true_positives,
         n.true_positives + n.false_negatives
     );
+
+    if !report.near_sweep.is_empty() {
+        // Both measures over the same labels, because the question this
+        // milestone asks is which measure, not which number.
+        println!("\nnear-structural calibration (measure × threshold)");
+        println!("  measure  thr   precision      recall         short band");
+        for point in &report.near_sweep {
+            let reported = point.true_positives + point.false_positives;
+            let labeled = point.true_positives + point.false_negatives;
+            if labeled == 0 && reported == 0 {
+                continue;
+            }
+            let short = match point.short_total {
+                0 => "—".to_string(),
+                total => format!(
+                    "{}/{}{}",
+                    point.short_found,
+                    total,
+                    match point.short_false {
+                        0 => String::new(),
+                        wrong => format!("  ({wrong} wrong)"),
+                    }
+                ),
+            };
+            println!(
+                "  {:<8} {:.2}  {:<6} ({}/{})  {:<6} ({}/{})  {short}",
+                point.measure,
+                point.threshold,
+                rate(point.true_positives, reported),
+                point.true_positives,
+                reported,
+                rate(point.true_positives, labeled),
+                point.true_positives,
+                labeled,
+            );
+        }
+    }
 
     println!("\ncalibration");
     println!(

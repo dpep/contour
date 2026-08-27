@@ -44,6 +44,12 @@ pub struct Group {
     /// Nodes in one member's normalized body — the size the payoff estimate
     /// is built from. `None` where `norm_hash` is.
     pub nodes: Option<u32>,
+    /// Nodes that differ between the two bodies: **what consolidating would
+    /// cost**, against `saves_nodes` as what it would buy. Near tier only — an
+    /// exact group has nothing differing, and a field that is always zero
+    /// teaches a reader to stop looking at it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub differing_nodes: Option<u32>,
     /// **Estimated** AST nodes a consolidation would remove: the copies beyond
     /// the first, times the body's node count, discounted by how much shape
     /// they actually share.
@@ -156,7 +162,8 @@ pub fn find(
                 lines: members[0].unit.end_line + 1 - members[0].unit.line,
                 similarity: None,
                 nodes: members[0].unit.nodes,
-                saves_nodes: estimate(members[0].unit.nodes, members.len(), None),
+                differing_nodes: None,
+                saves_nodes: estimate(members[0].unit.nodes, members.len()),
                 canonical: None,
                 class: population(&copies),
                 members: copies,
@@ -237,19 +244,19 @@ pub fn rank(groups: &mut [Group]) {
     });
 }
 
-/// Nodes a consolidation would remove, estimated.
+/// Nodes an exact-tier consolidation would remove: the copies beyond the
+/// first, whole.
 ///
-/// `similarity` is the near tier's Jaccard — already a shared-fraction
-/// estimate over these very nodes, so it doubles as the discount and no second
-/// constant is invented to serve as one. Absent for an exact group, where the
-/// copies are the whole body.
+/// The near tier no longer comes through here. It used to, with the Jaccard as
+/// a discount standing in for "how much of the body is actually shared" — and
+/// M11 turned that into a measurement (`near::Pair::shared_nodes`), so the
+/// stand-in retired rather than being tuned.
 ///
 /// A body with no node count scores zero and sorts last. That is the honest
 /// answer rather than a fallback in some other unit: a report ordered by two
 /// units is ordered by neither.
-fn estimate(nodes: Option<u32>, copies: usize, similarity: Option<f32>) -> u32 {
-    let beyond_the_first = copies.saturating_sub(1) as f32;
-    (nodes.unwrap_or(0) as f32 * beyond_the_first * similarity.unwrap_or(1.0)).round() as u32
+fn estimate(nodes: Option<u32>, copies: usize) -> u32 {
+    nodes.unwrap_or(0) * copies.saturating_sub(1) as u32
 }
 
 /// Near-structural pairs in a checkout, as groups of two.
@@ -277,7 +284,7 @@ pub fn find_near(
 
     // Only bodies actually present in this scope, so a pair cannot be reported
     // between two methods the caller cannot see.
-    let signatures: std::collections::HashMap<u64, Vec<u64>> = store
+    let signatures: std::collections::HashMap<u64, Vec<crate::core::Subtree>> = store
         .signatures()?
         .into_iter()
         .filter(|(norm_hash, _)| by_hash.contains_key(norm_hash))
@@ -319,7 +326,12 @@ pub fn find_near(
                 lines: a.unit.end_line + 1 - a.unit.line,
                 similarity: Some(round2(pair.similarity)),
                 nodes: a.unit.nodes,
-                saves_nodes: estimate(a.unit.nodes, 2, Some(pair.similarity)),
+                differing_nodes: Some(pair.differing_nodes),
+                // Measured, not estimated: `shared_nodes` IS the payoff, where
+                // a body size discounted by a similarity ratio was a stand-in
+                // for it (DEC-020). The two disagree most exactly where it
+                // matters — a pair sharing one big chunk of a long body.
+                saves_nodes: pair.shared_nodes,
                 canonical: None,
                 class: population(&copies),
                 members: copies,
@@ -403,22 +415,19 @@ mod tests {
     /// true, which is the property worth protecting.
     #[test]
     fn the_payoff_estimate_orders_by_what_consolidating_buys() {
-        assert_eq!(estimate(Some(60), 2, None), 60, "one copy removed");
-        assert_eq!(estimate(Some(60), 3, None), 120, "two copies removed");
-        assert_eq!(estimate(Some(100), 2, Some(0.9)), 90, "discounted by shape");
+        assert_eq!(estimate(Some(60), 2), 60, "one copy removed");
+        assert_eq!(estimate(Some(60), 3), 120, "two copies removed");
 
-        let exact = estimate(Some(100), 2, None);
-        assert!(
-            exact > estimate(Some(100), 2, Some(0.9)),
-            "exact beats near"
-        );
-        assert!(
-            estimate(Some(400), 2, Some(0.85)) > exact,
-            "a big near pair still beats a small exact one"
-        );
+        // An exact group beats a near pair of the same body size, because the
+        // near pair only shares part of it — and a big near pair still beats a
+        // small exact one. Both now fall out of a measurement rather than a
+        // discount: a near group's payoff IS its `shared_nodes`.
+        let exact = estimate(Some(100), 2);
+        assert!(exact > 90, "a near pair of this size shares less than all");
+        assert!(340 > exact, "a big near pair still beats a small exact one");
 
         // No node count is no estimate. Falling back to lines here would order
         // one report by two units, which is to order it by neither.
-        assert_eq!(estimate(None, 5, None), 0);
+        assert_eq!(estimate(None, 5), 0);
     }
 }

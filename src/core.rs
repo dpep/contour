@@ -229,6 +229,35 @@ impl ParamKind {
     }
 }
 
+/// One sub-shape inside a normalized body.
+///
+/// The hash alone answers "do these two bodies share this shape". The two
+/// fields beside it are what make a **node-denominated** measure possible: a
+/// shape's size is what consolidating it would buy, and its parent is what says
+/// whether that size has already been counted by a larger shared shape. Without
+/// them the near tier can only count *shapes*, and one edit invalidates every
+/// shape above it — which is precisely why a short body scores badly
+/// (`crate::near`).
+///
+/// Language-neutral like the rest of this module: a second extractor that can
+/// produce sub-shapes produces these.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+pub struct Subtree {
+    pub hash: u64,
+    /// Nodes in this sub-shape. A function of the hash — the fold is a Merkle
+    /// fold, so equal hashes are equal subtrees — but carried because nothing
+    /// downstream could recompute it.
+    pub nodes: u32,
+    /// The hash of the shape immediately containing this one, or 0 at the body
+    /// root. A recorded subtree's parent is always itself recorded: a parent is
+    /// strictly larger than its child, so it clears the same size floor.
+    ///
+    /// One parent is kept for a shape occurring twice in one body under
+    /// different parents. That makes the cover an **under**-count rather than a
+    /// double-count, which is the direction to be wrong in.
+    pub parent: u64,
+}
+
 /// Everything one blob contributes, and how well it parsed.
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
 pub struct Blob {
@@ -238,7 +267,7 @@ pub struct Blob {
     /// Keyed by the hash rather than carried on each [`Unit`] because it is a
     /// pure function of the body: a clone at ten call sites is one signature,
     /// stored once. This is what the near-structural tier compares.
-    pub signatures: std::collections::HashMap<u64, Vec<u64>>,
+    pub signatures: std::collections::HashMap<u64, Vec<Subtree>>,
     pub lines: usize,
     /// Syntax errors the parser reported; the units above are what survived.
     pub parse_errors: usize,

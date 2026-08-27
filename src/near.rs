@@ -8,6 +8,39 @@
 //! (`ruby::norm`). Similarity is Jaccard over those sets, and that number is
 //! the confidence, because here the judgment really is graded (DEC-010).
 //!
+//! ## Two numbers, two jobs
+//!
+//! **Shapes decide; nodes price.** A pair is *called* near-structural by the
+//! shape Jaccard above, and what consolidating it would buy is measured in
+//! nodes — `shared_nodes` against `differing_nodes`, which is DEC-020's
+//! arithmetic done with a measurement instead of a discount. The report ranks
+//! by the second and thresholds on the first.
+//!
+//! That split is not the one M11 set out to build. The ratified direction was
+//! to *replace* the shape measure with the node one, and the labels would not
+//! support it:
+//!
+//! - On rails the shape measure wins clearly — but rails' near labels were
+//!   drawn from this tier's own report at 0.80, which is the circularity
+//!   `tests/eval/README.md` warns about.
+//! - On discourse, whose labels were swept from 0.55 and read, the node measure
+//!   wins modestly in the mid-range (at recall 0.50: 0.64 against 0.56).
+//! - Merged, they are within noise of each other.
+//!
+//! The confound is not fixable by more careful arithmetic: **every positive in
+//! both label sets was surfaced by the shape measure**, at 0.80 on rails and
+//! 0.55 on discourse. A pair the node measure would find and the shape measure
+//! scores below the sweep floor cannot be in the labels at all, so the
+//! comparison can only ever confirm shapes. The label-sourcing rule applies to
+//! a *measure* exactly as it applies to a threshold.
+//!
+//! One hypothesis was tested and rejected rather than assumed: that the node
+//! cover was truncated by `MIN_SUBTREE_NODES`, so lowering the floor to 3 would
+//! let it see the small unchanged material. Measured on discourse, it made the
+//! node measure **worse** — recall 0.94 → 0.72, precision 0.61 → 0.54 — because
+//! small shapes are shared by coincidence and inflate the cover. The floor
+//! stays at 5.
+//!
 //! ## Why there is no pairwise scan
 //!
 //! rails holds ~36k Ruby bodies, which is ~650 million pairs. Comparing them
@@ -29,6 +62,7 @@
 //!
 //! Measured on rails: see [`COMMON_SUBTREE_CAP`].
 
+use crate::core::Subtree;
 use crate::store::{Located, Store};
 use anyhow::Result;
 use std::collections::{HashMap, HashSet};
@@ -50,42 +84,56 @@ pub const COMMON_SUBTREE_CAP: usize = 64;
 
 /// Jaccard at or above which two bodies are called near-structural.
 ///
-/// **The first threshold in contour measured on its own corpus** rather than
-/// inherited or guessed, because this is the first one with labels at both
-/// edges. On rails:
+/// **Recalibrated in M11 against both corpora at once**, by the sweep
+/// `contour eval` now prints. 0.80 came from four labels on each side of one
+/// corpus; this comes from 33 near labels and 20 distinct ones across rails and
+/// discourse, including the 4–8 line band that 0.80 was known to be failing.
 ///
-/// | labeled | pairs | Jaccard |
-/// | ------- | ----- | ------- |
-/// | distinct (the DEC-017 `super` pairs) | 4 | 0.000, 0.000, 0.625, 0.667 |
-/// | near-duplicate (copy-paste-then-tweak) | 4 | 0.905, 0.938, 1.000, 1.000 |
+/// | threshold | precision | recall | short band |
+/// | --------- | --------- | ------ | ---------- |
+/// | 0.80 (was) | 0.68 (17/25) | 0.52 (17/33) | 2/13 |
+/// | **0.70** | **0.71 (22/31)** | **0.67 (22/33)** | **6/13** |
+/// | 0.65 | 0.67 (26/39) | 0.79 (26/33) | 8/13 |
+/// | 0.60 | 0.65 (30/46) | 0.91 (30/33) | 11/13 |
 ///
-/// 0.80 sits in the middle of that 0.24-wide gap, 0.13 above the loudest
-/// negative and 0.11 below the quietest positive. It also cuts the rails
-/// report from 623 groups to 143, which is the difference between a list
-/// somebody reads and a list somebody closes.
+/// 0.70 is the only move that improves **both** axes over 0.80, which is why it
+/// is the one taken without an argument about how to trade them. The curve
+/// below it is real and has no knee — but discourse's near labels were sourced
+/// by sweeping this measure down to 0.55, so recall at 0.65 and below is partly
+/// measuring the sourcing method rather than the tier (`tests/eval/README.md`).
+/// Calibrating into that region would be the mistake DEC-011 exists to stop.
 ///
-/// Still provisional: four labels on each side is a gap, not a distribution.
-/// Widening the labeled set is what would move this number.
+/// **The short band is improved, not fixed: 6 of 13.** M11 tried to fix it with
+/// a change of measure — payoff over effort, node-denominated, the ratified
+/// direction — and the labels could not show it winning. See the module header
+/// and `docs/PLAN.md` for what was measured and what would settle it.
 ///
-/// One property to know before reading any score: **Jaccard is harsher on a
-/// small body.** An edit moves every subtree that contains it, so one added
-/// call costs a short signature a third of itself (measured: 0.67 on an
-/// eight-line pair) and a long one almost nothing (0.94 on the eighteen-line
-/// `assert_queries_match` pair). A single threshold therefore finds long
-/// near-duplicates more readily than short ones. That is a real limitation,
-/// not a bug to route around with a size-dependent threshold — which would be
-/// two thresholds to calibrate instead of one, on the strength of no evidence
-/// at all.
-pub const NEAR_THRESHOLD: f32 = 0.8;
+/// The property behind the band, unchanged: **Jaccard is harsher on a small
+/// body.** An edit invalidates every sub-shape containing it, so one added call
+/// costs a short signature a third of itself and a long one almost nothing. The
+/// node counts on every [`Pair`] are what a reader should weigh against a ratio
+/// that knows nothing about size.
+pub const NEAR_THRESHOLD: f32 = 0.7;
 
-/// Two bodies that are nearly the same shape.
+/// Two bodies that are nearly the same shape, and what consolidating them
+/// would buy against what it would cost.
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct Pair {
     pub a: u64,
     pub b: u64,
-    /// Jaccard over the two signatures. This *is* the confidence: a graded
-    /// judgment reported as the measurement itself (DEC-010).
+    /// **The judgment**: Jaccard over the two signatures' sub-shapes, and the
+    /// measurement itself rather than a mapping of it (DEC-010). Why this and
+    /// not the node measure beside it is the whole of [`NEAR_THRESHOLD`]'s
+    /// second half.
     pub similarity: f32,
+    /// Nodes the two bodies share, counted once: **what consolidating buys.**
+    /// Measured rather than estimated, which is what lets the report rank by
+    /// the payoff itself instead of by a body size discounted by a ratio.
+    pub shared_nodes: u32,
+    /// Nodes that differ across both bodies: **what consolidating costs.** The
+    /// other half of DEC-020's arithmetic, and the number that says whether a
+    /// high similarity is worth acting on.
+    pub differing_nodes: u32,
     pub shared: usize,
 }
 
@@ -118,8 +166,13 @@ pub struct Stats {
 
 /// Every near-structural pair among the given bodies, with the work it took.
 ///
-/// `signatures` is `norm_hash -> subtree hashes`, as the store keeps it.
-pub fn pairs(signatures: &HashMap<u64, Vec<u64>>, threshold: f32) -> (Vec<Pair>, Stats) {
+/// `signatures` is `norm_hash -> its sub-shapes`, as the store keeps it.
+///
+/// **Shapes generate the candidates; nodes make the judgment.** Sharing a
+/// sub-shape is a cheap necessary condition and the inverted index below is
+/// genuinely good at it; how *much* two bodies share is a question about nodes,
+/// which is the half that moved.
+pub fn pairs(signatures: &HashMap<u64, Vec<Subtree>>, threshold: f32) -> (Vec<Pair>, Stats) {
     let mut stats = Stats {
         bodies: signatures.len(),
         exhaustive: signatures.len().saturating_sub(1) * signatures.len() / 2,
@@ -130,7 +183,7 @@ pub fn pairs(signatures: &HashMap<u64, Vec<u64>>, threshold: f32) -> (Vec<Pair>,
     let mut index: HashMap<u64, Vec<u64>> = HashMap::new();
     for (norm_hash, subtrees) in signatures {
         for subtree in subtrees {
-            index.entry(*subtree).or_default().push(*norm_hash);
+            index.entry(subtree.hash).or_default().push(*norm_hash);
         }
     }
     stats.subtrees = index.len();
@@ -155,26 +208,15 @@ pub fn pairs(signatures: &HashMap<u64, Vec<u64>>, threshold: f32) -> (Vec<Pair>,
 
     let mut out: Vec<Pair> = shared
         .into_iter()
-        .filter_map(|((a, b), shared)| {
-            let (sa, sb) = (signatures.get(&a)?.len(), signatures.get(&b)?.len());
-            let union = sa + sb - shared;
-            let similarity = match union {
-                0 => return None,
-                union => shared as f32 / union as f32,
-            };
+        .filter_map(|((a, b), shapes)| {
             // An identical body is the *exact* tier's business, not this one.
             // Reporting it twice under two names makes a reader deduplicate by
             // hand.
-            if similarity >= threshold && a != b {
-                Some(Pair {
-                    a,
-                    b,
-                    similarity,
-                    shared,
-                })
-            } else {
-                None
+            if a == b {
+                return None;
             }
+            let pair = score(a, b, signatures.get(&a)?, signatures.get(&b)?, shapes)?;
+            (pair.similarity >= threshold).then_some(pair)
         })
         .collect();
     out.sort_by(|x, y| {
@@ -183,6 +225,79 @@ pub fn pairs(signatures: &HashMap<u64, Vec<u64>>, threshold: f32) -> (Vec<Pair>,
             .then((x.a, x.b).cmp(&(y.a, y.b)))
     });
     (out, stats)
+}
+
+/// Score one candidate pair: what consolidating it buys, what it costs, and
+/// the ratio between them.
+fn score(a: u64, b: u64, sa: &[Subtree], sb: &[Subtree], shapes: usize) -> Option<Pair> {
+    let hashes = |sig: &[Subtree]| -> HashSet<u64> { sig.iter().map(|s| s.hash).collect() };
+    let (ha, hb) = (hashes(sa), hashes(sb));
+    let shared: HashSet<u64> = ha.intersection(&hb).copied().collect();
+    if shared.is_empty() {
+        return None;
+    }
+    let (nodes_a, nodes_b) = (body_nodes(sa)?, body_nodes(sb)?);
+    let cover_a = cover(sa, &shared);
+    let cover_b = cover(sb, &shared);
+    // The smaller cover, and never more than a body holds. The two can differ,
+    // and either can overshoot, only through the multiplicity `Subtree::parent`
+    // gives up on: a shape occurring twice under different parents keeps one
+    // parent, so its nodes can be counted both on their own and inside a shared
+    // container. Clamping is the honest floor rather than a correction — it can
+    // only under-state how much two bodies share.
+    let shared_nodes = cover_a.min(cover_b).min(nodes_a).min(nodes_b);
+    Some(Pair {
+        a,
+        b,
+        // `shapes` is the count the inverted index arrived at, so a sub-shape
+        // dropped for being too common (`COMMON_SUBTREE_CAP`) is missing from
+        // this numerator while both denominators hold it. The asymmetry
+        // under-states a pair that shares a very common shape, it predates this
+        // milestone, and every threshold ever calibrated — 0.80 then, 0.70 now
+        // — was measured against it. Changing it is a recalibration, not a
+        // tidy-up. The node cover above deliberately does not inherit it: it
+        // counts what the two bodies actually share.
+        similarity: shapes as f32 / (ha.len() + hb.len() - shapes).max(1) as f32,
+        shared_nodes,
+        differing_nodes: (nodes_a - shared_nodes) + (nodes_b - shared_nodes),
+        shared: shapes,
+    })
+}
+
+/// Nodes in the whole body: the one recorded sub-shape with no parent.
+///
+/// The signature describes itself, so nothing has to carry a body's size
+/// alongside it. A body too small to record even its own root has no signature
+/// at all and never reaches here (`Stats::uncovered_small`).
+fn body_nodes(sig: &[Subtree]) -> Option<u32> {
+    sig.iter().find(|s| s.parent == 0).map(|s| s.nodes)
+}
+
+/// Nodes covered by the shared sub-shapes, counted once.
+///
+/// A shared shape whose *parent* is also shared contributes nothing: its nodes
+/// are already inside the parent's count. That test is the whole reason
+/// `Subtree::parent` is stored, and it is what makes this a node count rather
+/// than a shape count — the sum over every shared shape would multiply each
+/// node by its depth.
+fn cover(sig: &[Subtree], shared: &HashSet<u64>) -> u32 {
+    sig.iter()
+        .filter(|s| shared.contains(&s.hash) && !shared.contains(&s.parent))
+        .map(|s| s.nodes)
+        .sum()
+}
+
+/// The node measure, as a ratio: payoff against payoff-plus-effort.
+///
+/// **Not what decides a pair** — see [`NEAR_THRESHOLD`] for the measurement
+/// that settled that, and for why. It is what `contour eval` sweeps as the
+/// `nodes` row, and it is recoverable from the two counts a [`Pair`] carries,
+/// so nothing has to store it.
+pub fn node_ratio(shared_nodes: u32, differing_nodes: u32) -> f32 {
+    match shared_nodes + differing_nodes {
+        0 => 0.0,
+        union => shared_nodes as f32 / union as f32,
+    }
 }
 
 /// A near-structural neighbour, named the way a person reads it.
@@ -210,23 +325,24 @@ pub fn neighbors(
     let Some(mine) = signatures.get(&norm_hash) else {
         return Ok(Vec::new());
     };
-    let mine: HashSet<u64> = mine.iter().copied().collect();
+    let shapes: HashSet<u64> = mine.iter().map(|s| s.hash).collect();
 
     // Score only against bodies that share a sub-shape — same argument as
-    // `pairs`, one body's worth of work.
+    // `pairs`, one body's worth of work, and scored by the same measure so a
+    // neighbour and a duplicate group cannot disagree about one pair.
     let mut scored: HashMap<u64, f32> = HashMap::new();
     for (other, subtrees) in &signatures {
         if *other == norm_hash {
             continue;
         }
-        let shared = subtrees.iter().filter(|s| mine.contains(s)).count();
-        if shared == 0 {
+        let count = subtrees.iter().filter(|s| shapes.contains(&s.hash)).count();
+        if count == 0 {
             continue;
         }
-        let union = mine.len() + subtrees.len() - shared;
-        let similarity = shared as f32 / union.max(1) as f32;
-        if similarity >= threshold {
-            scored.insert(*other, similarity);
+        if let Some(pair) = score(norm_hash, *other, mine, subtrees, count)
+            && pair.similarity >= threshold
+        {
+            scored.insert(*other, pair.similarity);
         }
     }
 
@@ -257,31 +373,125 @@ pub fn neighbors(
 mod tests {
     use super::*;
 
-    fn sigs(entries: &[(u64, &[u64])]) -> HashMap<u64, Vec<u64>> {
-        entries.iter().map(|(k, v)| (*k, v.to_vec())).collect()
+    /// A body as `(shape, nodes, parent)` rows, the way the store keeps it.
+    /// The root carries parent 0 and the whole body's node count.
+    fn body(rows: &[Row]) -> Vec<Subtree> {
+        rows.iter()
+            .map(|(hash, nodes, parent)| Subtree {
+                hash: *hash,
+                nodes: *nodes,
+                parent: *parent,
+            })
+            .collect()
     }
 
+    /// `(shape, nodes, parent)`, as the store keeps a row.
+    type Row = (u64, u32, u64);
+
+    fn sigs(entries: &[(u64, &[Row])]) -> HashMap<u64, Vec<Subtree>> {
+        entries.iter().map(|(k, v)| (*k, body(v))).collect()
+    }
+
+    /// **The two numbers, and why there are two.**
+    ///
+    /// Two pairs, each with the same fraction of the body changed — 20% — but
+    /// one short and flat, one long and deep. The shape measure calls the short
+    /// one 0.33 and the long one 0.60, because a Merkle fold invalidates every
+    /// shape above an edit and a deep body has more shapes for the survivors to
+    /// hide in. The node measure calls both 0.67, which is what they both are.
+    ///
+    /// That gap is the short-body band, and it is why M11 tried to replace the
+    /// judgment with the node ratio. The labels could not support the swap
+    /// (module header), so the shape measure still decides and the node counts
+    /// price the consolidation — but the disagreement is real, and this pins
+    /// it so the next attempt starts from a number rather than from the
+    /// argument.
     #[test]
-    fn similarity_is_jaccard_over_the_signatures() {
-        // A and B share 3 of 4; C shares one with A.
-        let signatures = sigs(&[
-            (1, &[10, 11, 12, 13]),
-            (2, &[10, 11, 12, 99]),
-            (3, &[10, 50, 51, 52]),
+    fn the_same_edit_scores_the_same_whatever_the_body_size() {
+        // Short and flat: 20 nodes, one 3-node child replaced.
+        let short = sigs(&[
+            (
+                1,
+                &[(100, 20, 0), (110, 9, 100), (111, 7, 100), (120, 3, 100)],
+            ),
+            (
+                2,
+                &[(101, 20, 0), (110, 9, 101), (111, 7, 101), (121, 3, 101)],
+            ),
         ]);
-        let (found, _) = pairs(&signatures, 0.5);
-        assert_eq!(found.len(), 1, "only one pair clears 0.5");
-        assert_eq!((found[0].a, found[0].b), (1, 2));
-        // 3 shared of 5 in the union.
-        assert!((found[0].similarity - 0.6).abs() < 1e-6);
-        assert_eq!(found[0].shared, 3);
+        // Long and deep: 200 nodes, one 39-node subtree replaced. The shapes
+        // inside the survivors are what a shape count rewards it for.
+        let long = sigs(&[
+            (
+                3,
+                &[
+                    (200, 200, 0),
+                    (210, 120, 200),
+                    (211, 40, 200),
+                    (212, 39, 200),
+                    (213, 60, 210),
+                    (214, 59, 210),
+                    (215, 20, 211),
+                    (216, 19, 211),
+                ],
+            ),
+            (
+                4,
+                &[
+                    (201, 200, 0),
+                    (210, 120, 201),
+                    (211, 40, 201),
+                    (218, 39, 201),
+                    (213, 60, 210),
+                    (214, 59, 210),
+                    (215, 20, 211),
+                    (216, 19, 211),
+                ],
+            ),
+        ]);
+
+        let one = |signatures: &HashMap<u64, Vec<Subtree>>| -> Pair {
+            let (found, _) = pairs(signatures, 0.0);
+            assert_eq!(found.len(), 1);
+            found.into_iter().next().unwrap()
+        };
+        let (short, long) = (one(&short), one(&long));
+
+        // What decides: the shape measure, which reads the same edit two ways.
+        assert!((short.similarity - 0.333).abs() < 0.01, "{short:?}");
+        assert!((long.similarity - 0.600).abs() < 0.01, "{long:?}");
+
+        // What it costs and buys: nodes, which read it once.
+        assert_eq!((short.shared_nodes, short.differing_nodes), (16, 8));
+        assert_eq!((long.shared_nodes, long.differing_nodes), (160, 80));
+        let ratio = |p: &Pair| node_ratio(p.shared_nodes, p.differing_nodes);
+        assert!((ratio(&short) - 0.667).abs() < 0.01);
+        assert!((ratio(&long) - 0.667).abs() < 0.01);
+    }
+
+    /// A shared shape inside another shared shape contributes nothing: its
+    /// nodes are already counted. Without the parent test, a deep body's nodes
+    /// are multiplied by their depth and the measure exceeds 1.
+    #[test]
+    fn a_shared_shape_inside_a_shared_shape_is_counted_once() {
+        let signatures = sigs(&[
+            (1, &[(10, 30, 0), (11, 20, 10), (12, 9, 11)]),
+            (2, &[(20, 30, 0), (11, 20, 20), (12, 9, 11)]),
+        ]);
+        let (found, _) = pairs(&signatures, 0.0);
+        // 20 nodes shared, not 29: the 9-node shape sits inside the 20-node one.
+        assert_eq!(found[0].shared_nodes, 20);
+        assert_eq!(found[0].differing_nodes, 20, "10 nodes over each body");
     }
 
     /// Bodies sharing no sub-shape are never compared — that is the whole
     /// scale argument, so it needs an assertion rather than a comment.
     #[test]
     fn bodies_sharing_nothing_are_not_candidates() {
-        let signatures = sigs(&[(1, &[10, 11, 12]), (2, &[20, 21, 22])]);
+        let signatures = sigs(&[
+            (1, &[(10, 9, 0), (11, 5, 10), (12, 5, 10)]),
+            (2, &[(20, 9, 0), (21, 5, 20), (22, 5, 20)]),
+        ]);
         let (found, stats) = pairs(&signatures, 0.0);
         assert!(found.is_empty());
         assert_eq!(stats.candidates, 0, "no pair was even scored");
@@ -293,15 +503,35 @@ mod tests {
     #[test]
     fn an_over_common_subtree_is_dropped_from_the_index() {
         let everywhere = 7u64;
-        let mut entries: Vec<(u64, Vec<u64>)> = (0..COMMON_SUBTREE_CAP as u64 + 2)
-            .map(|i| (i, vec![everywhere, 1000 + i]))
+        let mut entries: Vec<(u64, Vec<Subtree>)> = (0..COMMON_SUBTREE_CAP as u64 + 2)
+            .map(|i| {
+                (
+                    i,
+                    body(&[
+                        (i + 5000, 12, 0),
+                        (everywhere, 5, i + 5000),
+                        (1000 + i, 6, i + 5000),
+                    ]),
+                )
+            })
             .collect();
-        // Two bodies that genuinely match, through a sub-shape of their own.
-        entries.push((900, vec![everywhere, 42, 43]));
-        entries.push((901, vec![everywhere, 42, 43]));
-        let signatures: HashMap<u64, Vec<u64>> = entries.into_iter().collect();
+        // Two bodies that genuinely match, through sub-shapes of their own.
+        let two = |root: u64| {
+            body(&[
+                (root, 18, 0),
+                (everywhere, 5, root),
+                (42, 6, root),
+                (43, 6, root),
+            ])
+        };
+        entries.push((900, two(9000)));
+        entries.push((901, two(9001)));
+        let signatures: HashMap<u64, Vec<Subtree>> = entries.into_iter().collect();
 
-        let (found, stats) = pairs(&signatures, 0.5);
+        // A low threshold on purpose: this test is about which pairs are
+        // *generated*, and the two matching bodies each carry a root shape that
+        // differs, so their shape Jaccard is 0.33.
+        let (found, stats) = pairs(&signatures, 0.3);
         assert_eq!(stats.dropped_common, 1);
         // Without the cap this would be thousands of candidate pairs.
         assert_eq!(stats.candidates, 1);
@@ -312,7 +542,7 @@ mod tests {
     /// would make a reader deduplicate two tiers by hand.
     #[test]
     fn a_body_is_not_its_own_neighbour() {
-        let signatures = sigs(&[(1, &[10, 11, 12, 13])]);
+        let signatures = sigs(&[(1, &[(10, 20, 0), (11, 9, 10), (12, 9, 10)])]);
         assert!(pairs(&signatures, 0.0).0.is_empty());
     }
 }
