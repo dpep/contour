@@ -298,6 +298,37 @@ And it defines the labeller's hardest judgement out of existence. Today someone
 has to decide per pair whether the offered refactor is real; with the caveat in
 the output, the tool discloses the uncertainty and the reader applies the rule.
 
+## The recurring shape: identical bodies that mean different things
+
+Worth naming, because it has now arrived three times wearing three different
+faces, and each time it was treated as a one-off:
+
+| what the meaning depends on | corpus | mechanism |
+| --------------------------- | ------ | --------- |
+| the **enclosing name**, via `super` | rails | folded into `norm_hash` (DEC-017) |
+| the **lexical nesting**, via an unqualified constant | rails | a report caveat (DEC-024) |
+| the **method's own name**, via Rails convention | mastodon | nothing yet |
+
+The third is the mastodon set's new false-positive class: byte-identical mailer
+actions — a seven-strong `UserMailer` group, plus `AdminMailer`'s trio — whose
+template lookup and i18n subject key both derive from the method name. The
+bodies are identical and the behaviour is not.
+
+The three mechanisms are not interchangeable, and the reason is instructive.
+`super` is **always** name-dependent, so folding is right. An unqualified
+constant is **sometimes** nesting-dependent, so a caveat is right and a fold
+would destroy 43% of the report. A mailer action is name-dependent **only
+because a framework says so** — and folding the method name into the hash would
+delete the tool's entire premise, since finding the same body under two names is
+what `dupes` is *for*.
+
+So the open question is not "how do we fix mailers". It is whether contour
+should have **one concept** for "this body's meaning depends on where it is
+written", with the fold/caveat choice made per source of dependence, rather than
+a third bespoke answer. DEC-024 already built the machinery a caveat needs; a
+mailer rule would need to know what a mailer is, which is framework knowledge
+contour has so far kept out. Recorded, not ruled.
+
 ## What M11c changed about what we know
 
 Three findings from the milestone's last block of work, each measured and each
