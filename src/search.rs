@@ -510,13 +510,20 @@ fn vectors_for(
         // its own ONNX session, so on a few hundred units that fixed cost IS
         // the run. The pool is meant to pay at corpus scale.
         //
-        // **The rails figure is not yet measured on this path.** Earlier
-        // numbers published for rails (73s and 120s for 54,296 texts) were
-        // taken while `embed_all` was dead code that nothing called, so they
-        // measure the SERIAL loop and were attributed to the pool in error.
-        // Re-measure before quoting anything here; a serial pass over rails
-        // had also failed to finish in ten minutes on a loaded machine, so
-        // the spread on that corpus is wide and load-sensitive.
+        // **The rails figure is not measured on this path, and the pool is
+        // unproven at corpus scale.** Earlier numbers published for rails
+        // (73s and 120s for 54,296 texts) were taken while `embed_all` was
+        // dead code that nothing called, so they measure the SERIAL loop and
+        // were attributed to the pool in error.
+        //
+        // An attempt to re-measure was abandoned after ~4 minutes on a
+        // machine that was compiling concurrently — too dirty to quote in
+        // either direction. So the open question is genuinely open: the pool
+        // may help at 54k units, or the per-thread session load and eight-way
+        // memory may make it *worse* there than the serial loop. It is kept
+        // because it is the structurally correct shape (gqls-proven, and it
+        // removes a per-job session reload), not because it is known to win.
+        // Measure on a quiet machine before trusting it either way.
         //
         // If this needs to be faster, the lever is embedding *less* — a
         // scope-bounded warm — rather than restructuring this loop: `user`
