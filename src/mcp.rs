@@ -377,7 +377,13 @@ fn symbols(args: &Value) -> Result<Value> {
     let file = args["file"]
         .as_str()
         .ok_or_else(|| anyhow::anyhow!("`file` is required"))?;
-    let src = std::fs::read(file)?;
+    let path = Path::new(file);
+    anyhow::ensure!(
+        !path.is_dir(),
+        "{file} is a directory; `symbols` outlines one file"
+    );
+    anyhow::ensure!(path.exists(), "{file} does not exist");
+    let src = std::fs::read(path)?;
     let blob = crate::index::units_at(file, &src)
         .ok_or_else(|| anyhow::anyhow!("no extractor for {file}"))?;
     Ok(json!({

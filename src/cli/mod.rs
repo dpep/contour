@@ -269,7 +269,7 @@ fn dispatch(cli: &Cli) -> Result<i32> {
 fn index(path: Option<&std::path::Path>, format: Format) -> Result<i32> {
     let path = path.unwrap_or(std::path::Path::new(".")).to_path_buf();
     let mut store = crate::store::open_default()?;
-    let (root, counts) = crate::index::index(&mut store, &path)?;
+    let (root, counts) = crate::index::index(&mut store, &path).map_err(known_checkouts)?;
 
     match format {
         Format::Human => println!(
@@ -295,13 +295,35 @@ fn index(path: Option<&std::path::Path>, format: Format) -> Result<i32> {
 /// thing whichever one you hand it to.
 fn scoped(scope: Option<&std::path::Path>) -> Result<(PathBuf, Option<String>)> {
     let here = scope.unwrap_or(std::path::Path::new("."));
-    let root = crate::scan::repo_root(here)?;
+    let root = crate::scan::repo_root(here).map_err(known_checkouts)?;
     let relative = std::fs::canonicalize(here)?
         .strip_prefix(std::fs::canonicalize(&root)?)
         .ok()
         .map(|p| p.to_string_lossy().into_owned())
         .filter(|p| !p.is_empty());
     Ok((root, relative))
+}
+
+/// Add "and here is what contour does know about" to a failure to find a
+/// checkout, which is almost always someone standing in the wrong directory.
+///
+/// Best-effort: if the database cannot be read the original error stands
+/// alone, because an error message is not worth a second error.
+fn known_checkouts(err: anyhow::Error) -> anyhow::Error {
+    let Ok(store) = crate::store::open_default() else {
+        return err;
+    };
+    let Ok(checkouts) = store.status() else {
+        return err;
+    };
+    if checkouts.is_empty() {
+        return err;
+    }
+    let listed: Vec<String> = checkouts
+        .iter()
+        .map(|c| format!("  {}", crate::paths::pretty(&c.root)))
+        .collect();
+    anyhow::anyhow!("{err}\ncontour has indexed:\n{}", listed.join("\n"))
 }
 
 fn dupes(
@@ -622,7 +644,20 @@ fn eval(set: &std::path::Path, min_lines: u32, format: Format) -> Result<i32> {
 }
 
 fn symbols(file: &std::path::Path, format: Format) -> Result<i32> {
-    let src = std::fs::read(file)?;
+    // Named before it is opened. `--symbols` takes a path a person typed, so
+    // its two likely mistakes — a typo and a directory — deserve their own
+    // sentences rather than an `os error 21`.
+    if file.is_dir() {
+        bail!(
+            "{} is a directory; --symbols outlines one file",
+            file.display()
+        );
+    }
+    if !file.exists() {
+        bail!("{} does not exist", file.display());
+    }
+    let src = std::fs::read(file)
+        .map_err(|err| anyhow::anyhow!("cannot read {}: {err}", file.display()))?;
     let path = file.to_string_lossy();
     let Some(blob) = crate::index::units_at(&path, &src) else {
         anyhow::bail!("no extractor for {}", file.display());

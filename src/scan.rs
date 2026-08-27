@@ -122,17 +122,21 @@ pub fn repo_root(path: &Path) -> Result<PathBuf> {
             .filter(|parent| !parent.as_os_str().is_empty())
             .unwrap_or(Path::new("."))
     };
-    // The guidance goes first and git's own words follow it: contour is keyed
-    // by blob OID, so "there is no repository here" is a precondition failure
-    // rather than a git problem, and a caller reading raw `fatal:` output has
-    // been handed a diagnostic instead of an answer.
-    let out = git(dir, &["rev-parse", "--show-toplevel"]).with_context(|| {
-        format!(
-            "{} is not inside a git checkout; contour indexes repositories, \
-             so run it inside one or name one with a path argument",
+    // Two different failures, named apart. A path that does not exist is not a
+    // question about repositories at all, and answering it with git's `fatal:`
+    // about some ancestor directory sends the reader looking in the wrong
+    // place. git's own words are dropped rather than appended: "not a git
+    // repository" is a precondition this tool can state itself, and a trailing
+    // diagnostic is noise wrapped around an answer.
+    if !path.exists() {
+        bail!("{} does not exist", path.display());
+    }
+    let Ok(out) = git(dir, &["rev-parse", "--show-toplevel"]) else {
+        bail!(
+            "{} is not inside a git checkout, and contour indexes repositories",
             dir.display()
-        )
-    })?;
+        );
+    };
     let path = String::from_utf8(out)?.trim().to_string();
     if path.is_empty() {
         bail!("not a git repository: {}", dir.display());

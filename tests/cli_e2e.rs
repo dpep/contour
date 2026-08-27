@@ -318,14 +318,12 @@ fn similar_can_be_pointed_at_a_checkout_from_outside_it() {
     assert_eq!(code, 0);
     assert!(out.contains("Gadget#save"), "got {out:?}");
 
-    // With no path and nowhere to infer one from, the message says what to do
-    // about it before it says what git said.
+    // With no path and nowhere to infer one from, the message names the real
+    // problem rather than repeating git's.
     let (_, err, code) = repo.run_in(&outside, &["similar", "Widget#save"]);
     assert_eq!(code, 2);
-    assert!(
-        err.contains("not inside a git checkout") && err.contains("path argument"),
-        "got {err:?}"
-    );
+    assert!(err.contains("not inside a git checkout"), "got {err:?}");
+    assert!(!err.contains("fatal:"), "got {err:?}");
 }
 
 /// A name that means two units is refused, not quietly resolved to whichever
@@ -387,6 +385,44 @@ end
     let (_, err, code) = repo.run_in(&repo.dir.clone(), &["similar", "pool.rb:999"]);
     assert_eq!(code, 2);
     assert!(err.contains("no unit at pool.rb:999"), "got {err:?}");
+}
+
+/// Every path that cannot be resolved says what is actually wrong, in the
+/// house voice, without git's `fatal:` trailing behind it — and a path that
+/// does not exist is named as that rather than as a repository question.
+/// Found by QA across index/search/dupes/--symbols.
+#[test]
+fn a_path_that_cannot_be_resolved_names_the_real_problem() {
+    let repo = Repo::new(
+        "errors",
+        &[("a.rb", "class A\n  def one\n    1\n  end\nend\n")],
+    );
+    repo.run(&["index"]);
+    let outside = std::env::temp_dir();
+
+    for args in [vec!["search", "anything"], vec!["dupes"], vec!["index"]] {
+        let (_, err, code) = repo.run_in(&outside, &args);
+        assert_eq!(code, 2, "{args:?}");
+        assert!(
+            err.contains("not inside a git checkout"),
+            "{args:?}: {err:?}"
+        );
+        assert!(
+            !err.contains("fatal:"),
+            "{args:?} leaked git's stderr: {err:?}"
+        );
+    }
+
+    // A nonexistent path is a different failure and gets a different sentence.
+    let (_, err, _) = repo.run_in(&outside, &["search", "anything", "/nope/nothing"]);
+    assert!(err.contains("/nope/nothing does not exist"), "{err:?}");
+    // ...and the listing turns "no" into "here is what you probably meant".
+    assert!(err.contains("contour has indexed:"), "{err:?}");
+
+    let (_, err, _) = repo.run_in(&outside, &["--symbols", outside.to_str().unwrap()]);
+    assert!(err.contains("is a directory"), "{err:?}");
+    let (_, err, _) = repo.run_in(&outside, &["--symbols", "/nope/nothing.rb"]);
+    assert!(err.contains("does not exist"), "{err:?}");
 }
 
 /// The summarize loop, driven by replayed answers. No test may make a live API
