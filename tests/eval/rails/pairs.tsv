@@ -36,13 +36,14 @@ ActiveRecord::ConnectionAdapters::PostgreSQL::TableDefinition#new_column_definit
 # copy, so behaviour matches all the way down.
 RailsGuides::Markdown::Renderer#link	RailsGuides::Markdown::EpubRenderer#link	duplicate
 # Identical text, but READ_QUERY resolves to a different regex per adapter, so
-# the copies answer differently for the same SQL. Labeled duplicate because the
-# parameterized consolidation exists and the copies are maintained in sync —
-# but this is the constant-scope cousin of DEC-017, so: provisional.
-ActiveRecord::ConnectionAdapters::MySQL::DatabaseStatements#write_query?	ActiveRecord::ConnectionAdapters::PostgreSQL::DatabaseStatements#write_query?	duplicate	provisional
+# the copies answer differently for the same SQL. Duplicate under the labeling
+# rule: the parameterized consolidation exists and is small, so complexity goes
+# down. Same shape as the constant-scope pair below and the opposite verdict —
+# the shape does not decide, the arithmetic does.
+ActiveRecord::ConnectionAdapters::MySQL::DatabaseStatements#write_query?	ActiveRecord::ConnectionAdapters::PostgreSQL::DatabaseStatements#write_query?	duplicate
 # Same shape and same judgment as write_query?: DATE_FORMATS is a different
-# table per class.
-Date#to_fs	Time#to_fs	duplicate	provisional
+# table per class, and one parameter consolidates them.
+Date#to_fs	Time#to_fs	duplicate
 
 # --- the `super` pairs: DISTINCT, and the sharpest labels here ---------------
 # Each of these four is byte-identical apart from the method name, and each
@@ -92,10 +93,11 @@ Arel::Visitors::ToSql#visit_Arel_Nodes_LessThan	Arel::Visitors::ToSql#visit_Arel
 # --- the constant-scope pair: DISTINCT, the lexical cousin of DEC-017 --------
 # Byte-identical bodies, but each `prepend TableDefinition` resolves to its own
 # version's nested module, and `super` continues a different ancestor chain —
-# every copy exists to be a distinct link in that chain, so the consolidation a
-# duplicate report offers does not exist. The exact tier currently groups them:
-# this label makes that cost visible rather than blessing it.
-ActiveRecord::Migration::Compatibility::V7_0#compatible_table_definition	ActiveRecord::Migration::Compatibility::V6_1#compatible_table_definition	distinct	provisional
+# every copy exists to be a distinct link in that chain, so consolidating needs
+# metaprogramming — complexity up, which the labeling rule calls distinct. The
+# exact tier currently groups them: this label makes that cost visible rather
+# than blessing it.
+ActiveRecord::Migration::Compatibility::V7_0#compatible_table_definition	ActiveRecord::Migration::Compatibility::V6_1#compatible_table_definition	distinct
 
 # --- true near-duplicates: copy-paste, then tweaked ---------------------------
 # Each verified by reading both bodies. `near` means the NEAR tier must find it
@@ -120,10 +122,12 @@ SlowRedis#get	MemCacheStoreTest::SlowDalliClient#get	near
 ContentSecurityPolicyIntegrationTest#assert_policy	DefaultContentSecurityPolicyIntegrationTest#assert_policy	near
 # Copied, then one flag flipped: `if remote` became `unless local`.
 FormHelperTest#form_text	FormWithActsLikeFormForTest#form_text	near
-# Two dirty-tracking hooks with the same body modulo parameter names — a
-# literal copy, though they implement different protocol methods.
-ActiveRecord::ConnectionAdapters::PostgreSQL::OID::Macaddr#changed?	ActiveRecord::ConnectionAdapters::PostgreSQL::OID::Macaddr#changed_in_place?	near	provisional
+# Two dirty-tracking hooks with the same body modulo parameter names. They
+# implement different protocol methods, and one shared two-argument helper with
+# two thin callers consolidates them — exactly the "a few modifications" case
+# the near tier exists to surface.
+ActiveRecord::ConnectionAdapters::PostgreSQL::OID::Macaddr#changed?	ActiveRecord::ConnectionAdapters::PostgreSQL::OID::Macaddr#changed_in_place?	near
 # Copy-paste-then-tweak where the tweak is the SQL operator (" <= " vs " < ").
-# The tier discloses shape, not equivalence — but whether an operator change
-# still counts as "near" is the owner's policy call.
-Arel::Visitors::ToSql#visit_Arel_Nodes_LessThanOrEqual	Arel::Visitors::ToSql#visit_Arel_Nodes_LessThan	near	provisional
+# One method taking the operator consolidates both, so the labeling rule keeps
+# it: a small modification for a real reduction.
+Arel::Visitors::ToSql#visit_Arel_Nodes_LessThanOrEqual	Arel::Visitors::ToSql#visit_Arel_Nodes_LessThan	near

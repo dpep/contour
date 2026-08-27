@@ -143,6 +143,72 @@ Multi-resolution via hierarchy: coarser units, not blurrier methods
   denominator, never a flat score.
 - LSP last.
 
+## Open questions awaiting a decision
+
+Recorded rather than settled. Each has a measurement behind it and none has
+been implemented.
+
+### Context-dependent constants: disclose, do not fold
+
+**The labeling rule** (ratified, and written up in `tests/eval/README.md`): a
+pair is a duplicate iff consolidating it would **reduce net complexity**. A
+consolidation that needs metaprogramming or a behaviour change is not a
+finding; it is a wasted trip.
+
+rails' `Compatibility::V7_0#compatible_table_definition` and its `V6_1` sibling
+are byte-identical and group as exact clones, but each body's unqualified
+`prepend TableDefinition` resolves to its own version module's nested class, and
+each `super` continues a different ancestor chain. Every copy exists to *be* a
+distinct link in that chain, so the offered consolidation does not exist. This
+is DEC-017's cousin, and `--min-lines` cannot fence it: the false collision is
+6 lines and the smallest labeled true duplicate is 5.
+
+DEC-017 folded `super`'s enclosing name into `norm_hash` and that was right,
+because `super` is **always** name-dependent. An unqualified constant is only
+**sometimes** context-dependent, and the difference is measurable rather than
+arguable. On rails' 296 exact groups:
+
+| policy | groups affected |
+| ------ | --------------- |
+| fold the lexical nesting at every unqualified constant read | **splits 127 (43%)** |
+| caveat every group whose bodies read an unqualified constant | flags 165 (56%) |
+| caveat only where such a constant is defined under **more than one** nesting | flags **54 (18%)** |
+
+The fold destroys 43% of the report to fix a population inside 18% of it —
+mostly cross-class clones referencing a top-level `Hash` or `ActiveSupport`,
+which is exactly the detection `norm_hash` excludes the owner in order to get.
+A blanket caveat at 56% is noise nobody reads.
+
+**The proposal is the third row**: leave `norm_hash` alone — no reindex, no
+resummarize, DEC-003's key stays a pure function of the body — and add a
+disclosed caveat tier to the *report* for a group whose members sit under
+different nestings and read a constant that is defined under more than one.
+Knowing which constants those are needs a constant table, which DEC-014 drops
+at the seam; the cheap way is to shell out to `rq`, for which canonicality has
+now set the precedent (measured, degrades to unavailable, never to a guess),
+and the durable way is Phase 3's namespace tree.
+
+It composes with canonicality: a group whose consolidation may not be available
+should not be crowned without saying so.
+
+And it defines the labeller's hardest judgement out of existence. Today someone
+has to decide per pair whether the offered refactor is real; with the caveat in
+the output, the tool discloses the uncertainty and the reader applies the rule.
+
+### `module_function` gives one method two ids
+
+`module_function :secure_compare` is faithfully extracted as two units — a
+private instance method and a public singleton one — because that is what Ruby
+does. `--symbols` on `active_support/security_utils.rb` shows both. `dupes`
+already handles the pair (it groups by *span*, so the two never report as
+clones of each other), but search ranks them as two answers to one question, and
+`Owner#x` and `Owner.x` both name a method a reader thinks of as one thing.
+
+Not fixed, and not obviously a bug: the singleton really is callable and really
+is public where the instance method is not. The question is whether a *unit* is
+a def or a callable entry point, which is DEC-014 territory. Recorded so the
+next person to see a doubled search result knows it is deliberate.
+
 ## Non-goals (for now)
 
 - Languages beyond Ruby and Rust (the extractor seam is pluggable; rq shows

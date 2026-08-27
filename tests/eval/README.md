@@ -68,6 +68,41 @@ The `distinct` rows are the sharp half. Each is a *near* miss that a looser
 normalizer would collide, so if one ever shows up as a duplicate, normalization
 has been over-relaxed.
 
+### The labeling rule
+
+**A pair is a duplicate iff consolidating it would reduce net complexity.**
+Ratified by the owner, and the single question every `duplicate` / `near` /
+`distinct` verdict here answers:
+
+> we're aiming to uncover duplicates as behavior-preserving consolidation
+> candidates. but if elaborate alterations or metaprogramming are required to
+> consolidate, they don't seem like duplicates (at least not worth
+> deduplicating, because we're trying to decrease complexity not increase). a
+> guide: does consolidating two methods reduce/contain complexity? if so,
+> decent candidates. and some near-duplicates can be consolidated with a few
+> modifications... which is great to surface.
+
+This is a **product definition**, not a labelling convenience. `dupes` exists to
+offer a consolidation; a pair whose consolidation does not exist is not a
+finding, it is a wasted trip. What the rule settles here:
+
+- The four `super` pairs (DEC-017) and the `compatible_table_definition`
+  constant-scope pair are **distinct**. Each copy has to stay a separate link in
+  a separate dispatch chain, so consolidating needs metaprogramming or a
+  behaviour change — complexity up.
+- `write_query?` and `to_fs` are **duplicates** despite the same
+  context-dependent-constant shape, because a small parameterization
+  consolidates them — complexity down. The shape does not decide; the
+  arithmetic does.
+- `Macaddr#changed?` / `#changed_in_place?` and the two Arel comparison
+  visitors are **near**: one shared helper, two thin callers. That a few
+  modifications are needed is the point rather than a caveat.
+
+It also fixes what the near tier is *for*. "Same except a few lines" pairs are
+often the **best** consolidation candidates — a small edit for a real
+reduction — so the report's implicit ranking is expected complexity reduction
+per unit of effort, not similarity.
+
 `canonical.tsv` — groups of similar methods where one is unambiguously the
 implementation the others shadow, with the evidence named (Phase 3's
 canonicality signals need ground truth too). One row per (canonical,
