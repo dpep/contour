@@ -1,0 +1,16 @@
+# Expected-abstain canonicality edges, against a discourse checkout. Proposed
+# format — no harness reads this yet; see the README ("Expected abstentions")
+# and tests/eval/mastodon/abstain.tsv for the vocabulary.
+#
+# DRAFTED BY CLAUDE, NOT YET REVIEWED BY THE OWNER.
+
+# Both updaters were added by one commit (cb739f7f2df, 2026-07-16): sibling
+# copies born together, so no copy direction exists for git or anything else
+# to find. Declining is the only right answer. (pairs.tsv labels the pair
+# duplicate — a consolidation exists; canonicality is a different question.)
+PostLocaleUpdater.validate_locale!	TopicLocaleUpdater.validate_locale!	siblings
+
+# Both extractors arrived in one commit (2e3b64fa742, 2026-05-05, "extract
+# text from ODT and ODS document uploads") — the same-commit twin of the
+# byte-identical collect_inline pair in pairs.tsv.
+DiscourseAi::Completions::OdsToText#collect_inline	DiscourseAi::Completions::OdtToText#collect_inline	siblings

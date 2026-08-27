@@ -149,6 +149,25 @@ shim that `delegates` to what it shadows has a different body, so no clone
 group holds it, and it is still a pair worth ranking. The harness ranks each
 labeled pair directly for that reason.
 
+`abstain.tsv` — proposed format, no harness reads it yet — the complement of
+`canonical.tsv`: pairs where declining to crown either side is the CORRECT
+answer, so that abstention has ground truth of its own instead of being
+counted merely apart from wrong (DEC-019 says declining on disagreement is
+the design; this makes that scoreable). One row per pair,
+`a<TAB>b<TAB>why[<TAB>provisional]`, `why` from a small vocabulary:
+
+- `siblings` — both copies born in one commit, so no copy direction exists
+  for any signal to find (rails' two `write_query?` adapter copies, f39d72d526;
+  discourse's two locale updaters, cb739f7f2df).
+- `front_doors` — each copy is the live entry point of its own stack, and
+  the true home is an extraction that has not happened yet (mastodon's rack
+  vs sidekiq socket cleanup).
+
+A pair may appear in `pairs.tsv` as `duplicate` and here as expected-abstain:
+"consolidate these" and "neither is the original" are different questions,
+and the sibling rows are exactly where both are true. When the harness learns
+to read this file, naming either side of a row scores as wrong.
+
 `similar.tsv` — ground truth for `contour similar`, the flagship agent tool,
 which until now had none. Proposed the way `canonical.tsv` was: file first,
 harness later. One row per (probe, assertion):

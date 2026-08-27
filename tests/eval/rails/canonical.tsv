@@ -34,3 +34,7 @@ ActionCable::Connection::Identification#connection_gid	ActionCable::Channel::Con
 # The view helper is a documented shim: it calls delegate_number_helper_method
 # and adds only the :raise option. The conversion logic lives in ActiveSupport.
 ActiveSupport::NumberHelper#number_to_human_size	ActionView::Helpers::NumberHelper#number_to_human_size	delegates
+
+# Same shim family, one sibling over: the view helper is one
+# delegate_number_helper_method call.
+ActiveSupport::NumberHelper#number_to_human	ActionView::Helpers::NumberHelper#number_to_human	delegates
