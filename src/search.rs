@@ -497,7 +497,12 @@ fn resolve(units: &[Located], target: &str) -> Result<usize> {
         .map(|(i, _)| i)
         .collect();
     match matches.as_slice() {
-        [] => bail!("no unit named `{target}` in this checkout"),
+        [] => match nearest(units, target) {
+            // A typo is the likeliest reason a name misses, and the index
+            // already holds every alternative. Offering three costs one pass.
+            Some(near) => bail!("no unit named `{target}` in this checkout. Did you mean:\n{near}"),
+            None => bail!("no unit named `{target}` in this checkout"),
+        },
         [only] => Ok(*only),
         many => {
             let listed: Vec<String> = many
@@ -516,6 +521,46 @@ fn resolve(units: &[Located], target: &str) -> Result<usize> {
             )
         }
     }
+}
+
+/// The closest few ids to a name that missed.
+///
+/// Scored by how much of the typed name the candidate contains, in order —
+/// enough to catch a transposition or a dropped letter, and deliberately not a
+/// full edit distance, which would be a second ranking to calibrate for a
+/// message nobody reads twice.
+fn nearest(units: &[Located], target: &str) -> Option<String> {
+    let wanted = target.to_lowercase();
+    let mut scored: Vec<(usize, String)> = units
+        .iter()
+        .map(|u| u.unit.id())
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .filter_map(|id| {
+            let overlap = common_prefix(&wanted, &id.to_lowercase());
+            // Three quarters of the typed name has to match. At a half, every
+            // sibling in the same class qualified on the shared owner alone,
+            // and `method_mising` suggested `other`.
+            (overlap * 4 >= wanted.len() * 3).then_some((overlap, id))
+        })
+        .collect();
+    if scored.is_empty() {
+        return None;
+    }
+    scored.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
+    Some(
+        scored
+            .iter()
+            .take(3)
+            .map(|(_, id)| format!("  {id}"))
+            .collect::<Vec<_>>()
+            .join("\n"),
+    )
+}
+
+/// How many leading bytes two names share.
+fn common_prefix(a: &str, b: &str) -> usize {
+    a.bytes().zip(b.bytes()).take_while(|(x, y)| x == y).count()
 }
 
 /// Token overlap between a query and a unit's humanized name.

@@ -80,7 +80,22 @@ pub fn open_default() -> Result<Store> {
 
 impl Store {
     pub fn open(path: &Path) -> Result<Store> {
-        Store::init(Connection::open(path)?)
+        let conn = Connection::open(path)?;
+        // SQLite opens lazily, so the first statement is what discovers a file
+        // that is not a database at all. Probing here keeps that failure apart
+        // from the one `init` raises for a purchased schema it does not know —
+        // which must never be answered with "delete it and reindex", because
+        // deleting it is exactly what DEC-016 refuses to do.
+        conn.pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0))
+            .map_err(|err| {
+                anyhow::anyhow!(
+                    "{} is not a readable database ({err}). If it is corrupt, move it \
+                     aside and reindex — everything but summaries rebuilds from local \
+                     bytes.",
+                    path.display()
+                )
+            })?;
+        Store::init(conn)
     }
 
     pub fn open_in_memory() -> Result<Store> {
