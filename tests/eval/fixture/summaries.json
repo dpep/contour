@@ -247,5 +247,49 @@
     "patterns": [
       "guard clause"
     ]
+  },
+  "Dispatcher#send_reminder": {
+    "summary": "Emails an overdue notice, trying again after a growing pause when the mail server rejects it, and giving up after the third attempt.",
+    "primary_purpose": "overdue notification delivery",
+    "secondary_concerns": [
+      "retry",
+      "exponential backoff",
+      "attempt cap"
+    ],
+    "side_effects": [
+      "network",
+      "raises"
+    ],
+    "domain": "billing",
+    "patterns": [
+      "retry with backoff"
+    ]
+  },
+  "Dispatcher#rates": {
+    "summary": "Returns exchange rates keyed by currency code, computing them on the first call and reusing that result afterwards.",
+    "primary_purpose": "exchange rate lookup",
+    "secondary_concerns": [
+      "caching"
+    ],
+    "side_effects": [],
+    "domain": "billing",
+    "patterns": [
+      "memoization"
+    ]
+  },
+  "Dispatcher#close": {
+    "summary": "Marks an accounting period closed, and does nothing if it was already closed, so repeating the call changes nothing.",
+    "primary_purpose": "period closing",
+    "secondary_concerns": [
+      "idempotency"
+    ],
+    "side_effects": [
+      "persists"
+    ],
+    "domain": "billing",
+    "patterns": [
+      "guard clause",
+      "idempotent write"
+    ]
   }
 }

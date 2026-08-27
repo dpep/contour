@@ -37,6 +37,14 @@ const HF_TOKENIZER_FILE: &str = "tokenizer.json";
 pub(crate) struct OnnxEmbedder {
     session: Mutex<Session>,
     tokenizer: Tokenizer,
+    /// Which model this is, for the vector cache key.
+    ///
+    /// LOCAL ADDITION to the vendored file. DEC-005 says `kind() + model` keys
+    /// every vector, and without this the trait's default `model()` returned
+    /// an empty string for every ONNX embedder alike — so two different models
+    /// would have shared a key and served each other's vectors. The bug was
+    /// invisible because only one model has ever been used.
+    model: String,
 }
 
 impl OnnxEmbedder {
@@ -47,7 +55,7 @@ impl OnnxEmbedder {
         ensure_ort_dylib();
 
         if let Some(spec) = spec {
-            return match resolve(spec).and_then(|(m, t)| Self::from_files(&m, &t, workload)) {
+            return match resolve(spec).and_then(|(m, t)| Self::from_files(&m, &t, workload, spec)) {
                 Some(e) => Some(e),
                 None => {
                     log::debug!("--model {spec}: could not load");
@@ -58,23 +66,25 @@ impl OnnxEmbedder {
 
         if let Some(dir) = std::env::var_os("CONTOUR_MODEL_DIR") {
             let dir = PathBuf::from(dir);
+            let name = dir.to_string_lossy().into_owned();
             return Self::from_files(
                 &dir.join("model.onnx"),
                 &dir.join("tokenizer.json"),
                 workload,
+                &name,
             );
         }
         let (model, tokenizer) = fetch_from_hub(DEFAULT_HF_REPO)?;
-        Self::from_files(&model, &tokenizer, workload)
+        Self::from_files(&model, &tokenizer, workload, DEFAULT_HF_REPO)
     }
 
-    fn from_files(model: &Path, tokenizer: &Path, workload: Workload) -> Option<Self> {
+    fn from_files(model: &Path, tokenizer: &Path, workload: Workload, name: &str) -> Option<Self> {
         let model = std::fs::read(model).ok()?;
         let tokenizer = std::fs::read(tokenizer).ok()?;
-        Self::from_bytes(&model, &tokenizer, workload)
+        Self::from_bytes(&model, &tokenizer, workload, name)
     }
 
-    fn from_bytes(model: &[u8], tokenizer: &[u8], workload: Workload) -> Option<Self> {
+    fn from_bytes(model: &[u8], tokenizer: &[u8], workload: Workload, name: &str) -> Option<Self> {
         if model.is_empty() {
             return None;
         }
@@ -87,6 +97,7 @@ impl OnnxEmbedder {
         Some(Self {
             session: Mutex::new(session),
             tokenizer,
+            model: name.to_string(),
         })
     }
 
@@ -137,6 +148,10 @@ impl OnnxEmbedder {
 }
 
 impl Embedder for OnnxEmbedder {
+    fn model(&self) -> &str {
+        &self.model
+    }
+
     fn kind(&self) -> &'static str {
         "onnx"
     }

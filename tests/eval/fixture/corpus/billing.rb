@@ -26,3 +26,32 @@ class Receipt
     entries.sum { |entry| entry.quantity * entry.unit_cents }
   end
 end
+
+class Dispatcher
+  # Behaviour that no identifier reveals: the retry, the backoff, the cap.
+  def send_reminder(invoice)
+    attempts = 0
+    begin
+      attempts += 1
+      Mailer.overdue(invoice).deliver_now
+    rescue Net::SMTPError
+      sleep(2**attempts)
+      retry if attempts < 3
+      raise
+    end
+  end
+
+  # Behaviour that no identifier reveals: the result is cached after the
+  # first call, so repeated calls cost nothing.
+  def rates
+    @rates ||= Currency.all.index_by(&:code)
+  end
+
+  # Behaviour that no identifier reveals: calling this twice is the same as
+  # calling it once.
+  def close(period)
+    return period if period.closed_at
+    period.update!(closed_at: Time.now)
+    period
+  end
+end

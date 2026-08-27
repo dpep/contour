@@ -29,6 +29,20 @@ how much space a shape encloses	Polygon#area
 distance around the outside of a shape	Polygon#perimeter
 the middle point of a shape	Polygon#centroid
 
+# --- behaviour no identifier reveals ----------------------------------------
+# The tier-separating class. Each of these names something that is in the BODY
+# and nowhere in the name, the owner, or the parameters — so the identifier
+# tier is structurally unable to answer them and the summary tier should.
+#
+# At 21 units the two tiers score the same, which says the corpus is too small
+# and too well-named to separate them, not that summaries are worthless. These
+# rows are here so that when the corpus grows, the eval can show a difference
+# it currently cannot.
+retries a few times before giving up	Dispatcher#send_reminder
+waits longer after each failed attempt	Dispatcher#send_reminder
+computed once and remembered for later calls	Dispatcher#rates
+safe to call twice with the same result	Dispatcher#close
+
 # --- inventory -------------------------------------------------------------
 hold stock for a customer before checkout	Warehouse#reserve
 how many units can still be sold	Warehouse#available

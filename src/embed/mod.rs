@@ -82,6 +82,45 @@ impl From<Workload> for onnx::Workload {
     }
 }
 
+/// Embed many texts at once, one embedder per worker thread.
+///
+/// Adapted from gqls's `Session::rank`, including the trap it documents:
+/// rayon's `map_init` rebuilds its state per **job split** — roughly once per
+/// item — which reloads the ONNX session tens of thousands of times on a large
+/// corpus. A `thread_local` caps it at one per worker, which is the entire
+/// point, because a session is expensive to build and the vendored embedder
+/// holds exactly one behind a mutex.
+///
+/// That mutex is also why this cannot simply parallelise around a shared
+/// `&dyn Embedder`: every thread would serialise on it. One embedder per
+/// thread is what actually buys the parallelism.
+///
+/// `Workload::Bulk` on purpose: rayon is already running an inference per
+/// core, so intra-op threads on top of that only oversubscribe — measured by
+/// gqls at ~19% slower when set the other way.
+///
+/// Order-preserving, so the result stays index-aligned with `texts`.
+pub fn embed_all(spec: Option<&str>, texts: &[String]) -> Vec<Vec<f32>> {
+    use rayon::prelude::*;
+    use std::cell::RefCell;
+
+    thread_local! {
+        static LOCAL: RefCell<Option<Box<dyn Embedder>>> = const { RefCell::new(None) };
+    }
+    // `spec` is constant for a process, so every worker resolves the same
+    // embedder kind and no run can mix onnx and hash vectors into one index.
+    texts
+        .par_iter()
+        .map(|text| {
+            LOCAL.with(|cell| {
+                let mut slot = cell.borrow_mut();
+                let embedder = slot.get_or_insert_with(|| default_embedder(spec, Workload::Bulk));
+                mrl::compress_matryoshka_vector(&embedder.embed(text))
+            })
+        })
+        .collect()
+}
+
 /// Deterministic embedder via signed feature hashing over word tokens.
 #[derive(Default, Clone, Copy, Debug)]
 pub struct HashEmbedder;

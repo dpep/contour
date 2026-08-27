@@ -496,21 +496,33 @@ fn vectors_for(
     if !missing.is_empty() {
         // A cold corpus is a long wait, and a silent one reads as a hang.
         //
-        // Measured, and the honest state of this path. The loop below is
-        // sequential, and the vendored ONNX embedder holds one session behind
-        // a mutex, so parallelising the loop alone would not help.
+        // Measured, and worth reading before changing anything here.
         //
-        // Release build, ONNX: contour's own 529 units embed in 3.3 s (~160/s).
-        // rails' 54,296 units had NOT finished after ten minutes, so the cost
-        // is worse than that rate predicts and the nonlinearity is unexplained
-        // — do not quote an extrapolation. The hash embedder does the same
-        // corpus in about 7 s, which is the tradeoff: fast and untrained
-        // against slow-to-warm and good.
+        // Release build, ONNX, this machine (8 cores):
         //
-        // gqls solves this with a thread-local pool of embedders plus
-        // `Workload::Bulk`; porting that is the fix, and the measurement above
-        // is what justifies doing it. Until then the cost is disclosed rather
-        // than hidden.
+        // | corpus  | units  | wall  | cpu   | rate    |
+        // |---------|--------|-------|-------|---------|
+        // | contour |    529 |  3.7s | 14.5s |  143/s  |
+        // | trekr   |  1,469 | 12.6s | 47.0s |  117/s  |
+        // | rails   | 54,296 | 120s  | 7m51s |  452/s  |
+        //
+        // The small corpora are SLOWER per unit, which looks wrong and is not:
+        // each worker thread loads its own ONNX session, and on a few hundred
+        // units that fixed cost is most of the run. rails is where the real
+        // throughput shows.
+        //
+        // Before the thread-local pool, a serial pass over rails had not
+        // finished after ten minutes when it was killed — so the pool is a
+        // large win at corpus scale and roughly a wash below a few thousand
+        // units. (The rails figure above is one completed run; a confirming
+        // re-run was abandoned for time, so treat it as a single measurement
+        // rather than an average.)
+        //
+        // Two minutes is still two minutes. If this needs to be faster the
+        // lever is embedding *less* — a scope-bounded warm — rather than
+        // restructuring this loop again: at 452/s the machine is already
+        // saturated, and `user` being 3.9x `wall` says the parallelism is
+        // real.
         if missing.len() > 2_000 {
             eprintln!(
                 "contour: embedding {} texts with the {} embedder — this is a one-time \

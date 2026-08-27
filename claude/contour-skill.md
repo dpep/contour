@@ -166,11 +166,9 @@ contour index                 # cheap and idempotent; a no-op reindex parses not
 ```
 
 Indexing is fast (rails: ~3 s for 3,300 files). The first `search` on a fresh
-corpus embeds every identifier once and caches the result. With the ONNX
-embedder that is quick on a normal repo (~530 units in ~3 s) but **slow on a
-very large one** — rails, at 54k units, takes many minutes. contour prints a
-notice before a long pass. If you hit it, either let it warm once or use a
-`scope` to bound the work.
+corpus embeds every identifier once and caches the result: a few seconds on a
+normal repo, about two minutes on something the size of rails (54k callables).
+contour prints a notice before a long pass. Every query after it is instant.
 
 Ruby gets full AST-grade normalization. Rust gets a token-stream tier that
 catches copy-paste and reformatting but not renames, and says so

@@ -67,6 +67,11 @@ Initial skeleton — nothing has been released, so everything below is new.
   Contributions are keyed by the contributing model with `via = mcp`, so they
   never mix into a uniform fill (DEC-018). **Migrates the summary table** — the
   first migration of the purchased half, rather than a drop.
+- The cold embed pass now uses one embedder per worker thread, so a corpus
+  warms in parallel rather than serially through a single mutexed ONNX session.
+- ONNX embedders now report which model they are, so two different models can
+  no longer share a vector cache key (DEC-005 said they must not; the default
+  `model()` had quietly made them).
 - **An identifier tier makes search work with zero LLM spend.** Every unit's
   humanized name, owner and parameters are embedded locally, so a fresh
   checkout is searchable in English immediately. Summaries are now an upgrade

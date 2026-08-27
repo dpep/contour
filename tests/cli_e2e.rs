@@ -537,7 +537,7 @@ fn eval_scores_a_labeled_set() {
     let contour = &report["rankings"][0];
     assert_eq!(contour["label"], "contour");
     assert_eq!(contour["unknown"], 0, "a label names a unit that is gone");
-    assert_eq!(contour["total"], 18);
+    assert_eq!(contour["total"], 22);
     // contour, contour:identifier, and the two baselines.
     assert_eq!(report["rankings"].as_array().map(Vec::len), Some(4));
     assert_eq!(report["rankings"][1]["label"], "contour:identifier");

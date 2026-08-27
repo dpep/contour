@@ -27,10 +27,23 @@ in the last column and are counted separately in the report.
 | `fixture/` | `fixture/corpus/` — 21 methods, in-repo | nothing; runs in CI |
 | `rails/` | a rails checkout | real summaries, so an API key |
 
-`fixture/` exists to prove the machinery, not to calibrate anything: 21 units
-across four domains is far too small and too thematically dense for the
+`fixture/` exists to prove the machinery, not to calibrate anything: two dozen
+units across four domains is far too small and too thematically dense for the
 distractor distribution to mean anything. Read its numbers as "the harness
 computes what it claims to", never as evidence about a threshold.
+
+It does now separate the two vector tiers, which it originally could not. Four
+queries name behaviour that appears in a body and nowhere in a name — a retry
+with backoff, a memoized lookup, an idempotent write — and the identifier tier
+is structurally unable to answer them:
+
+| ranking | top1 | top5 | found |
+| ------- | ---- | ---- | ----- |
+| contour (summaries where they exist) | 0.27 | 0.55 | 22/22 |
+| contour:identifier (names only) | 0.23 | 0.45 | 21/22 |
+
+That is what summaries buy, on a corpus small enough that the honest headline
+is still "too small to conclude from".
 
 ## Format
 
