@@ -1193,17 +1193,33 @@ pub fn render(report: &Report) {
         "\nnear-structural (jaccard >= {:.2})",
         crate::near::NEAR_THRESHOLD
     );
-    println!(
-        "  precision {} ({}/{})   recall {} ({}/{})",
-        rate(n.true_positives, n.true_positives + n.false_positives),
-        n.true_positives,
-        n.true_positives + n.false_positives,
-        rate(n.true_positives, n.true_positives + n.false_negatives),
-        n.true_positives,
-        n.true_positives + n.false_negatives
-    );
+    // A set with no near labels has no near numbers, and printing `n/a` on
+    // both axes says that four times over where one sentence says it once.
+    // The distinct labels still hold the tier to account, so what it wrongly
+    // reported is worth a line even here.
+    let near_labeled = n.true_positives + n.false_negatives;
+    match near_labeled {
+        0 => match n.false_positives {
+            0 => println!("  no near labels in this set, and the tier claimed nothing"),
+            wrong => println!(
+                "  no near labels in this set; the tier claimed {wrong} pair(s) labeled distinct"
+            ),
+        },
+        _ => println!(
+            "  precision {} ({}/{})   recall {} ({}/{})",
+            rate(n.true_positives, n.true_positives + n.false_positives),
+            n.true_positives,
+            n.true_positives + n.false_positives,
+            rate(n.true_positives, near_labeled),
+            n.true_positives,
+            near_labeled
+        ),
+    }
 
-    if !report.near_sweep.is_empty() {
+    // The sweep exists to place a threshold against labeled near pairs. With
+    // none, every row reads `n/a` at a different number, which looks like
+    // twelve measurements and is none.
+    if !report.near_sweep.is_empty() && near_labeled > 0 {
         // Both measures over the same labels, because the question this
         // milestone asks is which measure, not which number.
         println!("\nnear-structural calibration (measure × threshold)");
