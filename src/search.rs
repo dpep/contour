@@ -26,6 +26,17 @@ const RRF_K: f64 = 60.0;
 /// whose summary is most poetic about invoices.
 const SEMANTIC_WEIGHT: f64 = 0.7;
 
+// Open question, recorded here because this is where a ranking change lands:
+// **test code ranks alongside the implementation it tests.** On berater,
+// "limit how many things can run at once" returns `spec/riddle_spec.rb:13
+// limit` above `Berater::Limiter#limit` — a spec defines a helper with the
+// obvious name, and nothing tells the ranker that a caller almost never wants
+// it. A path-shaped discount (`spec/`, `test/`) is the cheap fix and would
+// have to be disclosed rather than silent, since "why is my test not in the
+// results" is a worse surprise than the one it fixes. Left unbuilt on purpose:
+// DEC-011 says a ranking constant comes from the eval set, and no labeled query
+// currently expects a test method either way.
+
 /// Cosine below which a hit is not an answer to anything — but only for an
 /// embedder this was measured for.
 ///
