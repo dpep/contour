@@ -1,0 +1,22 @@
+# Ground truth for `contour similar`, against a berater checkout
+# (~/code/lib/ruby/berater) — the method-family case the tool was built for:
+# one `acquire_lock` contract, sibling implementations across limiter classes.
+# Proposed format — no harness reads this yet; see tests/eval/rails/similar.tsv
+# for the row grammar.
+#
+# DRAFTED BY CLAUDE, NOT YET REVIEWED BY THE OWNER. Every case was verified by
+# running `contour similar <probe>` from a berater checkout AND reading the
+# bodies. Veto or amend any line.
+
+# Probing one implementation must surface its siblings. The bodies genuinely
+# differ (different lua scripts, different capacity math), so semantic is the
+# honest tier.
+Berater::ConcurrencyLimiter#acquire_lock	must	Berater::RateLimiter#acquire_lock	semantic
+Berater::ConcurrencyLimiter#acquire_lock	must	Berater::StaticLimiter#acquire_lock	semantic
+
+# CURRENTLY FAILING, both: with identifier-only vectors, same-class noise
+# outranks two of the real siblings — a to_s (cos 0.82) and an attr_reader
+# (Lock#capacity, 0.83) above Limiter#acquire_lock. Neither says anything
+# about acquiring; neither belongs in the neighbour list at all.
+Berater::ConcurrencyLimiter#acquire_lock	must_not	Berater::ConcurrencyLimiter#to_s
+Berater::ConcurrencyLimiter#acquire_lock	must_not	Berater::Lock#capacity

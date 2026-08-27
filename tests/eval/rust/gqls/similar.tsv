@@ -1,0 +1,10 @@
+# Ground truth for `contour similar`, against a gqls checkout. Proposed
+# format — see tests/eval/rails/similar.tsv for the row grammar.
+#
+# DRAFTED BY CLAUDE, NOT YET REVIEWED BY THE OWNER.
+
+# The rename-blind duplicate from pairs.tsv, asked the similar way: the
+# identifier tier is the only one that can surface it today, and does — at
+# cos 0.58, a thin margin over unrelated case helpers. Real normalization
+# would upgrade the tier to structural.
+pascal_case	must	to_pascal	semantic

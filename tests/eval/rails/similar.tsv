@@ -1,0 +1,33 @@
+# Ground truth for `contour similar`, against a rails checkout. Proposed
+# format — no harness reads this yet (see tests/eval/README.md).
+#
+# DRAFTED BY CLAUDE, NOT YET REVIEWED BY THE OWNER. Every case was verified by
+# running `contour similar <probe>` from a rails checkout AND reading the
+# bodies. Veto or amend any line.
+#
+# Format: probe<TAB>must|must_not<TAB>neighbour[<TAB>tier][<TAB>provisional]
+#   must      the neighbour must appear within the default limit; `tier` is
+#             the tier expected to find it (structural | near_structural |
+#             semantic).
+#   must_not  with a tier: must not appear at that tier or stronger; without:
+#             must not appear at all.
+
+# The find that motivated the project, asked the similar way around: probing
+# the shadow must surface the original, by structure alone.
+ActiveRecord::QueryLogs.escape_sql_comment	must	ActiveRecord::ConnectionAdapters::Quoting#sanitize_as_sql_comment	structural
+
+# The labeled near pair; and the Date sibling genuinely differs (no gregorian
+# guard), so semantic is the honest tier for it.
+DateTime#advance	must	Time#advance	near_structural
+DateTime#advance	must	Date#advance	semantic
+
+# One token apart, but 3 lines — too short for the near tier, and that is
+# fine: the opposite operation should read as related, never as the same
+# implementation.
+Enumerable#minimum	must	Enumerable#maximum	semantic
+
+# The DEC-017 guard, in similar's terms: decrement is the top semantic
+# neighbour (cos 0.96) and must stay one — a structural or near claim would
+# offer a consolidation that does not exist.
+ActiveSupport::Cache::Strategy::LocalCache#increment	must	ActiveSupport::Cache::Strategy::LocalCache#decrement	semantic
+ActiveSupport::Cache::Strategy::LocalCache#increment	must_not	ActiveSupport::Cache::Strategy::LocalCache#decrement	near_structural

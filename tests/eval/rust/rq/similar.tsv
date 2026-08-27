@@ -1,0 +1,10 @@
+# Ground truth for `contour similar`, against an rq checkout. Proposed
+# format — see tests/eval/rails/similar.tsv for the row grammar.
+#
+# DRAFTED BY CLAUDE, NOT YET REVIEWED BY THE OWNER.
+
+# The epoch-seconds family from pairs.tsv. The token-identical copy is claimed
+# structurally; the qualification twin only reaches the list through its name
+# (cos 0.49) — real normalization would upgrade it to structural.
+now_secs	must	unix_now	structural
+now_secs	must	now_unix	semantic

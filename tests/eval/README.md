@@ -28,6 +28,7 @@ in the last column and are counted separately in the report.
 | `rails/` | a rails checkout | real summaries, so an API key |
 | `discourse/` | a discourse checkout | real summaries, so an API key |
 | `rust/<repo>/` | the sibling repos (trekr, rwr, rq, gqls, launder, navi) | nothing |
+| `berater/` | a berater checkout — `similar.tsv` only | nothing |
 
 `fixture/` exists to prove the machinery, not to calibrate anything: two dozen
 units across four domains is far too small and too thematically dense for the
@@ -129,6 +130,38 @@ The pairs here are *edges*, not groups, and deliberately not all duplicates: a
 shim that `delegates` to what it shadows has a different body, so no clone
 group holds it, and it is still a pair worth ranking. The harness ranks each
 labeled pair directly for that reason.
+
+`similar.tsv` — ground truth for `contour similar`, the flagship agent tool,
+which until now had none. Proposed the way `canonical.tsv` was: file first,
+harness later. One row per (probe, assertion):
+
+```text
+DateTime#advance	must	Time#advance	near_structural
+TopicsController#re_pin	must_not	TopicsController#make_banner	near_structural
+Berater::ConcurrencyLimiter#acquire_lock	must_not	Berater::Lock#capacity
+```
+
+- `must` — the neighbour must appear within the default limit, and the tier
+  column names the tier expected to find it (`structural | near_structural |
+  semantic`). The tier is asserted because it is a claim (DEC-019: structural
+  and near mean "the same implementation twice"), not a detail.
+- `must_not` — with a tier: the neighbour must not appear at that tier **or
+  stronger** (a related method may be a semantic neighbour while a near claim
+  would be wrong — the DEC-017 pairs are exactly this). Without a tier: must
+  not appear at all.
+
+Every case was verified by running `contour similar` from the corpus checkout
+and reading the bodies. Cases the tool currently fails are labeled with what
+SHOULD happen and marked `CURRENTLY FAILING` in a comment — those are the
+point of the file: the near tier presenting opposite controller actions as
+near-copies at exactly 0.80, and identifier-only noise (a `to_s`, an
+attr_reader) outranking real siblings in a method family. The berater set
+exists for this file: one `acquire_lock` contract, sibling implementations
+across limiter classes — the shape `similar` was built to answer.
+
+The verified-against state is identifier-only vectors (`coverage none`); a
+summarized corpus should only improve the semantic rows, but the expected
+tiers were chosen to be true under either.
 
 ## The Rust sets: measuring the token_hash tier
 
