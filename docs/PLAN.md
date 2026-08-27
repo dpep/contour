@@ -281,8 +281,18 @@ clones of each other), but search ranks them as two answers to one question, and
 
 Not fixed, and not obviously a bug: the singleton really is callable and really
 is public where the instance method is not. The question is whether a *unit* is
-a def or a callable entry point, which is DEC-014 territory. Recorded so the
-next person to see a doubled search result knows it is deliberate.
+a def or a callable entry point, which is DEC-014 territory.
+
+**Cost, assessed in M10 and found not to be modest.** Suppressing the second
+unit is one line in the macro table, and it is the wrong line: the pair is
+real, `dupes` already handles it correctly (it groups by *span*, so the two
+never report as clones of each other), and the only surface that misbehaves is
+search ranking them as two answers. So the cheap fix removes a true fact to
+tidy one display, and the honest fix — a unit knows it is one of several entry
+points to one body — is a record-model change touching every surface that
+prints an id. That is DEC-014's question and belongs with the tree layer, not
+with a milestone about hardening. Parked, with the reasoning rather than a
+guess.
 
 ## Non-goals (for now)
 

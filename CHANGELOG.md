@@ -131,6 +131,48 @@ Initial skeleton — nothing has been released, so everything below is new.
   are still printed, because a person feels lines.
 - **Forces a reindex**: every unit now carries the node count of its normalized
   body, which the fold was already computing and discarding.
+- **`summarize` no longer refuses every Rust unit.** The fill loop re-parses
+  each body to prove it is still the one the index recorded, and did that as
+  Ruby whatever the language — so every Rust unit was skipped with "the file
+  changed since it was indexed", which was false and which reindexing could not
+  fix. The MCP `pending` tool shared the bug, silently withholding Rust units
+  from every session that asked.
+- **`contour similar` refuses a name that means two units**, lists both
+  locations, and accepts the `path:line` it just printed. It also no longer
+  reports one unit twice under two tiers.
+- **`similar` discloses what it could see** — coverage, embedder, the floor and
+  what the floor withheld — and says so when nothing is similar, rather than
+  exiting silently.
+- **Every command's `--json` is the whole answer**, byte-for-byte what the MCP
+  tool returns for the same question; a test asserts the equality. `dupes` used
+  to give an agent the near tier's scale disclosure and a human a bare array.
+  `-J` stays one record per line, for pipelines.
+- **JSON paths are absolute**, so a consumer who is not standing in the checkout
+  can resolve them. Human output shortens them back.
+- **Staleness sees a working-tree edit** — the state a live session is always
+  in. It was a stat of `.git/index`, which said `stale: false` while `search`
+  could not find the method you had just written, and flipped to `true` on a
+  commit that changed nothing contour reads. It is now the exact question, at a
+  measured ~20 ms.
+- **`--status` and `search` agree about coverage.** Status counted only what an
+  API fill had bought, so a session's contribution left it saying `none 0/128`
+  about a corpus search was already answering from. Both questions are now
+  reported: what a query can answer from, and what each `(model, via)` bought.
+- **The purchased half has one gate.** `summarize --fixtures` used to store an
+  invented side effect permanently while the MCP path rejected the identical
+  payload; the check now lives on the one door into that half. A refused answer
+  is one unit's failure, not the run's.
+- **A newer summary schema refuses to open**, as DEC-016 always said it would
+  and did not: the upward-only migration walk let a newer marker fall through
+  and be stamped back down to ours.
+- Errors name the actual problem: a nonexistent path is not a repository
+  question, git's `fatal:` no longer trails behind every message, the CLI lists
+  the checkouts it knows when it cannot find one, a missed unit name gets
+  suggestions, and a corrupt database says so once instead of twice.
+- Thresholds outside 0–1 are rejected rather than silently matching nothing; an
+  empty search query is rejected; a no-op reindex says "nothing new to read"
+  instead of "0 units"; `--symbols` on a file with no callables says so; and the
+  eval prints `n/a` rather than `NaN` for a tier with no labels.
 - **`contour dupes --canonical`** names the likely-original member of every
   group and says why: git age (the oldest surviving line of each body),
   reference counts from `trekr --refs` with its confirmed/possible tiers, and
