@@ -605,3 +605,35 @@ body; this does not, and a caveat nobody asked for is exactly the kind a reader
 needs. Where `rq` is absent the run says the candidates went **unchecked**
 rather than reporting nothing, because silence would read as "safe to
 consolidate" — the one direction this feature must never fail in.
+
+**What a third corpus says it is actually worth.** mastodon was labeled
+independently and the caveat had never been run against it. It flags **3 of 60
+groups**, and the result is the useful counterweight to rails':
+
+| flagged constant | the labeller's verdict on the pair |
+| ---------------- | ---------------------------------- |
+| `ROWS_PROCESSING_LIMIT` | **duplicate** — "20_000 in both classes; one shared concern consolidates" |
+| `IGNORED_PARAMS` | **duplicate** — "a base filter class is the consolidation" |
+| `CACHE_TTL` | unlabeled |
+
+Two of three flags sit on consolidations a human judged available. That is not
+the caveat being wrong: it flags that the copies *reach different definitions*,
+which they do, and whether that blocks the merge depends on whether the values
+agree — which the tool cannot know without evaluating them, and does not claim
+to. The labeller's own note is the proof it points at the right thing: they
+checked both values and found them equal, which is exactly the check the basis
+line asks for.
+
+So the honest reading is that **this is a question, not a verdict**, and the
+report's wording ("check that they resolve to the same thing before
+consolidating") is the claim it can support. On rails it asked about genuine
+blockers; on mastodon it asked twice and the answer was "fine". A reader loses
+a minute; the alternative is a silently offered consolidation that does not
+exist.
+
+**The refinement this measurement earns, if the noise ever costs more than it
+saves:** compare the definitions' *values*, not just their locations, and stay
+quiet when they agree. `rq` already returns each definition's file and line, so
+the text is one read away. Not built — a literal text comparison is fragile
+(computed values, multi-line literals), and on this evidence the noise is three
+groups in sixty.
