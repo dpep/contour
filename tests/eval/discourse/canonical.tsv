@@ -1,0 +1,32 @@
+# Groups of similar methods where one is unambiguously the canonical
+# implementation, against a discourse checkout.
+#
+# DRAFTED BY CLAUDE, NOT YET REVIEWED BY THE OWNER. Every verdict was verified
+# by reading both bodies and file history (`git log --diff-filter=A`), never
+# assumed. Veto or amend any line.
+#
+# Format: canonical<TAB>alternate<TAB>evidence[<TAB>provisional]
+# Evidence vocabulary as in the rails set: older, delegates, mirrors,
+# ex_subclass.
+#
+# A caveat this corpus adds: several plugins (discourse-ai, discourse-post-
+# voting) were developed outside this repo and merged in wholesale, so in-repo
+# git evidence starts at the merge date. The labels below only assert edges
+# where the copy direction is also visible in the code itself.
+
+# vbulletin.rb (2014) is the source; modx.rb (2017) copied it and disabled the
+# copies with a `not_` prefix — a dead mirror of the original.
+ImportScripts::VBulletin#close_topics	ImportScripts::Modx#not_close_topics	older,mirrors
+ImportScripts::VBulletin#import_private_messages	ImportScripts::Modx#not_import_private_messages	older,mirrors
+
+# ning.rb (2015-01) had repair_json first; muut.rb (2015-06) copied it.
+ImportScripts::Ning#repair_json	ImportScripts::Muut#repair_json	older
+
+# chat's guardian extension (in-repo 2023) is what the post-voting plugin
+# (merged 2025) copied, unused parameter and all.
+Chat::GuardianExtensions#can_flag_message_as?	PostVoting::GuardianExtension#can_flag_post_voting_comment_as?	older
+
+# discourse-ai's reviewable copied chat's; chat's has since gained the
+# combined-actions rename and one icon fix the copy lacks. Provisional because
+# the plugin's pre-merge history is invisible in this repo.
+Chat::ReviewableMessage#build_combined_actions	ReviewableAiChatMessage#build_actions	older	provisional

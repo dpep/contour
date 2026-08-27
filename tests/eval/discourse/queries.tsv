@@ -1,0 +1,50 @@
+# Query → the method it should find, against a discourse checkout.
+#
+# DRAFTED BY CLAUDE, NOT YET REVIEWED BY THE OWNER. Every label is a judgement
+# about what a person would mean; a wrong one makes the eval lie in the
+# flattering direction. Veto or amend any line — the harness reads this file.
+#
+# Method behaviour was verified by reading the source, not recalled. Queries
+# deliberately avoid naming the method: a query containing its own answer
+# measures string matching, which is what baseline:name isolates.
+#
+# discourse is the app-shaped corpus: services, jobs, plugins, migrations —
+# where rails is a library with dictionary-word method names. Same bands as
+# the rails set so the two reports read side by side.
+#
+# Run with:  cd <discourse checkout> && contour eval <this dir>
+
+# --- easy on purpose: queries that share tokens with the answer's name -------
+# baseline:name should do well here; the contrast with the sections below is
+# the point.
+silence a user who keeps breaking the rules	UserSilencer#silence
+grant a badge to a user	BadgeGranter#grant
+cook raw post markdown into html	PrettyText.cook
+anonymize a user account	UserAnonymizer#make_anonymous
+move posts to a different topic	Topic#move_posts
+hash a password with its salt	PasswordHasher.hash_password
+full text search across topics and posts	Search#execute
+
+# --- no token shared with the answer's identifier: the thesis case -----------
+turn a title into a url friendly form	Slug.for
+throttle how often someone may repeat an action	RateLimiter#performed!
+the link to a discussion thread	Topic#relative_url
+remove accounts that never finished signing up	User.purge_unactivated
+the periodic activity summary sent by mail	UserNotifications#digest
+decide whether a visitor may view a discussion	TopicGuardian#can_see_topic?
+wipe a member and everything they ever wrote	UserDestroyer#destroy
+accept an invitation and create the account it promised	Invite#redeem
+should this address be refused at signup	ScreenedEmail.should_block?
+queue work to happen in the background	Jobs.enqueue
+run something after the current web request is done	Scheduler::Deferrable#later
+how many edits turn one string into another	ScreenedEmail.levenshtein
+the number of alerts a member has not yet seen	User#unread_notifications
+
+# --- behaviour that appears in NO identifier ---------------------------------
+# Retry, backoff, memoization, cross-process consistency: the body knows; no
+# name in the corpus says so.
+compute a value once and reuse it until it expires	Cache#fetch
+retry a failed download after waiting a moment	HotlinkedMediaDownloader#download_file
+wait longer and longer between attempts to grab a lock	DistributedMutex#get_lock
+make sure only one process runs a block at a time	DistributedMutex.synchronize
+keep a cached value consistent across all app servers	DistributedCache#defer_get_set	provisional

@@ -26,6 +26,7 @@ in the last column and are counted separately in the report.
 | --- | ------ | ----- |
 | `fixture/` | `fixture/corpus/` — 21 methods, in-repo | nothing; runs in CI |
 | `rails/` | a rails checkout | real summaries, so an API key |
+| `discourse/` | a discourse checkout | real summaries, so an API key |
 
 `fixture/` exists to prove the machinery, not to calibrate anything: two dozen
 units across four domains is far too small and too thematically dense for the
@@ -127,6 +128,31 @@ The pairs here are *edges*, not groups, and deliberately not all duplicates: a
 shim that `delegates` to what it shadows has a different body, so no clone
 group holds it, and it is still a pair worth ranking. The harness ranks each
 labeled pair directly for that reason.
+
+## What discourse adds: do rails-calibrated thresholds transfer?
+
+The rails thresholds were calibrated on one corpus, and a library's twins
+(`String#first`/`#last`) are not an app's twins (copied import scripts,
+plugin-to-plugin copies, migrations). The discourse set exists to ask whether
+the numbers hold. Measured on a 2026-08 checkout, structural tiers only:
+
+- **Exact-tier precision drops from 0.93 to 0.73**, and every new false
+  positive is a schema migration: byte-identical `up`/`down` bodies that are
+  frozen history, never consolidation candidates (DEC-020). `--min-lines`
+  cannot help — the largest is 16 lines. This is a *class* of collision rails
+  had no label for; a fix would have to know what a migration file is. Recall
+  stays 1.00.
+- **Near-tier recall drops from 1.00 to 0.50 at jaccard 0.80.** The rails
+  near labels were drawn from pairs the tier already reported; the discourse
+  ones were sourced by sweeping the threshold to 0.55 and reading, so the
+  number measures the threshold against the copy-paste population instead of
+  against itself. Genuine one-edit copies score 0.56–0.73 routinely (a 9-line
+  copy with one guard changed lands at 0.58). Precision holds (one false
+  positive: a migration's own `up` against its `down` at 0.83).
+- **Canonicality improves**: 4/5 edges correct (rails: 2/5), because app
+  copies have cleaner provenance — `git_age` alone went 5/0. The one
+  abstention is a plugin merged from an external repo, whose pre-merge
+  history git cannot see.
 
 ## What the report says
 
