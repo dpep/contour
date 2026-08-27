@@ -71,6 +71,23 @@ The `distinct` rows are the sharp half. Each is a *near* miss that a looser
 normalizer would collide, so if one ever shows up as a duplicate, normalization
 has been over-relaxed.
 
+### Where a label may come from
+
+**A label is never sourced from the feature it evaluates.** A set drawn from a
+tier's own output can only ever confirm that tier, and it will do so
+convincingly.
+
+This is not hypothetical. rails' `near` labels were found by reading the near
+tier's report, and scored 1.00 recall. discourse's were found by sweeping the
+threshold down to 0.55 and reading what turned up — a method that can see what
+the tier *misses* — and scored 0.50 on the same code. The gap is the
+methodology, not the corpus. **rails' near labels need a discourse-style
+re-audit**; until then, read that 1.00 as an artefact.
+
+The general form: find candidates with a method the feature does not share.
+Sweep below the threshold, read the source, use a different tool, or start from
+the behaviour rather than from the report.
+
 ### The labeling rule
 
 **A pair is a duplicate iff consolidating it would reduce net complexity.**

@@ -404,3 +404,73 @@ Two consequences worth stating, since neither is obvious:
   components, never as a bare score (DEC-010). Why nodes rather than lines is
   measured on rails and argued in `dupes::Group::saves_nodes`, where the choice
   lives; the labeling rule's worked examples are in `tests/eval/README.md`.
+
+## DEC-021 — Path signal is real; it lives at the file layer
+
+**Clarifies DEC-003, which has now been re-fought twice.** "Layer 1 must never
+see a path" is a statement about *which layer carries* path knowledge. It was
+never a claim that paths carry no signal, and reading it as one is how four
+separate findings went unaddressed.
+
+Two halves, and only the first is a constraint:
+
+- **Layer 1 stays a pure function of bytes.** Same bytes, same OID, same units,
+  forever. That is what makes N worktrees, a branch switch, a rebase, and a
+  no-op reindex free, and it is why a summary survives a file being renamed or
+  moved. Keep it. Nothing below the `file` table may mention a path.
+- **Layer 2 — the path→blob map — is exactly where path knowledge belongs**,
+  and it has been sitting there unused. A blob at `db/migrate/…` and the same
+  blob at `app/models/…` are the same parse and legitimately different
+  *findings*, because the question "should I consolidate this" is a question
+  about the place, not about the bytes.
+
+The owner pressure-tested the constraint and it survives with this scope. So
+the rule for the next cold reader: **if you find yourself wanting a path fact
+in the extractor, you want it in the file layer instead.** That is not a
+compromise, it is where it was always supposed to go.
+
+### Siblings, not separate projects
+
+Two things live at this seam and should be built as one piece of work:
+
+1. **Path classes** (DEC-022), which is what four recorded findings were all
+   asking for.
+2. **The Rust free-function owner gap.** A top-level `fn` in `src/lang/go/mod.rs`
+   has no owner, so five language plugins each contribute an identically-named
+   `tests::find`. The module prefix that would disambiguate it is *in the path*,
+   which is why the extractor cannot reach it and why the gap has stood since
+   Phase 1.5. Same layer, same fix shape.
+
+## DEC-022 — Path classes: ignore, include, or classify, and always disclose
+
+`dupes`, `search` and `similar` currently treat every indexable file as one
+population. Four findings say they are not:
+
+| finding | corpus | what it costs today |
+| ------- | ------ | ------------------- |
+| schema migrations collide byte-for-byte | discourse | exact precision 0.93 → 0.73 |
+| test code outranks the implementation it tests | berater | a spec helper above `Berater::Limiter#limit` |
+| `.rb` fixture corpora index as real units | trekr, rwr | a sibling repo's dupes report is mostly fixtures |
+| unqualified constants resolve per nesting | rails | a 6-line false collision no floor can fence |
+
+**The defaults, ruled by the owner:**
+
+- **Migrations — ignored entirely.** Under DEC-020 they are not duplicates at
+  all: migration history is frozen, so consolidating one is not a consolidation,
+  it is a rewrite of the past.
+- **Generated and vendored code — ignored.** Nobody consolidates it; it is
+  regenerated or re-copied.
+- **Tests and fixtures — INCLUDED, and classified.** Not ignored: duplication in
+  shared examples and helpers is real maintenance signal. But it is a *different
+  population*, so it is tagged and ranked separately from app code rather than
+  interleaved with it. This is the ruling most likely to be mistaken for the
+  easy one — "ignore tests" is the tempting default and it is wrong.
+
+**Every default is disclosed and overridable.** A report that silently withheld
+groups would be a worse failure than the one this fixes: `N group(s) in ignored
+paths withheld` on every run, plus the flag that shows them. Healthy defaults,
+a config for a repo whose layout differs, options for the one-off.
+
+Classification attaches at the **file** layer (DEC-021), never the blob layer.
+The same bytes vendored into one repo and authored in another are one parse and
+two classifications, which is precisely the property that makes this correct.

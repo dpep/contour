@@ -143,12 +143,66 @@ Multi-resolution via hierarchy: coarser units, not blurrier methods
   denominator, never a flat score.
 - LSP last.
 
-## Open questions awaiting a decision
+## Milestone 11 — settled direction
 
-Recorded rather than settled. Each has a measurement behind it and none has
-been implemented.
+**Ruled by the owner. These are decisions the M11 engineer inherits, not
+debates to reopen.** Each has a measurement behind it, recorded below and in
+`docs/DECISIONS.md`; none has been implemented.
 
-### Context-dependent constants: disclose, do not fold
+M11 is briefed **after the owner's live MCP test drive**, deliberately. Real
+usage ranks the scope, and the first grazed summaries (DEC-018) will un-idle
+the queries whose answers never appear in an identifier — which is the half of
+`search` no eval has been able to exercise yet. Expect the brief to reorder
+what follows; expect it not to reopen it.
+
+### 1. Path classes — the centerpiece (DEC-021, DEC-022)
+
+Four findings across three corpora are one absent concept: contour has no
+notion of what *kind* of file it is looking at. The defaults are ruled:
+
+- **migrations** — ignored by default
+- **generated, vendored** — ignored by default
+- **tests and fixtures** — **included**, tagged, and ranked as a separate
+  population. Not ignored. Test duplication is real maintenance signal, and
+  "just ignore tests" is the tempting wrong answer.
+
+Every default disclosed on every run (`N group(s) in ignored paths withheld`)
+and every default overridable — healthy defaults, config, options.
+Classification attaches at the **file** layer, never the blob layer.
+
+The **Rust free-function owner gap** is a sibling of this work, not a separate
+errand: the module prefix that would disambiguate five identically-named
+`tests::find` functions lives in the path, which is why the extractor has never
+been able to reach it. Same layer, same seam, do them together.
+
+### 2. The near tier — a different measure, not a different number
+
+Ratified direction: **payoff against effort, both node-denominated.** Shared
+nodes are what consolidating buys; differing nodes are what it costs. Explore
+edit distance normalized by size. **Jaccard is demoted toward candidate
+generation**, which is the job it is genuinely good at — the inverted index
+already uses it that way and that part scales.
+
+Recalibrate against the **merged two-corpus labels**, not rails alone. The
+evidence this is a measure problem rather than a threshold problem: 0.80 misses
+11 of 13 genuine short near-duplicates, and both labeled false positives sit at
+*exactly* 0.80, so moving the constant trades one failure for the other and
+settles nothing.
+
+The `up`/`down` case — bodies that are structurally near-identical and
+semantically opposite — gets **a sentence in the docs, not engineering**. No
+structural measure can see the opposition, and saying so is cheaper and more
+honest than a special case that would half-work.
+
+### 3. Label methodology (see `tests/eval/README.md`)
+
+**A label is never sourced from the feature it evaluates.** rails' near labels
+were drawn from the near tier's own report, so they could only confirm it —
+which is why rails showed 1.00 recall and discourse, labeled by sweeping down
+to 0.55 and reading what turned up, showed 0.50. rails' near labels need a
+discourse-style re-audit before either number means anything.
+
+### 4. Context-dependent constants — caveat, never fold
 
 **The labeling rule** (ratified, and written up in `tests/eval/README.md`): a
 pair is a duplicate iff consolidating it would **reduce net complexity**. A
@@ -179,7 +233,7 @@ mostly cross-class clones referencing a top-level `Hash` or `ActiveSupport`,
 which is exactly the detection `norm_hash` excludes the owner in order to get.
 A blanket caveat at 56% is noise nobody reads.
 
-**The proposal is the third row**: leave `norm_hash` alone — no reindex, no
+**Approved by the owner for M11.** The caveat-only variant, which is the third row: leave `norm_hash` alone — no reindex, no
 resummarize, DEC-003's key stays a pure function of the body — and add a
 disclosed caveat tier to the *report* for a group whose members sit under
 different nestings and read a constant that is defined under more than one.
@@ -195,12 +249,19 @@ And it defines the labeller's hardest judgement out of existence. Today someone
 has to decide per pair whether the offered refactor is real; with the caveat in
 the output, the tool discloses the uncertainty and the reader applies the rule.
 
+## Still open, and genuinely so
+
+Recorded with measurements, awaiting a decision.
+
 ### What a second corpus did to the thresholds
 
 discourse was labeled independently and reproduces exactly (exact 0.73
 precision 11/15, near 0.50 recall 5/10, canonicality 4/5). Every number below
-is from that run. **None of these is an M10 patch** — each needs a design
-decision, which is why they are here rather than in a commit.
+is from that run. None was an M10 patch — each needed a design decision.
+
+**Findings 1, 2 and 3 have since been ruled.** They are kept here for the
+evidence; the direction they became is under "Milestone 11 — settled
+direction" above. Findings 4, 5 and 6 are still open.
 
 **1. Exact precision falls 0.93 → 0.73, and every new false positive is a
 schema migration.** Byte-identical `up`/`down` bodies and re-runnable
