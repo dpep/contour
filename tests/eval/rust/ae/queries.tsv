@@ -1,0 +1,21 @@
+# Query -> the unit that answers it, against an ae checkout — part of the
+# first Rust SEARCH ground truth; see tests/eval/rust/trekr/queries.tsv for
+# the band conventions.
+#
+# DRAFTED BY CLAUDE, NOT YET REVIEWED BY THE OWNER. Behaviour verified by
+# reading the bodies.
+
+# --- easy on purpose ---------------------------------------------------------
+expand the acronyms found in a block of text	Engine::expand_only
+
+# --- no token shared with the answer's identifier ----------------------------
+# Deliberately VERBATIM from the discourse set, where the same query's answer
+# is ScreenedEmail.levenshtein — the Ruby and Rust implementations of one
+# idea. The one-checkout harness scores each side in its own corpus; see the
+# README ("Cross-language queries") for the proposed cross-corpus extension.
+how many edits turn one string into another	levenshtein
+
+# --- behaviour that appears in NO identifier ---------------------------------
+# The election lives in the body: take the exclusive file lock, or exit
+# quietly because another leader already holds it.
+make a second background daemon exit instead of fighting the first	serve

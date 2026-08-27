@@ -2,9 +2,10 @@
 # format — see tests/eval/rails/similar.tsv for the row grammar.
 #
 # DRAFTED BY CLAUDE, NOT YET REVIEWED BY THE OWNER.
-
-# The epoch-seconds family from pairs.tsv. The token-identical copy is claimed
-# structurally; the qualification twin only reaches the list through its name
-# (cos 0.49) — real normalization would upgrade it to structural.
-now_secs	must	unix_now	structural
-now_secs	must	now_unix	semantic
+#
+# The original rows probed the epoch-seconds family (now_secs / unix_now /
+# now_unix); rq consolidated that family into core/clock.rs on 2026-08-27
+# (7df14e2, "One clock, not four"), so those probes no longer resolve and
+# were retired with the duplication they described. No replacement family of
+# comparable shape exists in today's checkout; when one appears, source
+# probes by reading, not from `similar`'s own output.

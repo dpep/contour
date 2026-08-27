@@ -1,2 +1,12 @@
-# Deliberately empty: the Rust sets exist to measure the token_hash tier
-# (see tests/eval/README.md).
+# Query -> the unit that answers it, against a navi checkout — part of the
+# first Rust SEARCH ground truth; see tests/eval/rust/trekr/queries.tsv for
+# the band conventions.
+#
+# DRAFTED BY CLAUDE, NOT YET REVIEWED BY THE OWNER. Behaviour verified by
+# reading the bodies.
+
+# --- easy on purpose ---------------------------------------------------------
+show the history of recent file operations	history
+
+# --- no token shared with the answer's identifier ----------------------------
+put a deleted file somewhere it can be recovered from	send

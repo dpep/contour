@@ -1,0 +1,21 @@
+# Expected-abstain canonicality edges, against a mastodon checkout. Proposed
+# format — no harness reads this yet; see the README ("Expected abstentions").
+#
+# DRAFTED BY CLAUDE, NOT YET REVIEWED BY THE OWNER.
+#
+# Each row asserts that NEITHER side is the implementation the other shadows,
+# so the correct canonicality answer is to decline (DEC-019). Declining here
+# is scored as right; naming either side is scored as wrong.
+#
+# Format: a<TAB>b<TAB>why[<TAB>provisional], why from a small vocabulary:
+#   siblings     born in one commit; no copy direction exists in history
+#   front_doors  each copy is the live entry point of its own stack; the true
+#                home is an extraction that has not happened yet
+
+# One copy serves every rack request (config/application.rb), the other every
+# sidekiq job (config/initializers/sidekiq.rb). The consolidation target is a
+# NEW shared module — crowning either existing copy would be wrong.
+Mastodon::Middleware::SocketCleanup#clean_up_redis_socket!	Mastodon::SidekiqMiddleware#clean_up_redis_socket!	front_doors
+# Two live API versions of the same behaviour; v1 is kept for client compat,
+# v2 is current. Provisional: a product owner might rule v2 canonical.
+Api::V1::Notifications::PoliciesController#set_policy	Api::V2::Notifications::PoliciesController#set_policy	front_doors	provisional

@@ -1,0 +1,41 @@
+# Query -> the method it should find, against a mastodon checkout.
+#
+# DRAFTED BY CLAUDE, NOT YET REVIEWED BY THE OWNER. Every label is a judgement
+# about what a person would mean; method behaviour was verified by reading the
+# source, not recalled. Queries deliberately avoid naming the method: a query
+# containing its own answer measures string matching, which is what
+# baseline:name isolates.
+#
+# Third Ruby corpus, second app-shaped one: federation, timelines, moderation
+# — same bands as the rails and discourse sets so the reports read together.
+#
+# Run with:  cd <mastodon checkout> && contour eval <this dir>
+
+# --- easy on purpose: queries that share tokens with the answer's name -------
+suspend a misbehaving account	SuspendAccountService#call
+block federation with an entire domain	BlockDomainService#call
+approve a pending follow request	FollowRequest#authorize!	provisional
+generate a backup archive of an account's data	BackupService#call
+recalculate which hashtags are trending	Trends::Tags#refresh
+redirect an old permalink to where it now lives	PermalinkRedirector#redirect_path
+push a new toot into follower home feeds	FeedManager#push_to_home
+
+# --- no token shared with the answer's identifier: the thesis case -----------
+look up who an @user@server address belongs to	ResolveAccountService#call
+the timeline you see when you open the app	Feed#get
+may this visitor read this post	StatusPolicy#show?
+keep a toot out of a follower's stream when it fails the rules	FeedManager#filter?
+cap how often one user may repeat an action	RateLimiter#record!
+notice an instance has been unreachable for days and give up on it	DeliveryFailureTracker#available?	provisional
+strip markup from a status for previews	PlainTextFormatter#to_s
+the canonical web address of a remote user's profile	ActivityPub::TagManager#url_for
+does this login look risky	SuspiciousSignInDetector#suspicious?
+prove an incoming federation message came from its author	SignatureVerification#signed_request_actor
+
+# --- behaviour that appears in NO identifier ---------------------------------
+# Reconnect-and-retry, subnet masking, per-viewer patching of a shared cache:
+# the body knows; no name in the corpus says so.
+reopen a dropped connection and try the request once more	RequestPool::Connection#use
+make sure two workers never run the same critical section at once	Lockable#with_redis_lock
+treat a login from the same subnet as one we have already seen	SuspiciousSignInDetector#previously_seen_ip?
+fill viewer-specific fields into a cached toot payload	StatusCacheHydrator#hydrate

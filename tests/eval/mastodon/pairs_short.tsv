@@ -1,0 +1,28 @@
+# The short-body band: 4-8 line pairs, against a mastodon checkout. Same
+# grammar as pairs.tsv; see the README for why the band is measured apart.
+#
+# DRAFTED BY CLAUDE, NOT YET REVIEWED BY THE OWNER. Every verdict verified by
+# reading both bodies against DEC-020. Measured jaccard noted per row; the
+# threshold is 0.70.
+
+# --- genuine near-duplicates -------------------------------------------------
+# Identical pagination arithmetic in two collections controllers; only the
+# route helper differs, and a per-class path hook consolidates both methods at
+# once (0.64 / 0.60).
+Api::V1::CollectionsController#prev_path	Api::V1::InCollectionsController#prev_path	near
+Api::V1::CollectionsController#next_path	Api::V1::InCollectionsController#next_path	near
+
+# --- distinct: same shape, the difference IS the behaviour -------------------
+# Opposite moderation actions; one boolean literal apart (0.60) — mastodon's
+# copy of the discourse pin/unpin edge.
+Api::V1::Admin::Trends::StatusesController#approve	Api::V1::Admin::Trends::StatusesController#reject	distinct
+# Same create-render scaffold, different resource and an extra federation
+# side effect (0.56).
+Api::V1::Statuses::BookmarksController#create	Api::V1::Statuses::PinsController#create	distinct
+# One token (Follow vs Status) is the entire measurement (0.63).
+Admin::Metrics::Measure::InstanceFollowersMeasure#perform_total_query	Admin::Metrics::Measure::InstanceStatusesMeasure#perform_total_query	distinct
+# Undo-a-block vs undo-superseded-limitations: the shared scaffold clears the
+# same columns, but the guard conditions are inverted per purpose; merging
+# pushes which-severities-to-clear onto every caller. Provisional — the
+# 0.74 jaccard means the tier currently reports it (0.74).
+UnblockDomainService#process_retroactive_updates	BlockDomainService#process_retroactive_updates!	distinct	provisional

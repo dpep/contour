@@ -27,7 +27,8 @@ in the last column and are counted separately in the report.
 | `fixture/` | `fixture/corpus/` — 21 methods, in-repo | nothing; runs in CI |
 | `rails/` | a rails checkout | real summaries, so an API key |
 | `discourse/` | a discourse checkout | real summaries, so an API key |
-| `rust/<repo>/` | the sibling repos (trekr, rwr, rq, gqls, launder, navi) | nothing |
+| `mastodon/` | a mastodon checkout | real summaries, so an API key |
+| `rust/<repo>/` | the sibling repos (trekr, rwr, rq, gqls, ae, launder, navi) | nothing |
 | `berater/` | a berater checkout — `similar.tsv` only | nothing |
 
 `fixture/` exists to prove the machinery, not to calibrate anything: two dozen
@@ -148,6 +149,25 @@ shim that `delegates` to what it shadows has a different body, so no clone
 group holds it, and it is still a pair worth ranking. The harness ranks each
 labeled pair directly for that reason.
 
+`abstain.tsv` — proposed format, no harness reads it yet — the complement of
+`canonical.tsv`: pairs where declining to crown either side is the CORRECT
+answer, so that abstention has ground truth of its own instead of being
+counted merely apart from wrong (DEC-019 says declining on disagreement is
+the design; this makes that scoreable). One row per pair,
+`a<TAB>b<TAB>why[<TAB>provisional]`, `why` from a small vocabulary:
+
+- `siblings` — both copies born in one commit, so no copy direction exists
+  for any signal to find (rails' two `write_query?` adapter copies, f39d72d526;
+  discourse's two locale updaters, cb739f7f2df).
+- `front_doors` — each copy is the live entry point of its own stack, and
+  the true home is an extraction that has not happened yet (mastodon's rack
+  vs sidekiq socket cleanup).
+
+A pair may appear in `pairs.tsv` as `duplicate` and here as expected-abstain:
+"consolidate these" and "neither is the original" are different questions,
+and the sibling rows are exactly where both are true. When the harness learns
+to read this file, naming either side of a row scores as wrong.
+
 `similar.tsv` — ground truth for `contour similar`, the flagship agent tool,
 which until now had none. Proposed the way `canonical.tsv` was: file first,
 harness later. One row per (probe, assertion):
@@ -188,6 +208,41 @@ The verified-against state is identifier-only vectors (`coverage none`); a
 summarized corpus should only improve the semantic rows, but the expected
 tiers were chosen to be true under either.
 
+## What mastodon adds: the transfer verdict, third corpus
+
+discourse asked whether rails-calibrated thresholds transfer to an app; the
+mastodon set asks whether the *discourse-era fixes* transfer to a second app.
+Measured on a 2026-08 checkout (structural tiers; the search half awaits
+summaries):
+
+- **Path classes carry over.** 23 all-migration groups withheld, test
+  helpers ranked as their own population, `mixed` groups still reported —
+  discourse's migration FP class does not recur. Its residue does: a
+  migration that embeds its own copy of an app model's method survives as a
+  `mixed` group (`MigrateAccountConversations::MigrationAccountConversation`),
+  reported and still not consolidatable — labeled `distinct`.
+- **Exact precision 0.67 (12/18, recall 1.00), and the new FP class is RAILS
+  CONVENTION DISPATCH**: byte-identical mailer actions (7-strong UserMailer
+  group, plus AdminMailer's trio) whose behaviour differs only through the
+  method's own name — template lookup and i18n subject key both derive from
+  it. The `super` arithmetic (DEC-017) through a convention normalization
+  cannot see, and no path class can fence: they are app code. A fix would
+  have to know what a mailer is.
+- **Near recall 0.44 at 0.70 (4/9, precision 1.00)** — the discourse finding
+  reproduced on an independent corpus and an independently sourced label set
+  (0.55 sweep + reading): genuine one-edit copies land at 0.57–0.67
+  routinely, including a drifted-bugfix pair where the remote-edit service
+  gained two guards the local-edit copy lacks.
+- **Canonicality is unmeasurable here, and that is itself the finding**: the
+  checkout's git history is one squashed commit, so `git_age` — the signal
+  that carried 4/5 discourse edges — is structurally silent, and no in-repo
+  delegation exists to substitute. `canonical.tsv` documents why it is
+  empty; canonicality ground truth is a property of a corpus's provenance.
+- **A Ruby same-id twin exists** (two files defining `Paperclip::LazyThumbnail`
+  — ImageMagick original, libvips port; only the port is still required, so
+  the original is dead code). The same-id pair convention the Rust sets
+  introduced is now exercised by a Ruby set too.
+
 ## The Rust sets: measuring the token_hash tier
 
 Rust's normalization is a degraded tier on purpose (DEC-012): a
@@ -215,14 +270,53 @@ Two conventions specific to these sets:
   collide". Sound while exactly two units carry the name; a third would
   make the label ambiguous, which is the known cost of DEC-012's owner rule.
 
-`queries.tsv` is deliberately empty — the duplicate tier is what shipped
-unmeasured. Two limits, noted rather than worked around: the harness runs one
-checkout, so the cross-repo copy (ae's `HashEmbedder::embed` is a paste of
-gqls's, identical modulo locals) is real but unlabelable; and `ae` itself has
-no in-repo pair worth labeling. Measured baseline on 2026-08 checkouts:
-every labeled collision reported, no false collisions at any size, and one
+Two limits, noted rather than worked around: the harness runs one checkout,
+so the cross-repo copy (ae's `HashEmbedder::embed` is a paste of gqls's,
+identical modulo locals) is real but unlabelable; and `ae` itself has no
+in-repo pair worth labeling. Measured baseline on 2026-08 checkouts: every
+labeled collision reported, no false collisions at any size, and one
 deliberate false negative (rwr's 3-line `corpus_dir` sits below
 `--min-lines 4` — the floor's cost, on the record).
+
+One labeled family has since been RETIRED WITH ITS DUPLICATION: rq
+consolidated the epoch-seconds helpers into `core/clock.rs` (7df14e2, "One
+clock, not four", 2026-08-27), which is the outcome the report exists to
+cause. The rq pair and similar labels were relabeled to the new corpus; the
+qualification-twin contract case went with them (rwr's renamed-local rows
+still cover the normalization boundary).
+
+### Rust search: the first query labels
+
+The Rust sets originally measured only the duplicate tier; a field trial
+then found Rust *search* weak — sentence-named test functions dominating —
+so `queries.tsv` across the seven repos now carries the first Rust search
+ground truth (~20 queries), in the same bands as the Ruby sets plus one
+convention of its own:
+
+- **TEST-TRAP rows** (marked in comments): the answer is production code,
+  but the query's wording deliberately matches the repo's sentence-named
+  tests (`a_bare_call_in_a_class_body_dispatches_on_the_class`, ...). These
+  are the regression net for `search::NON_APP_DISCOUNT` — and today they
+  fail, because Rust's inline `#[cfg(test)] mod tests` sit in app files and
+  classify as `app` (DEC-022's standing example), so the discount never
+  touches the very units the field trial tripped on. On rq, the ranking for
+  a trap query is a page of `tests::*` units with the production answer
+  below the fold. Fixing that requires unit-level test classification — and
+  the `tests::` owner prefix already visible in those units' ids is the
+  signal to build it from.
+
+### Cross-language queries: a proposed extension
+
+Some ideas exist twice across corpora, once per language: discourse's
+`ScreenedEmail.levenshtein` and ae's `levenshtein`, rails' camelize and
+gqls's `to_pascal`. The ae and discourse sets carry the SAME query verbatim
+("how many edits turn one string into another"), each labeled with its own
+corpus's answer — the harness runs one checkout, so that is as far as the
+current format reaches. Proposed, for when it matters: an optional
+`corpus:` prefix on the expectation column
+(`ruby/discourse:ScreenedEmail.levenshtein<TAB>rust/ae:levenshtein`), scored
+only by a future multi-corpus runner and ignored by the one-checkout
+harness. Not built until a product feature needs cross-corpus answers.
 
 ## The near sweep, and what it can and cannot settle
 

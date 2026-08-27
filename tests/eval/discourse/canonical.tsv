@@ -30,3 +30,16 @@ Chat::GuardianExtensions#can_flag_message_as?	PostVoting::GuardianExtension#can_
 # combined-actions rename and one icon fix the copy lacks. Provisional because
 # the plugin's pre-merge history is invisible in this repo.
 Chat::ReviewableMessage#build_combined_actions	ReviewableAiChatMessage#build_actions	older	provisional
+
+# The cleanest provenance in the corpus: a8560d741f0 (2020) is literally
+# "DEV: Create ExportUserArchive as clone of ExportCsvFile"; get_header dates
+# to fadddccf8ab (2014) in the original.
+Jobs::ExportCsvFile#get_header	Jobs::ExportUserArchive#get_header	older,mirrors
+
+# UpdateUsername's post rewriter (3be3c50c7e0, 2018) is what ChangeDisplayName
+# copied when display-name renames were added (a183f14d093, 2023).
+Jobs::UpdateUsername#update_post	Jobs::ChangeDisplayName#update_post	older
+
+# BulkDestroy (118f7869bb4, 2024) is what BulkSuspend copied when bulk
+# suspension was added (a1ebd19813d, 2026).
+User::BulkDestroy#fetch_users	User::BulkSuspend#fetch_users	older

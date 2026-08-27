@@ -1,0 +1,11 @@
+# Expected-abstain canonicality edges, against a rails checkout. Proposed
+# format — no harness reads this yet; see the README ("Expected abstentions")
+# and tests/eval/mastodon/abstain.tsv for the vocabulary.
+#
+# DRAFTED BY CLAUDE, NOT YET REVIEWED BY THE OWNER.
+
+# Both adapter copies were added by one commit (f39d72d526, 2018-11-21,
+# "Add ability to prevent writes to a database"): siblings born together, no
+# original to name. pairs.tsv labels the pair duplicate — one parameterization
+# consolidates them — but crowning either copy would be a guess.
+ActiveRecord::ConnectionAdapters::MySQL::DatabaseStatements#write_query?	ActiveRecord::ConnectionAdapters::PostgreSQL::DatabaseStatements#write_query?	siblings
