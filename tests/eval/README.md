@@ -26,6 +26,9 @@ in the last column and are counted separately in the report.
 | --- | ------ | ----- |
 | `fixture/` | `fixture/corpus/` — 21 methods, in-repo | nothing; runs in CI |
 | `rails/` | a rails checkout | real summaries, so an API key |
+| `discourse/` | a discourse checkout | real summaries, so an API key |
+| `rust/<repo>/` | the sibling repos (trekr, rwr, rq, gqls, launder, navi) | nothing |
+| `berater/` | a berater checkout — `similar.tsv` only | nothing |
 
 `fixture/` exists to prove the machinery, not to calibrate anything: two dozen
 units across four domains is far too small and too thematically dense for the
@@ -127,6 +130,122 @@ The pairs here are *edges*, not groups, and deliberately not all duplicates: a
 shim that `delegates` to what it shadows has a different body, so no clone
 group holds it, and it is still a pair worth ranking. The harness ranks each
 labeled pair directly for that reason.
+
+`similar.tsv` — ground truth for `contour similar`, the flagship agent tool,
+which until now had none. Proposed the way `canonical.tsv` was: file first,
+harness later. One row per (probe, assertion):
+
+```text
+DateTime#advance	must	Time#advance	near_structural
+TopicsController#re_pin	must_not	TopicsController#make_banner	near_structural
+Berater::ConcurrencyLimiter#acquire_lock	must_not	Berater::Lock#capacity
+```
+
+- `must` — the neighbour must appear within the default limit, and the tier
+  column names the tier expected to find it (`structural | near_structural |
+  semantic`). The tier is asserted because it is a claim (DEC-019: structural
+  and near mean "the same implementation twice"), not a detail.
+- `must_not` — with a tier: the neighbour must not appear at that tier **or
+  stronger** (a related method may be a semantic neighbour while a near claim
+  would be wrong — the DEC-017 pairs are exactly this). Without a tier: must
+  not appear at all.
+
+Every case was verified by running `contour similar` from the corpus checkout
+and reading the bodies. Cases the tool currently fails are labeled with what
+SHOULD happen and marked `CURRENTLY FAILING` in a comment — those are the
+point of the file: the near tier presenting opposite controller actions as
+near-copies at exactly 0.80, and identifier-only noise (a `to_s`, an
+attr_reader) outranking real siblings in a method family. The berater set
+exists for this file: one `acquire_lock` contract, sibling implementations
+across limiter classes — the shape `similar` was built to answer.
+
+The verified-against state is identifier-only vectors (`coverage none`); a
+summarized corpus should only improve the semantic rows, but the expected
+tiers were chosen to be true under either.
+
+## The Rust sets: measuring the token_hash tier
+
+Rust's normalization is a degraded tier on purpose (DEC-012): a
+comment-stripped token stream that catches copy-paste and reformatting, where
+a renamed local, a changed literal, or a `std::time::`-qualified path moves
+the hash. It shipped unmeasured; `rust/<repo>/` is its ground truth. Each
+subdirectory runs against one sibling checkout:
+
+```sh
+cd ~/code/lib/rust/trekr && contour eval <this repo>/tests/eval/rust/trekr
+```
+
+Two conventions specific to these sets:
+
+- **Distinct labels here come in two flavours, and the comments say which.**
+  Most are product judgments as everywhere else (one differing token IS the
+  behaviour — a builder setter, a per-plugin constant). A few are the tier's
+  *contract*: a genuine duplicate that differs only by a renamed local
+  (rwr's `line_start`, gqls's `pascal_case`/`to_pascal`) is labeled
+  `distinct` because the tier not catching it is correct-by-design — those
+  labels flip if normalization ever reaches Prism-grade parity.
+- **A pair may name the same id twice.** Rust free functions have no owner
+  (DEC-012), so a helper copied between two files is two units with one
+  name, and `git<TAB>git<TAB>duplicate` asserts "the two same-named units
+  collide". Sound while exactly two units carry the name; a third would
+  make the label ambiguous, which is the known cost of DEC-012's owner rule.
+
+`queries.tsv` is deliberately empty — the duplicate tier is what shipped
+unmeasured. Two limits, noted rather than worked around: the harness runs one
+checkout, so the cross-repo copy (ae's `HashEmbedder::embed` is a paste of
+gqls's, identical modulo locals) is real but unlabelable; and `ae` itself has
+no in-repo pair worth labeling. Measured baseline on 2026-08 checkouts:
+every labeled collision reported, no false collisions at any size, and one
+deliberate false negative (rwr's 3-line `corpus_dir` sits below
+`--min-lines 4` — the floor's cost, on the record).
+
+## The short-body band: the near tier's limitation, measured
+
+Jaccard is harsher on short bodies — one edited line moves a third of an
+8-line body's tokens — and until now that was a paragraph in the docs rather
+than a number. `pairs_short.tsv` in the rails and discourse sets holds 4–8
+line pairs, same grammar as `pairs.tsv`, kept apart so the band's numbers
+never blur the headline ones. No harness reads the file yet; to measure,
+point `contour eval` at a directory holding it as `pairs.tsv`.
+
+Measured at the calibrated settings (threshold 0.80, `--min-lines 4`):
+
+- **11 of 13 genuine short near-duplicates are missed** (rails 0/5,
+  discourse 2/8). The copies score 0.56–0.76 — a one-line edit in a 5–9 line
+  body lands far below a threshold that was calibrated on longer bodies.
+- **The two the tier does catch are the rename-only pairs** (jaccard 1.0): a
+  changed parameter or keyword name leaves the token multiset intact, so
+  shortness costs nothing. The variable is edits-per-token, not length.
+- **Both labeled false positives sit at exactly 0.80**: opposite controller
+  actions (pin/unpin, banner/pin) whose shared scaffold is most of a short
+  body. Lowering the threshold to recover the misses would let these in —
+  on this evidence the band is not fixable by moving the constant, which is
+  the finding.
+
+## What discourse adds: do rails-calibrated thresholds transfer?
+
+The rails thresholds were calibrated on one corpus, and a library's twins
+(`String#first`/`#last`) are not an app's twins (copied import scripts,
+plugin-to-plugin copies, migrations). The discourse set exists to ask whether
+the numbers hold. Measured on a 2026-08 checkout, structural tiers only:
+
+- **Exact-tier precision drops from 0.93 to 0.73**, and every new false
+  positive is a schema migration: byte-identical `up`/`down` bodies that are
+  frozen history, never consolidation candidates (DEC-020). `--min-lines`
+  cannot help — the largest is 16 lines. This is a *class* of collision rails
+  had no label for; a fix would have to know what a migration file is. Recall
+  stays 1.00.
+- **Near-tier recall drops from 1.00 to 0.50 at jaccard 0.80.** The rails
+  near labels were drawn from pairs the tier already reported; the discourse
+  ones were sourced by sweeping the threshold to 0.55 and reading, so the
+  number measures the threshold against the copy-paste population instead of
+  against itself. Genuine one-edit copies score 0.56–0.73 routinely (a 9-line
+  copy with one guard changed lands at 0.58). Precision holds (one false
+  positive: a migration's own `up` against its `down` at 0.83).
+- **Canonicality improves**: 4/5 edges correct (rails: 2/5), because app
+  copies have cleaner provenance — `git_age` alone went 5/0. The one
+  abstention is a plugin merged from an external repo, whose pre-merge
+  history git cannot see.
 
 ## What the report says
 

@@ -1,0 +1,12 @@
+# token_hash pairs against a gqls checkout (run from ~/code/lib/rust/gqls).
+#
+# DRAFTED BY CLAUDE, NOT YET REVIEWED BY THE OWNER. Verified by reading both
+# bodies. See tests/eval/rust/trekr/pairs.tsv and the README for the tier's
+# contract.
+
+# A REAL duplicate the tier misses correct-by-design: the same
+# capitalize-first-letter helper in example.rs and resolve.rs, identical but
+# for local names (chars/first vs chars/f). The gold case for anything
+# rename-blind — `distinct` records the tier's contract, and flips if
+# normalization ever reaches Prism-grade parity (DEC-012).
+pascal_case	to_pascal	distinct

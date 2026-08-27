@@ -1,0 +1,2 @@
+# Deliberately empty: the Rust sets exist to measure the token_hash tier
+# (see tests/eval/README.md).

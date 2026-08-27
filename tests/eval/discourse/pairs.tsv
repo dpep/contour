@@ -1,0 +1,101 @@
+# Pairs the duplicate report should and should not group, against a discourse
+# checkout.
+#
+# DRAFTED BY CLAUDE, NOT YET REVIEWED BY THE OWNER. Every verdict below was
+# confirmed by reading both bodies against the labeling rule (DEC-020): a pair
+# is a duplicate iff consolidating it would reduce net complexity.
+#
+# Where the rails set's pairs are library twins (String#first/#last), this
+# corpus's are app twins: copied import scripts, plugin-to-plugin copies, and
+# a class of exact collision rails does not have — schema migrations, where a
+# byte-identical body is still not a consolidation candidate because migration
+# files are frozen history.
+
+# --- confirmed identical bodies ----------------------------------------------
+# Copied wholesale between two abandoned-source import scripts.
+ImportScripts::Muut#repair_json	ImportScripts::Ning#repair_json	duplicate
+# Byte-identical XML flattener in the ods and odt extractors.
+DiscourseAi::Completions::OdsToText#collect_inline	DiscourseAi::Completions::OdtToText#collect_inline	duplicate
+# Identical; HEADER_ATTRS_FOR is a different table per job, and one parameter
+# consolidates them — the write_query? judgment from the rails set.
+Jobs::ExportCsvFile#get_header	Jobs::ExportUserArchive#get_header	duplicate
+# Identical; update_raw/update_cooked differ per job, so a shared mixin keeps
+# behaviour intact — the connect/new_client shape from the rails set.
+Jobs::ChangeDisplayName#update_post	Jobs::UpdateUsername#update_post	duplicate
+# The same photo-prefix guessing copied between the two Vanilla importers.
+BulkImport::Vanilla#find_photo_file	ImportScripts::VanillaSQL#find_photo_file	duplicate
+# Identical flag-permission check copied chat → post-voting; even the unused
+# first parameter came along.
+Chat::GuardianExtensions#can_flag_message_as?	PostVoting::GuardianExtension#can_flag_post_voting_comment_as?	duplicate
+# Identical but for the record parameter's name; one method taking the record
+# consolidates them.
+DiscourseAi::Translation::CategoryLocaleDetector.detect_locale	DiscourseAi::Translation::TagLocaleDetector.detect_locale	duplicate
+PostLocaleUpdater.validate_locale!	TopicLocaleUpdater.validate_locale!	duplicate
+# Identical to the comment; only the comment's verb differs.
+User::BulkDestroy#fetch_users	User::BulkSuspend#fetch_users	duplicate
+# modx.rb disabled its copies by prefixing `not_`; the bodies are byte-identical
+# to vbulletin.rb's. A dead copy is the best kind of finding: the consolidation
+# is deletion.
+ImportScripts::VBulletin#close_topics	ImportScripts::Modx#not_close_topics	duplicate
+ImportScripts::VBulletin#import_private_messages	ImportScripts::Modx#not_import_private_messages	duplicate
+
+# --- migrations: byte-identical, DISTINCT, and the app-shaped sharp edge -----
+# Schema migrations are frozen history: a migration file can never be merged
+# into another, so an identical body is not a consolidation candidate and
+# reporting it offers a refactor that must not happen (DEC-020). rails has no
+# label in this class; an app corpus is full of them. The exact tier currently
+# groups all five.
+#
+# The post_migrate copy re-runs the same batch update on purpose.
+SetTypeAndTargetIdOnChatMentions#up	SetTypeAndTargetIdOnChatMentionsPostMigrate#up	distinct
+# One migration's `up` is a later migration's `down` — identical because each
+# must independently restore the same state.
+AddConstraintsToUserStat#up	DropUserStatCountConstraints#down	distinct
+FixCategorySlugsIndex#change	SetCategorySlugToLower#down	distinct
+# Same settings-rename recipe, different RENAME_SETTINGS per migration.
+RenameSsoSiteSettings#up	RenameRateLimitSearchAnon#up	distinct
+# up and down of ONE migration: inverse directions, never consolidatable.
+# The near tier currently reports this pair at 0.83.
+CommentMigration#up	CommentMigration#down	distinct
+
+# --- near misses that must stay apart ----------------------------------------
+# Every scorable's `query` emits this shape; the SQL inside is the entire
+# behaviour and differs per scorable. The class hierarchy IS the consolidation.
+DiscourseGamification::Solutions.query	DiscourseGamification::LikeGiven.query	distinct
+# Same seeding scaffold, different payloads: one creates a thread, one only
+# builds message params.
+DiscourseDev::Thread#data	DiscourseDev::Message#data	distinct
+# Same fetch-from-source scaffold, but one imports over SQL and one over the
+# API; the differing steps are the behaviour.
+ImportScripts::Zendesk#import_posts	ImportScripts::ZendeskApi#import_posts	distinct	provisional
+
+# --- true near-duplicates: copy-paste, then tweaked ---------------------------
+# Each verified by reading both bodies. `near` means the NEAR tier must find it
+# and the exact tier must not. Unlike the rails set — whose near labels were
+# drawn from what the tier already reported — half of these were found by
+# sweeping the threshold down to 0.55 and reading, so recall here measures the
+# 0.80 threshold against the copy-paste population rather than against itself.
+#
+# One helper call differs: find_last_row(rows) against rows.to_a.last.
+ImportScripts::PhpBB3::DatabaseBase#query	ImportScripts::JForum#query	near
+# Identical but for a default value on the parameter.
+DiscourseReactions::PostReactionsQuery#ignored_users_filter_sql	Chat::MessageReactionUsersQuery#ignored_users_filter_sql	near
+# The post/topic twin: same pipeline, one content helper and one apply call
+# differ. A two-argument helper consolidates it.
+DiscourseAi::InferredConcepts::Applier#match_existing_concepts_for_post	DiscourseAi::InferredConcepts::Applier#match_existing_concepts	near
+# Two thin controller actions around load_change_request(:old)/(:new).
+UsersEmailController#show_confirm_old_email	UsersEmailController#show_confirm_new_email	near
+# discourse-ai copied chat's reviewable actions; one icon differs.
+Chat::ReviewableMessage#build_combined_actions	ReviewableAiChatMessage#build_actions	near
+# Copied, then one line of category defaulting dropped. Currently below the
+# 0.80 threshold (0.69).
+ImportScripts::Quandora#import_topic	ImportScripts::Socialcast#import_topic	near
+# Same rescue-wrapped revision walk; only the key-presence guard differs.
+# 9 lines put that one edit at 0.58 — far below the threshold.
+Jobs::UpdateUsername#update_revision	Jobs::ChangeDisplayName#update_revision	near
+# Copied mock, then a skip_body_check escape hatch added (0.69).
+VllmMock#stub_streamed_response	OpenAiMock#stub_streamed_response	near
+# Copied batch importer plus one missing-topic guard block (0.73).
+ImportScripts::Bespoke#import_post_batch!	ImportScripts::Jive#import_post_batch!	near
+# Copied chat → post-voting; one clause reads the edit time differently (0.63).
+PostVoting::CommentReviewQueue#can_flag_again?	Chat::ReviewQueue#can_flag_again?	near

@@ -1,0 +1,41 @@
+# The short-body band: 4-8 line pairs, against a rails checkout. Same grammar
+# as pairs.tsv; kept apart so the near tier's documented limitation — jaccard
+# is harsher on short bodies, where one edit moves a third of the tokens —
+# gets a measured miss-rate instead of a paragraph. No harness reads this file
+# yet; run it by pointing `contour eval` at a directory holding it as
+# pairs.tsv (see tests/eval/README.md).
+#
+# DRAFTED BY CLAUDE, NOT YET REVIEWED BY THE OWNER. Every verdict verified by
+# reading both bodies against DEC-020. Measured jaccard noted per row; the
+# threshold is 0.80.
+
+# --- genuine near-duplicates -------------------------------------------------
+# One guard line differs between the sibling classes whose #count is already
+# an exact duplicate (see pairs.tsv). 7 lines, 0.71.
+ActiveRecord::InternalMetadata#drop_table	ActiveRecord::SchemaMigration#drop_table	near
+# Copied test scaffold; the tweak is which hook it drives (0.75).
+ActionCable::Connection::MultipleIdentifiersTest#open_connection	ActionCable::Connection::StringIdentifierTest#open_connection	near
+# Copied test; one literal differs (0.67).
+ModelGeneratorTest#test_check_class_collision	HelperGeneratorTest#test_check_class_collision	near
+# REXMLEngineTest re-states the shared EngineTests case with only the fixture
+# string changed (0.60).
+XMLMiniEngineTest::EngineTests#test_parse_from_frozen_string	REXMLEngineTest#test_parse_from_frozen_string	near
+# Copied test, one association call differs; a shared example would hold both
+# (0.75).
+HasManyAssociationsTest#test_association_attributes_are_available_to_after_initialize	HasOneAssociationsTest#test_association_attributes_are_available_to_after_initialize	near	provisional
+
+# --- distinct: same shape, the difference IS the behaviour -------------------
+# Dialect SQL: " IS NOT DISTINCT FROM " against " <=> " (0.60).
+Arel::Visitors::PostgreSQL#visit_Arel_Nodes_IsNotDistinctFrom	Arel::Visitors::MySQL#visit_Arel_Nodes_IsNotDistinctFrom	distinct
+# Service-specific headers are the entire point of each override (0.64).
+ActiveStorage::Service::S3Service#headers_for_direct_upload	ActiveStorage::Service::AzureStorageService#headers_for_direct_upload	distinct
+# The test double skips the real session's lazy load; merging them would put
+# test behaviour in production (0.56).
+ActionController::TestSession#dig	ActionDispatch::Request::Session#dig	distinct
+# MySQL's extra null-check is adapter semantics; the visitor hierarchy exists
+# so the adapters can differ (0.76 — the closest distinct pair to the
+# threshold in this band).
+ActiveRecord::ConnectionAdapters::MySQL::SchemaCreation#visit_ChangeColumnDefaultDefinition	ActiveRecord::ConnectionAdapters::PostgreSQL::SchemaCreation#visit_ChangeColumnDefaultDefinition	distinct
+# Copied then adapted, but the assertion tests a different association type —
+# consolidating would erase the distinction under test (0.69).
+HasOneThroughAssociationsTest#test_loading_cpk_association_with_unpersisted_owner	HasManyThroughAssociationsTest#test_loading_cpk_association_with_unpersisted_owner	distinct	provisional

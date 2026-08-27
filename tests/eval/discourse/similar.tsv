@@ -1,0 +1,27 @@
+# Ground truth for `contour similar`, against a discourse checkout. Proposed
+# format — no harness reads this yet; see tests/eval/rails/similar.tsv for the
+# row grammar and tests/eval/README.md for the semantics.
+#
+# DRAFTED BY CLAUDE, NOT YET REVIEWED BY THE OWNER. Every case was verified by
+# running `contour similar <probe>` from a discourse checkout AND reading the
+# bodies. Veto or amend any line.
+
+# Different names, identical bodies: the cross-name twin the structural tier
+# exists for.
+AdminDetailedUserSerializer#external_ids	must	CurrentUserSerializer#associated_account_ids	structural
+
+# A genuine copy (one return-value edit) that jaccard puts at 0.69: today only
+# the identifier tier surfaces it. Prism-grade near recall on short bodies
+# would upgrade the tier to near_structural.
+Chat::UpdateMessage#fetch_uploads	must	Chat::CreateMessage#fetch_uploads	semantic
+
+# CURRENTLY FAILING, and the gold half of this file: the near tier presents
+# opposite controller actions (banner vs pin, pin vs unpin) as near-copies at
+# exactly 0.80. Related is right; "the same implementation twice"
+# (near_structural, DEC-019) is not.
+TopicsController#re_pin	must_not	TopicsController#make_banner	near_structural
+TopicsController#re_pin	must_not	TopicsController#clear_pin	near_structural
+
+# CURRENTLY FAILING: a migration's up and its down are inverse directions of
+# one change, reported near at 0.83.
+CommentMigration#up	must_not	CommentMigration#down	near_structural
