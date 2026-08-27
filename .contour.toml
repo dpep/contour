@@ -1,0 +1,22 @@
+# contour's own path policy. DEC-022 is policy, and the repo follows it.
+#
+# Rules are path prefixes, matched exactly the way a SCOPE is, and they beat
+# the conventions.
+
+[paths]
+# Files carrying a VENDORED provenance header (docs/PRIOR-ART.md): straight
+# re-copies from trekr, rwr and gqls, kept close enough to upstream that a sync
+# is a re-copy. Nobody consolidates them — that is the whole bargain — so they
+# are not consolidation candidates.
+#
+# `src/ruby/norm.rs` is deliberately absent: it is contour's own code, derived
+# from rwr's `node_eq` in shape only. The rule is the provenance header, not a
+# family resemblance.
+vendored = [
+  "src/embed/mrl.rs",
+  "src/embed/onnx.rs",
+  "src/ruby/extract",
+  "src/ruby/facts.rs",
+  "src/ruby/generated.rs",
+  "src/scan.rs",
+]

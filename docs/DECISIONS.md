@@ -474,3 +474,55 @@ a config for a repo whose layout differs, options for the one-off.
 Classification attaches at the **file** layer (DEC-021), never the blob layer.
 The same bytes vendored into one repo and authored in another are one parse and
 two classifications, which is precisely the property that makes this correct.
+
+### As built (M11a), and ruled
+
+**A class is a pure function of the path string**, never of the bytes.
+`scan::language` already made that call one layer up — sniffing content would
+mean reading every file in the repo to answer a question the layout answers for
+free — and it is what keeps reclassification free: no reindex, because nothing
+below the `file` table ever learns about it. The cost is that a fact absent from
+the path is invisible here, and a Rust `#[cfg(test)] mod tests` is the standing
+example: it sits in an app file and classifies as `app`.
+
+**Six classes**: `app`, `test`, `fixture`, `migration`, `generated`,
+`vendored`. Each of the five named ones exists because a corpus produced a
+finding that needed it; the conventions behind them are deliberately thin,
+because a rule that withholds real code is worse than one that misses.
+
+**A group is withheld only when *every* copy sits in an ignored path.** One
+whose copies disagree reports as `mixed` — not a class, since a file has one
+class and a group of files need not — and ranks with app code. A body in both
+`vendor/` and `app/` is a finding about the app copy, and contour's own
+`ParamKind` pair is the worked example: `core.rs` against the vendored
+`ruby/facts.rs` stays visible and is reframed as spanning the vendor seam,
+which is exactly why that duplication exists.
+
+**Overrides, in one mechanism.** `.contour.toml` at the checkout root, a
+`[paths]` table of class name → path prefixes, believed over the conventions:
+
+```toml
+[paths]
+app = ["db/migrate"]      # these really are consolidatable here
+test = ["engines/billing/spec"]
+```
+
+Rules are **prefixes, not globs** — matched by the same `paths::under` a
+`SCOPE` uses, so there is one path language in the tool rather than two that
+almost agree, and a rule containing `*` is refused with that reason rather than
+silently matching nothing. Longest prefix wins, so the file needs no order a
+reader could get wrong. An unknown class name, a duplicate prefix, or an
+unknown table fails the run: a config half-applied would withhold what somebody
+wrote it to keep. Deliberately **no per-class policy table** — reclassifying to
+`app` already covers every recorded need, and two mechanisms for one job is the
+kind of redundancy that rots.
+
+**One-off**: `--include-ignored` (CLI) / `include_ignored` (MCP), which reports
+every class and reports nothing as withheld, because nothing was.
+
+**`search` discounts rather than drops** a hit outside the app population, at
+`search::NON_APP_DISCOUNT`, disclosed as `discount` on every answer with the
+`class` on every hit. That constant is **not calibrated** — DEC-011 says a
+ranking constant comes from the eval set, and no labeled query expects a test
+method. What it is measured against is regression: no labeled query on any of
+the seven sets changes rank, and both known live cases flip.
