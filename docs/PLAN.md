@@ -143,11 +143,28 @@ Multi-resolution via hierarchy: coarser units, not blurrier methods
   denominator, never a flat score.
 - LSP last.
 
-## Milestone 11 — settled direction
+## Milestone 11 — DELIVERED
 
-**Ruled by the owner. These are decisions the M11 engineer inherits, not
-debates to reopen.** Each has a measurement behind it, recorded below and in
-`docs/DECISIONS.md`; none has been implemented.
+**All four rulings below are built and measured.** The sections are kept for
+the evidence behind them; the decisions themselves live in `docs/DECISIONS.md`.
+
+| ruled | built | where |
+| ----- | ----- | ----- |
+| 1. Path classes | 11a | DEC-021, DEC-022 — `src/paths.rs`, extended in 11c to classify Rust test *units*, not only files |
+| 2. The near tier's measure and threshold | 11b, re-ruled 11c | DEC-023 and its postscript — `saves_nodes` measures, `shapes` decides, 0.70 stands on per-population evidence |
+| 3. Label methodology | 11b, 11c | `tests/eval/README.md` — the sweep, `similar.tsv` and `pairs_short.tsv` scored, rails' near labels re-audited by census |
+| 4. Context-dependent constants | 11c | DEC-024 — `src/constants.rs`, built narrower than approved, with the reason measured |
+
+Two things M11 also learned that were not on its list: the blend weights a
+summary above an identifier (DEC-023), and Rust's inline tests were never
+reached by the test discount. Both were live complaints from field trials
+rather than plan items, which is the argument for keeping the trials running.
+
+**What M12 inherits** is everything under "The recurring shape" and "Still open,
+and genuinely so" below. The shortest version: the near tier is honest on app
+code and swamped by test siblings that no threshold separates; three separate
+findings turned out to be one question about names; and the eval can no longer
+compare its two candidate measures without labels sourced from the other one.
 
 ### The north star, ruled by the owner
 
