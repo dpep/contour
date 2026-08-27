@@ -21,6 +21,10 @@ Initial skeleton — nothing has been released, so everything below is new.
   - Measured: discourse exact-tier precision **0.73 → 1.00** with recall still
     1.00 (its four migration false positives are gone), and rails search top-5
     **2/77 → 12/77** (its library methods were drowning in `test/`).
+- Cosines, Jaccards and floors leave the process rounded to the two decimals
+  they actually have. Rounding an f32 leaves an f32, which widens back to a
+  double on the way out, so `--json` and every MCP answer used to carry
+  `0.44999998807907104` where the human output said `cos 0.45`.
 - **A query answer is never silently stale.** Every command that answers from
   the index — `dupes`, `search`, `similar`, `summarize`, `eval`, and the MCP
   tools — brings the checkout up to date first and says so (`index refreshed —
