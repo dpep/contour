@@ -55,6 +55,21 @@ The `distinct` rows are the sharp half. Each is a *near* miss that a looser
 normalizer would collide, so if one ever shows up as a duplicate, normalization
 has been over-relaxed.
 
+`canonical.tsv` — groups of similar methods where one is unambiguously the
+implementation the others shadow, with the evidence named (Phase 3's
+canonicality signals need ground truth too). **Proposed format; no harness
+reads it yet.** One row per (canonical, alternate) edge:
+
+```text
+Invoice#unpaid_for	LegacyInvoice#unpaid_for	older,delegates
+```
+
+The third column is comma-joined from a small vocabulary — `older` (canonical
+predates the alternate in git), `delegates` (the alternate calls the
+canonical), `mirrors` (a declared copy, e.g. a test stub), `ex_subclass` (the
+alternate's class once inherited the method's home). Every verdict is verified
+by reading both bodies and `git log`, never assumed.
+
 ## What the report says
 
 - **search** — rank of the expected method, as top-1 / top-5 / found-at-all,
