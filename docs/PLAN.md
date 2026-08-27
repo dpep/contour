@@ -298,6 +298,49 @@ And it defines the labeller's hardest judgement out of existence. Today someone
 has to decide per pair whether the offered refactor is real; with the caveat in
 the output, the tool discloses the uncertainty and the reader applies the rule.
 
+## What M11c changed about what we know
+
+Three findings from the milestone's last block of work, each measured and each
+needing a decision that is not the implementer's to take.
+
+### The near tier on rails is mostly a sibling-test detector
+
+rails' near labels had been drawn from the tier's own report, so 1.00/1.00 was
+arithmetic. An unbiased random sample of what the tier actually ships (seed 11,
+20 pairs at the shipped 0.70) says **2 are real consolidations — precision
+0.10**. Eighteen are sibling test methods differing by exactly the thing under
+test; nineteen of the twenty are test code. Sampling below the threshold found
+1 real pair in 15, so lowering it buys almost nothing.
+
+Three candidate responses, none taken:
+
+1. **Move the threshold.** The evidence for 0.70 has changed — see below.
+2. **Treat the near tier's populations the way `dupes` already treats path
+   classes.** Nineteen of twenty were test code, and sibling test methods are
+   near-identical *by construction*: the shape they share is the test harness.
+   DEC-022 ranks test duplication apart rather than dropping it; the near tier
+   may want the same or stronger.
+3. **The edits-per-token measure** already recorded under "the short-body band
+   needs a different measure". A pair differing by one token in a 6-line body
+   and one differing by one token in a 60-line body are not the same claim, and
+   Jaccard scores them alike.
+
+### The 0.70 ruling rests on evidence that has since changed
+
+M11b ratified 0.70 because it improved precision *and* recall over 0.80. On the
+re-audited labels, merged across rails and discourse, it is a trade: **0.47/0.67
+at 0.70 against 0.55/0.50 at 0.80**. The constant was left where it was
+ratified, because moving a ratified number on new evidence is a decision, not a
+patch. The numbers are in `tests/eval/README.md` and reproduce from the sweep.
+
+### Which measure the near tier should use is still unsettled, and now says so
+
+`saves_nodes` is a measurement and `shapes` still decides, because every label
+in every set — including M11c's new sample — was sourced from what the shape
+measure reports. **A sample drawn from one measure's output cannot compare it
+with another.** What would settle it is written down: sweep the *node* measure
+on discourse, read what turns up, label that too.
+
 ## Still open, and genuinely so
 
 Recorded with measurements, awaiting a decision.
