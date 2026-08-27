@@ -195,6 +195,81 @@ And it defines the labeller's hardest judgement out of existence. Today someone
 has to decide per pair whether the offered refactor is real; with the caveat in
 the output, the tool discloses the uncertainty and the reader applies the rule.
 
+### What a second corpus did to the thresholds
+
+discourse was labeled independently and reproduces exactly (exact 0.73
+precision 11/15, near 0.50 recall 5/10, canonicality 4/5). Every number below
+is from that run. **None of these is an M10 patch** — each needs a design
+decision, which is why they are here rather than in a commit.
+
+**1. Exact precision falls 0.93 → 0.73, and every new false positive is a
+schema migration.** Byte-identical `up`/`down` bodies and re-runnable
+`migrate` methods across `db/migrate`. Under DEC-020 they are not duplicates
+at all: migration history is frozen, so consolidating one is not a
+consolidation, it is a rewrite of the past. `--min-lines` cannot fence them —
+the largest false collision is 16 lines, well above any usable floor.
+
+The fix needs contour to know that `db/migrate` is a *class* of path with
+different rules. That is the same shape as two other things already recorded
+here — the test-code ranking question, and the constant-scope caveat tier —
+and a third instance is the labeler's dogfood finding that `.rb` fixture
+corpora inside trekr and rwr index as real Ruby units and pollute their dupes
+reports. Four symptoms, one absent concept: **contour has no notion of what
+kind of file it is looking at.** Worth solving once, deliberately, rather than
+four times in patches.
+
+**2. Near recall falls 1.00 → 0.50, and the 0.80 threshold is now
+argued-with by our own eval.** Genuine one-edit copies on discourse score
+0.56–0.73, below the bar. The labeler disclosed the reason the rails number
+looked better: rails' near labels were sourced *from the tier's own report*,
+so they could only confirm it. discourse's were found by sweeping to 0.55 and
+reading the results — which is how you find what a threshold misses.
+
+0.80 therefore has exactly the status the relevance floor has: a number
+measured on one corpus and disclosed as such. Recalibration wants both
+corpora and non-circular labels on each.
+
+**3. The short-body band needs a different measure, not a different
+number.** 0.80 misses 11 of 13 genuine 4–8-line near-duplicates, and both
+labeled false positives sit at *exactly* 0.80 — so moving the constant trades
+one failure for the other and settles nothing. `near::NEAR_THRESHOLD` already
+records that Jaccard is harsher on a small body; this is that limitation with
+a denominator. The labeler's diagnosis is that the variable is
+edits-per-token rather than length, which is a different metric rather than a
+different threshold, and is the shape of the next attempt.
+
+**4. Canonicality transfers, and improves.** 4/5 on discourse against 2/5 on
+rails, with `git_age` at 5 correct and 0 wrong. Evidence in DEC-019's favour:
+the signals are not tuned to one repo's history, and abstaining on
+disagreement kept the wrong-answer count at zero on both corpora.
+
+**5. The Rust token tier's contract holds exactly.** Six sibling repos, every
+labeled collision found, zero false, and boundary pairs one token apart
+behaving as designed (DEC-012). Two dogfood findings worth keeping: rq carries
+the same epoch-seconds helper four times under three names, and gqls's case
+helper is pasted into ae — a cross-repo duplicate contour cannot label today,
+because a labeled set is scoped to one checkout.
+
+**6. `similar.tsv` is written and waiting.** 17 assertions, 5 of them marked
+as what *should* happen and currently failing — including identifier noise
+outranking genuine siblings in berater's `acquire_lock` family, which is a
+finding about ranking rather than about the harness. Wiring it is the
+cheapest next step in the eval, because the labels already exist.
+
+### A serializer DSL mints writer methods that do not exist
+
+`attribute :admin_ids` in a discourse serializer produces
+`AboutSerializer#admin_ids=`, which surfaces in `similar`. The macro table
+treats `attribute` as an accessor, which is right for ActiveRecord and wrong
+for ActiveModel::Serializers, where it declares a serialized field and defines
+no writer.
+
+Telling them apart means knowing what the enclosing class inherits from —
+resolved ancestry, which DEC-014 drops at the extractor seam on purpose and
+which arrives with the tree layer in Phase 3. So this is not a macro-table
+fix; recorded with the cost rather than patched with a guess about which
+`attribute` is which.
+
 ### `module_function` gives one method two ids
 
 `module_function :secure_compare` is faithfully extracted as two units — a
