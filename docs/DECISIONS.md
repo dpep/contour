@@ -377,3 +377,30 @@ near ones are "the same implementation twice". Crowning a member of a list that
 includes semantic neighbours would assert an equivalence nothing measured.
 Canonicality ranks a set of candidates that are claimed to be interchangeable;
 `dupes` produces such a set and `similar` does not.
+
+## DEC-020 — A duplicate is a consolidation that would reduce complexity
+
+Ratified by the owner, and it is a product definition rather than a labelling
+convenience: **a pair is a duplicate iff consolidating it would reduce net
+complexity.** `dupes` exists to offer a consolidation. A pair whose
+consolidation needs metaprogramming or a behaviour change is not a finding, it
+is a wasted trip — the tool would be proposing to increase complexity in the
+name of removing duplication.
+
+This is what DEC-017 was really applying. The `super` pairs are distinct not
+because `super` is special but because consolidating them is impossible without
+metaprogramming; the same reasoning makes rails'
+`compatible_table_definition` copies distinct, and it makes `write_query?` a
+duplicate despite looking identical to them, because one parameter consolidates
+it. **The shape does not decide, the arithmetic does.**
+
+Two consequences worth stating, since neither is obvious:
+
+- The near tier is not a weaker exact tier. "Same except a few lines" is often
+  the *best* consolidation candidate — a small edit for a real reduction — so
+  the report ranks expected reduction per unit of effort, not similarity.
+- The ordering is therefore the estimate itself: copies beyond the first, times
+  the body's node count, discounted by the measured Jaccard. Displayed with its
+  components, never as a bare score (DEC-010). Why nodes rather than lines is
+  measured on rails and argued in `dupes::Group::saves_nodes`, where the choice
+  lives; the labeling rule's worked examples are in `tests/eval/README.md`.
