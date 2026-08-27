@@ -382,6 +382,9 @@ end
         err.contains("pool.rb:3") && err.contains("pool.rb:13"),
         "got {err:?}"
     );
+    // The same message reaches an agent through the MCP tool, so it must not
+    // instruct one in CLI syntax.
+    assert!(!err.contains("contour similar"), "got {err:?}");
 
     // The location it just printed resolves, and finds the other copy as an
     // exact structural clone.

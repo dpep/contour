@@ -505,14 +505,12 @@ fn resolve(units: &[Located], target: &str) -> Result<usize> {
         },
         [only] => Ok(*only),
         many => {
+            // Bare locations, not `contour similar …`: this message is shared
+            // with the MCP tool, where CLI syntax is the wrong instruction and
+            // `path:line` is what both surfaces accept as the unit itself.
             let listed: Vec<String> = many
                 .iter()
-                .map(|i| {
-                    format!(
-                        "  contour similar {}:{}",
-                        units[*i].path, units[*i].unit.line
-                    )
-                })
+                .map(|i| format!("  {}:{}", units[*i].path, units[*i].unit.line))
                 .collect();
             bail!(
                 "`{target}` names {} units in this checkout; ask for one by location:\n{}",
