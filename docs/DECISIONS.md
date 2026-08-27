@@ -526,3 +526,36 @@ every class and reports nothing as withheld, because nothing was.
 ranking constant comes from the eval set, and no labeled query expects a test
 method. What it is measured against is regression: no labeled query on any of
 the seven sets changes rank, and both known live cases flip.
+
+## DEC-023 — What a summary is worth against a name
+
+**Status: built at M11b, awaiting the review checkpoint.** Recorded here while
+the reasoning is fresh; the constants are one line to change if the ruling
+differs.
+
+The field trial asked for a summary it had contributed and got it fifth. The
+mechanism is not the embedder: RRF fuses two *rankings* and discards the cosine,
+so a summary hit at 0.44 and an identifier hit at 0.20 two places above it were
+worth 0.0276 and 0.0277 — indistinguishable. The semantic half had no way to say
+that one of those matches was evidence of a different kind.
+
+**The ruling this proposes:** the semantic half's weight depends on which vector
+answered — `SUMMARY_WEIGHT` 1.0, `IDENTIFIER_WEIGHT` 0.7. The identifier weight
+is the old single constant, unchanged, so a corpus with no summaries ranks
+exactly as it did and one at complete coverage is only rescaled. The weights
+differ **only where the tiers meet**, which is both where the old single weight
+was wrong and the state DEC-018's grazing bargain is about: if contributing a
+summary does not visibly change what comes back, the flywheel has no flywheel.
+
+**Not calibrated, and it cannot be**, for the same reason as DEC-011's other
+uncalibrated constant: none of the seven sets is both partly summarized and
+labeled. What it is measured against is regression — fixture (complete coverage)
+holds at 0.27/0.55, rails and discourse (no coverage) are identical — plus the
+live repro, which flips, and an e2e that fails if the weights are equalized.
+
+**The cost, stated rather than discovered later:** at partial coverage a
+summarized unit is systematically favoured over an unsummarized one that matches
+about as well. That is the intended direction, but it biases a warming corpus
+toward its covered half, and `tiers` on every answer is what lets a reader see
+it. If that bias ever costs more than the flywheel gains, the fix is one
+constant and this entry says which.

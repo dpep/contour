@@ -6,6 +6,15 @@
 //! scale-free, so a token-overlap count and a cosine need no common
 //! normalization, and a unit strong in both rises above one strong in either.
 //!
+//! The semantic half is weighted by **which vector answered**: a summary is
+//! worth more than an identifier, because it is what the code does rather than
+//! a second look at the name the lexical half already read. RRF discards the
+//! cosine and keeps only the rank, and without that weighting the two tiers are
+//! indistinguishable in the fusion — a field trial on a partly-summarized rq
+//! had the summary that answered the question ranking fifth at cosine 0.44,
+//! under identifier hits at 0.20 whose long snake_case names shared query
+//! tokens by accident.
+//!
 //! Every answer discloses what produced it (DEC-010) and how much of the
 //! corpus could have participated (DEC-009). The semantic half only covers
 //! summarized units, so a search over a half-summarized repo answers from what
