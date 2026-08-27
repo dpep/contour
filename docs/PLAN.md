@@ -149,6 +149,22 @@ Multi-resolution via hierarchy: coarser units, not blurrier methods
 debates to reopen.** Each has a measurement behind it, recorded below and in
 `docs/DECISIONS.md`; none has been implemented.
 
+### The north star, ruled by the owner
+
+> "Getting us into the right neighborhood is probably our best bet — we can't
+> do everything, but we can optimize the search."
+
+contour's job is to make the **first step unmissable**: recall, ranking, and
+honest disclosure. The last step — reading the code and judging it — belongs to
+the person or agent, and the rq field trial showed that division working end to
+end ("the tool got me to the neighbourhood and manual reading did the last
+step").
+
+The practical weight of this: **the search-ranking work is the product
+investment**, ahead of any completeness chase. A feature earns its priority by
+how much it improves the pointing. That is why the buried-summary repro below
+outranks a second language, a deeper normalization tier, or another surface.
+
 M11 is briefed **after the owner's live MCP test drive**, deliberately. Real
 usage ranks the scope, and the first grazed summaries (DEC-018) will un-idle
 the queries whose answers never appear in an identifier — which is the half of
