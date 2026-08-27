@@ -64,6 +64,7 @@ impl Session {
             // machine has, or index a temp repo into its global store. An
             // unrunnable path is also the degraded path worth exercising.
             .env("CONTOUR_TREKR", "/nonexistent/trekr")
+            .env("CONTOUR_RQ", "/nonexistent/rq")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())

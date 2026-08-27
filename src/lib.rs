@@ -31,6 +31,7 @@
 
 pub mod canonical;
 pub mod cli;
+pub mod constants;
 pub mod core;
 pub mod dupes;
 pub mod embed;

@@ -59,6 +59,10 @@ impl Repo {
             .args(args)
             .current_dir(cwd)
             .env("CONTOUR_DB", &self.db)
+            // Hermetic: no case may consult whatever trekr or rq this machine
+            // happens to have. Both external signals report themselves absent.
+            .env("CONTOUR_TREKR", "/nonexistent/trekr")
+            .env("CONTOUR_RQ", "/nonexistent/rq")
             .output()
             .expect("run contour");
         (
@@ -253,6 +257,75 @@ fn an_edit_reparses_only_what_moved() {
         repo.json(&["--status", "--json"])["checkouts"][0]["units"],
         3
     );
+}
+
+/// Two identical bodies that do different things, because each reads its own
+/// `POLICY`.
+///
+/// rails' case in miniature: `Compatibility::V7_0#compatible_table_definition`
+/// and its `V6_1` sibling are byte-identical, and each `TableDefinition`
+/// resolves to its own version module's class. Consolidating them is not a
+/// consolidation, so the group is reported with a caveat rather than dropped —
+/// it is still two identical bodies, and the reader applies the rule.
+///
+/// `rq` is stubbed rather than called: the answer it gives is what decides the
+/// caveat, so a case that depended on this machine's rq index would pass or
+/// fail for reasons that have nothing to do with contour.
+#[test]
+fn dupes_caveats_a_group_whose_copies_read_different_constants() {
+    let body = |ns: &str| {
+        format!(
+            "module {ns}\n  POLICY = :{ns}\n  class Runner\n    def apply(x)\n      \
+             check(x)\n      POLICY\n    end\n  end\nend\n"
+        )
+    };
+    let repo = Repo::new(
+        "dupes-const",
+        &[("app/v1.rb", &body("V1")), ("app/v2.rb", &body("V2"))],
+    );
+    repo.run(&["index"]);
+
+    let stub = repo.dir.join("rq-stub");
+    std::fs::write(
+        &stub,
+        "#!/bin/sh\necho '[{\"name\":\"POLICY\",\"parent\":\"V1\"},\
+         {\"name\":\"POLICY\",\"parent\":\"V2\"}]'\n",
+    )
+    .unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&stub, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
+    let out = Command::new(env!("CARGO_BIN_EXE_contour"))
+        .args(["dupes", "--json", "--min-lines", "3"])
+        .current_dir(&repo.dir)
+        .env("CONTOUR_DB", &repo.db)
+        .env("CONTOUR_TREKR", "/nonexistent/trekr")
+        .env("CONTOUR_RQ", &stub)
+        .output()
+        .expect("run contour");
+    let report: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    let group = &report["groups"][0];
+    assert_eq!(
+        group["members"].as_array().map(Vec::len),
+        Some(2),
+        "{report}"
+    );
+    assert_eq!(group["caveat"]["constants"][0], "POLICY");
+    assert!(
+        group["caveat"]["basis"]
+            .as_str()
+            .is_some_and(|b| b.contains("POLICY")),
+        "the basis names what to go and look at"
+    );
+
+    // Without rq the check cannot run, and saying nothing would crown a
+    // consolidation that may not exist — so the run says it did not check.
+    let (out, err, _) = repo.run_in(&repo.dir.clone(), &["dupes", "--min-lines", "3"]);
+    assert!(!out.contains('!'), "no caveat claimed: {out}");
+    assert!(err.contains("unchecked"), "{err}");
 }
 
 /// The clone report's floor, and the scope filter. The testbed pins what

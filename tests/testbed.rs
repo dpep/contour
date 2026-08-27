@@ -121,10 +121,11 @@ fn contour(db: &Path, dir: &Path, args: &[&str]) -> (serde_json::Value, i32, Str
         .args(args)
         .current_dir(dir)
         .env("CONTOUR_DB", db)
-        // Hermetic: a case must not consult whatever trekr this machine has,
-        // nor index a temp repo into its global store. The reference signal
-        // reports itself absent, which is the degraded path a case can pin.
+        // Hermetic: a case must not consult whatever trekr or rq this machine
+        // has, nor index a temp repo into its global store. Both signals
+        // report themselves absent, which is the degraded path a case can pin.
         .env("CONTOUR_TREKR", "/nonexistent/trekr")
+        .env("CONTOUR_RQ", "/nonexistent/rq")
         .output()
         .expect("run contour");
     (

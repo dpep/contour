@@ -93,6 +93,11 @@ pub struct Group {
     /// them on a report that did not ask.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub canonical: Option<crate::canonical::Canonical>,
+    /// Why this group's consolidation may not be available. Filled by
+    /// [`crate::constants::annotate`], and absent both when the group is fine
+    /// and when the check could not run — the run-level stats say which.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub caveat: Option<crate::constants::Caveat>,
     /// The population this group belongs to: a [`crate::paths::Class`] name
     /// where every copy agrees, `mixed` where they do not (DEC-022).
     ///
@@ -115,6 +120,12 @@ pub struct Member {
     /// only per group, because in a mixed group *which* copy is the test one is
     /// the first thing a reader needs.
     pub class: crate::paths::Class,
+    /// The namespace this copy is written in, `::`-joined and lexical. Carried
+    /// rather than split back out of `id`, because whether the copies sit
+    /// under *different* namespaces is what decides whether an unqualified
+    /// constant in the body means the same thing in each (see
+    /// [`crate::constants`]).
+    pub owner: String,
 }
 
 /// Groups, plus what the path policy kept out of them.
@@ -165,6 +176,7 @@ pub fn find(
                 differing_nodes: None,
                 saves_nodes: estimate(members[0].unit.nodes, members.len()),
                 canonical: None,
+                caveat: None,
                 class: population(&copies),
                 members: copies,
             },
@@ -179,6 +191,7 @@ pub fn find(
 fn member(root: &str, l: &Located, classes: &crate::paths::Classes) -> Member {
     Member {
         id: l.unit.id(),
+        owner: l.unit.owner.clone(),
         class: classes.of(&l.path),
         // Absolute from here on: a record leaving the process has to be
         // resolvable by a reader who is not standing in the checkout. Human
@@ -333,6 +346,7 @@ pub fn find_near(
                 // matters — a pair sharing one big chunk of a long body.
                 saves_nodes: pair.shared_nodes,
                 canonical: None,
+                caveat: None,
                 class: population(&copies),
                 members: copies,
             },

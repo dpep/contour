@@ -120,6 +120,37 @@ pub struct Unit {
     pub nodes: Option<u32>,
 }
 
+/// One constant mentioned inside a body, with the nesting that resolves it.
+///
+/// The one fact from the extractor's discarded pile (DEC-014) that a *report*
+/// needs: whether two identical bodies mean the same thing depends on where
+/// each was written, and an unqualified constant is the only construct where
+/// that is true and `norm_hash` cannot see it (DEC-017 already folded the
+/// other one, `super`).
+///
+/// Language-neutral by construction, and only Ruby produces any: Rust paths
+/// resolve lexically with no ambiguity for a caveat to be about.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ConstRead {
+    /// As written: `Foo`, `A::B`, `::Foo`.
+    pub name: String,
+    /// The lexical nesting at the read site, `::`-joined, empty at top level.
+    pub nesting: String,
+    pub line: u32,
+}
+
+impl ConstRead {
+    /// Whether resolution depends on where this was written.
+    ///
+    /// `A::B` and `::Foo` are answered by the text alone. A bare `Foo` is the
+    /// one that reads differently under a different nesting — and it is also
+    /// the head segment of `Foo::Bar`, which the extractor records separately
+    /// for exactly this reason.
+    pub fn is_unqualified(&self) -> bool {
+        !self.name.contains("::")
+    }
+}
+
 /// Serialized with its [`Unit::id`] alongside the fields it is derived from.
 ///
 /// `id` is what every other surface prints and what `contour similar` accepts,

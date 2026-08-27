@@ -569,3 +569,39 @@ that matches about as well.
 If the bias ever costs more than the flywheel gains, the fix is one constant and
 this entry says which. Calibrate it properly when a partly-summarized labeled
 set exists.
+
+## DEC-024 — The constant-scope caveat, as built
+
+**Status: built at M11c** against the M11 ruling recorded in `docs/PLAN.md`
+("Context-dependent constants — caveat, never fold"). The ruling stands; this
+records the one place the implementation is **narrower than what was approved**,
+because the difference is measurable and a reader should not have to rediscover
+it.
+
+The approved row was "caveat where such a constant is defined under more than
+one nesting", measured at 54 of rails' 296 exact groups. As built it asks a
+stricter question — whether the copies **reach different definitions**, by
+Ruby's own lexical rule — and flags **22 of 292 (8%)**.
+
+The stricter rule is not a refinement for its own sake. rails defines `Array`
+inside `ActiveRecord::ConnectionAdapters::PostgreSQL::OID` as well as at the top
+level, so the approved rule flags every pair of copies that so much as mentions
+`Array`: 44 groups, of which roughly half are pairs that both plainly reach
+`::Array` and are perfectly interchangeable. A caveat that is wrong half the
+time is one a reader learns to skip, which costs more than not having it. What
+survives the stricter rule is specific enough to act on — `TableDefinition`
+across three version modules, `READ_QUERY` across three adapters,
+`DATE_FORMATS` across `Date` and `Time`.
+
+**Lexical only.** A definition reached through an ancestor chain is a tree-layer
+question contour does not answer (DEC-013), and guessing at one would be a guess
+wearing a warning's clothes. The caveat therefore *understates*: it flags what
+it can prove differs and stays quiet otherwise.
+
+**On by default, unlike canonicality.** The cost is one `rq` call per distinct
+constant, deduplicated and run in parallel — 68 calls and 0.6s of a 1.8s run
+across all of rails. Canonicality is opt-in because it costs a `git blame` per
+body; this does not, and a caveat nobody asked for is exactly the kind a reader
+needs. Where `rq` is absent the run says the candidates went **unchecked**
+rather than reporting nothing, because silence would read as "safe to
+consolidate" — the one direction this feature must never fail in.

@@ -444,6 +444,9 @@ fn dupes(
         stats = Some(near_stats);
     }
     let groups = &mut found.groups;
+    // Before canonicality, so a group that may not be consolidatable at all is
+    // never crowned without the caveat beside it.
+    let scoped = crate::constants::annotate(std::path::Path::new(&root), groups);
     let ranked = match canonical {
         true => Some(crate::canonical::annotate(
             std::path::Path::new(&root),
@@ -458,6 +461,7 @@ fn dupes(
         "groups": groups,
         "near_stats": stats,
         "canonical_stats": ranked,
+        "constant_stats": scoped,
         "withheld_paths": found.withheld,
     });
     match format {
@@ -533,6 +537,9 @@ fn dupes(
                 // Never a bare crown: the pick and the basis travel together,
                 // and an abstention prints its reasoning too, because "the
                 // signals disagree" is a finding a reader should act on.
+                if let Some(caveat) = &group.caveat {
+                    println!("  ! {}", caveat.basis);
+                }
                 if let Some(canonical) = &group.canonical {
                     match &canonical.pick {
                         Some(_) => println!("  * likely canonical — {}", canonical.basis),
@@ -565,6 +572,21 @@ fn dupes(
             ranked.trekr_probes,
             ranked.millis as f64 / 1000.0
         );
+    }
+    // Silence here means "checked, nothing to say"; the unavailable line means
+    // "not checked", and the two must never look alike (DEC-010).
+    match &scoped.unavailable {
+        Some(why) => eprintln!(
+            "contour: {} group(s) may read a namespace-dependent constant, unchecked — {why}",
+            scoped.candidates
+        ),
+        None if scoped.rq_probes > 0 => eprintln!(
+            "contour: constant scope checked {} name(s) across {} candidate group(s) in {:.1}s",
+            scoped.rq_probes,
+            scoped.candidates,
+            scoped.millis as f64 / 1000.0
+        ),
+        None => {}
     }
     if let Some(stats) = &stats {
         eprintln!(

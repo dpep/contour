@@ -195,7 +195,11 @@ fn tools() -> Vec<Value> {
                 token-stream hash, disclosed per group as `structural` or `token_hash`. Each group \
                 carries the `class` of path its copies live in and is ranked within that \
                 population: app code first, then test and fixture duplication, which is real \
-                maintenance signal but a poor answer to \"what should I consolidate here\".",
+                maintenance signal but a poor answer to \"what should I consolidate here\". A \
+                group whose copies sit under different namespaces and read an unqualified \
+                constant that resolves differently in each carries a `caveat` naming those \
+                constants: the bodies are identical but the consolidation may not exist, so \
+                check before merging.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -425,6 +429,9 @@ fn dupes(args: &Value) -> Result<Value> {
         crate::dupes::rank(&mut found.groups);
         stats = Some(near_stats);
     }
+    // Before canonicality, so a group that may not be consolidatable at all is
+    // never crowned without the caveat beside it.
+    let scoped = crate::constants::annotate(Path::new(&root), &mut found.groups);
     let mut ranked = None;
     if args["canonical"].as_bool() == Some(true) {
         ranked = Some(crate::canonical::annotate(
@@ -441,6 +448,7 @@ fn dupes(args: &Value) -> Result<Value> {
             "groups": found.groups,
             "near_stats": stats,
             "canonical_stats": ranked,
+            "constant_stats": scoped,
             "withheld_paths": found.withheld,
         }),
         &opened.refreshed,

@@ -57,6 +57,25 @@ pub fn units(src: &[u8]) -> Blob {
     }
 }
 
+/// Every constant read in one blob, with the nesting that resolves each.
+///
+/// The second thing this module exports, and it stays inside DEC-012's seam:
+/// bytes in, a language-neutral record out, no Prism vocabulary crossing the
+/// line. Separate from [`units`] because only the duplicate *report* asks for
+/// it — DEC-014 still drops these facts on the indexing path, where storing
+/// them would invite a query that depends on them.
+pub fn const_reads(src: &[u8]) -> Vec<crate::core::ConstRead> {
+    extract::extract(src)
+        .const_refs
+        .into_iter()
+        .map(|r| crate::core::ConstRead {
+            name: r.name,
+            nesting: owner_path(&r.nesting),
+            line: r.pos.line,
+        })
+        .collect()
+}
+
 /// Where the parser gave up, as `(line, col, message)`. Used by `--symbols` to
 /// say that an outline is partial rather than to pretend a file is empty.
 pub fn syntax_errors(src: &[u8]) -> Vec<(u32, u32, String)> {

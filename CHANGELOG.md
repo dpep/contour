@@ -37,6 +37,13 @@ Initial skeleton — nothing has been released, so everything below is new.
   would have to be reconciled. The report ranks by the first, where it used to
   rank by a body size discounted by the similarity ratio. **Forces a reindex** —
   the signature table now records each sub-shape's size and parent.
+- **`dupes` now warns when identical bodies would not actually consolidate.** A
+  group whose copies sit under different namespaces and read an unqualified
+  constant that resolves differently in each carries a `caveat` naming those
+  constants — rails' `TableDefinition` across three migration-compatibility
+  modules is the case it was built for. On by default; needs `rq` on PATH, and
+  says the check went unchecked when it is missing rather than reporting
+  nothing.
 - **A summary now outranks a name that merely looks like the query.** The
   semantic half of the ranking is weighted by which vector matched — a summary
   counts for 1.0 against an identifier's 0.7 — so a unit somebody summarized
