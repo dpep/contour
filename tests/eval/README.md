@@ -222,8 +222,10 @@ Jaccard is harsher on short bodies — one edited line moves a third of an
 8-line body's tokens — and until now that was a paragraph in the docs rather
 than a number. `pairs_short.tsv` in the rails and discourse sets holds 4–8
 line pairs, same grammar as `pairs.tsv`, kept apart so the band's numbers
-never blur the headline ones. No harness reads the file yet; to measure,
-point `contour eval` at a directory holding it as `pairs.tsv`.
+never blur the headline ones. **The harness reads it** as its own population,
+and the near sweep gives it its own column — including how many short *distinct*
+pairs a threshold wrongly reports, because recall bought with precision is not
+an improvement.
 
 Measured at the calibrated settings (threshold 0.80, `--min-lines 4`):
 
@@ -238,6 +240,10 @@ Measured at the calibrated settings (threshold 0.80, `--min-lines 4`):
   body. Lowering the threshold to recover the misses would let these in —
   on this evidence the band is not fixable by moving the constant, which is
   the finding.
+
+**Where M11 left it: 6 of 13, at threshold 0.70.** Better, not fixed — and not
+fixed by the change of measure it was supposed to be fixed by. See the sweep
+section above for why that comparison is not available on these labels.
 
 ## What discourse adds: do rails-calibrated thresholds transfer?
 

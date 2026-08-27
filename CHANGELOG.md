@@ -25,6 +25,18 @@ Initial skeleton — nothing has been released, so everything below is new.
   they actually have. Rounding an f32 leaves an f32, which widens back to a
   double on the way out, so `--json` and every MCP answer used to carry
   `0.44999998807907104` where the human output said `cos 0.45`.
+- **The near tier's threshold is recalibrated on both corpora at once: 0.80 →
+  0.70.** `contour eval` now prints a sweep of both candidate measures across
+  thresholds, scoring `pairs_short.tsv` — the 4–8 line band — as its own
+  population. 0.70 is the only move that improves precision *and* recall over
+  0.80 (0.68/0.52 → 0.71/0.67 merged; the short band 2/13 → 6/13). On discourse
+  the shipped setting goes from 0.83/0.50 to 0.86/0.60.
+- **A near-duplicate now reports what consolidating it would buy and cost**, in
+  nodes: `saves_nodes` is the measured count of nodes the two bodies share
+  (counted once, not once per enclosing shape) and `differing_nodes` is what
+  would have to be reconciled. The report ranks by the first, where it used to
+  rank by a body size discounted by the similarity ratio. **Forces a reindex** —
+  the signature table now records each sub-shape's size and parent.
 - **A query answer is never silently stale.** Every command that answers from
   the index — `dupes`, `search`, `similar`, `summarize`, `eval`, and the MCP
   tools — brings the checkout up to date first and says so (`index refreshed —
