@@ -182,3 +182,29 @@ AppGeneratorTest#test_app_update_preserves_skip_action_mailbox	AppGeneratorTest#
 PluginGeneratorTest#test_creating_dummy_without_tests_but_with_dummy_path	PluginGeneratorTest#test_ensure_that_gitignore_can_be_generated_from_a_template_for_dummy_path	distinct
 # [0.68, 21L, below] the format is the case
 ResourcesTest#test_with_new_action_with_name_prefix	ResourcesTest#test_with_formatted_new_action_with_name_prefix	distinct
+
+# --- M11c: EVERY app-class near pair rails ships at 0.70, judged -------------
+#
+# Not a sample: the near tier reports 230 groups at 0.70 and only 22 are app
+# code (205 test, 3 mixed), so the app population is small enough to read end
+# to end. That is the number that decides the threshold, because DEC-022
+# already sections test duplication into its own population.
+#
+#   app pairs >= 0.80     8 of 11 real   (precision 0.73)
+#   app pairs 0.70-0.80  10 of 11 real   (precision 0.91)
+#   app pairs >= 0.70    18 of 22 real   (precision 0.82)
+#
+# The band nearest the threshold is the CLEANER one: the >=0.80 band holds
+# three deprecation accessor pairs whose bodies are identical and whose
+# consolidation needs metaprogramming, which the rule excludes.
+
+# [0.86, 11L] the unboundable? guard is written out four times across the comparison visitors
+Arel::Visitors::ToSql#visit_Arel_Nodes_GreaterThan	Arel::Visitors::ToSql#visit_Arel_Nodes_GreaterThanOrEqual	near
+# [0.84, 13L] the build_ variant and its caller — delegation is the consolidation
+ActiveRecord::ConnectionAdapters::SchemaStatements#create_join_table	ActiveRecord::ConnectionAdapters::SchemaStatements#build_create_join_table_definition	near
+# [0.78, 11L] LIKE and NOT LIKE around one escape clause
+Arel::Visitors::ToSql#visit_Arel_Nodes_DoesNotMatch	Arel::Visitors::ToSql#visit_Arel_Nodes_Matches	near
+# [0.75, 9L] FOLLOWING and PRECEDING around one unbounded check
+Arel::Visitors::ToSql#visit_Arel_Nodes_Following	Arel::Visitors::ToSql#visit_Arel_Nodes_Preceding	near
+# [0.71, 9L] the AR override could call the AM method it duplicates
+ActiveRecord::AttributeMethods::ClassMethods#alias_attribute	ActiveModel::AttributeMethods::ClassMethods#eagerly_generate_alias_attribute_methods	near

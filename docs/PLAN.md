@@ -343,26 +343,39 @@ arithmetic. An unbiased random sample of what the tier actually ships (seed 11,
 test; nineteen of the twenty are test code. Sampling below the threshold found
 1 real pair in 15, so lowering it buys almost nothing.
 
+**Read per population, that number reverses**: app-class precision at 0.70 is
+0.82 (a census of all 22, not a sample). The tier is not broken; it is
+overwhelmingly reporting a population that is near-identical by construction,
+and which DEC-022 already ranks apart. The finding is about *test* duplication,
+not about the threshold.
+
 Three candidate responses, none taken:
 
-1. **Move the threshold.** The evidence for 0.70 has changed — see below.
-2. **Treat the near tier's populations the way `dupes` already treats path
-   classes.** Nineteen of twenty were test code, and sibling test methods are
-   near-identical *by construction*: the shape they share is the test harness.
-   DEC-022 ranks test duplication apart rather than dropping it; the near tier
-   may want the same or stronger.
-3. **The edits-per-token measure** already recorded under "the short-body band
-   needs a different measure". A pair differing by one token in a 6-line body
-   and one differing by one token in a 60-line body are not the same claim, and
-   Jaccard scores them alike.
+1. ~~Move the threshold.~~ **Ruled: 0.70 stands.** Per-population evidence
+   below; the blended number was measuring the wrong thing.
+2. ~~A separate threshold for test-class groups.~~ **Measured and rejected**
+   (0.14 against 0.08): sibling test methods are near-identical *by
+   construction* — the shape they share is the harness — so no threshold
+   separates them. DEC-022's sectioning plus payoff ranking is the mechanism
+   that works, and it is already built.
+3. **The edits-per-token measure** — still open, and now the only live idea for
+   this population. A pair differing by one token in a 6-line body and one
+   differing by one token in a 60-line body are not the same claim, and Jaccard
+   scores them alike. This is what would separate a sibling test method from a
+   copy-paste, if anything does.
 
-### The 0.70 ruling rests on evidence that has since changed
+### The 0.70 threshold, settled on per-population evidence
 
-M11b ratified 0.70 because it improved precision *and* recall over 0.80. On the
-re-audited labels, merged across rails and discourse, it is a trade: **0.47/0.67
-at 0.70 against 0.55/0.50 at 0.80**. The constant was left where it was
-ratified, because moving a ratified number on new evidence is a decision, not a
-patch. The numbers are in `tests/eval/README.md` and reproduce from the sweep.
+Ruled and closed. The alarming 0.10 was a *population artifact*: 19 of the 20
+sampled pairs were test code, and DEC-022 already sections that away from app
+code. Read per population — and the app population is small enough to read
+entirely, 22 of the 230 groups rails ships at 0.70 — **app precision is 0.82 at
+0.70 and 0.73 at 0.80**. The band nearest the threshold is the cleaner one, so
+0.70 stands and raising it would lose 10 of 18 real app findings.
+
+A second, higher threshold for test-class groups was measured and rejected:
+0.14 above 0.80 against 0.08 below. Sibling test methods are near-identical by
+construction, so no threshold separates them. See DEC-023's postscript.
 
 ### Which measure the near tier should use is still unsettled, and now says so
 

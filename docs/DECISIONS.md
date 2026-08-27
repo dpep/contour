@@ -570,6 +570,45 @@ If the bias ever costs more than the flywheel gains, the fix is one constant and
 this entry says which. Calibrate it properly when a partly-summarized labeled
 set exists.
 
+### Postscript (M11c): the 0.70 near threshold, re-ruled on per-population evidence
+
+M11c's re-audit of rails' near labels produced an alarming headline — an
+unbiased sample of what the tier ships at 0.70 was **2 real in 20** — and that
+number turned out to be a *population artifact*, not a threshold problem. Path
+classes (DEC-022) already section test duplication away from app code, so the
+number that decides a threshold is per-population precision, not blended.
+
+The app population is small enough to need no sampling at all. Of the **230**
+near groups rails ships at 0.70, **22 are app code** (205 test, 3 mixed), and
+all 22 were read:
+
+| band | real | precision |
+| ---- | ---- | --------- |
+| app, >= 0.80 | 8 of 11 | 0.73 |
+| app, 0.70-0.80 | 10 of 11 | **0.91** |
+| app, >= 0.70 | 18 of 22 | **0.82** |
+
+**0.70 stands, and the earlier ruling was right for a reason it did not have.**
+App precision at the shipped threshold is 0.82. Raising to 0.80 would *lower*
+it to 0.73 while discarding 10 of the 18 real app findings — because the band
+nearest the threshold is the cleaner one. The three false positives above 0.80
+are deprecation accessor pairs (`X` and `X=` whose bodies are identical), where
+the consolidation needs metaprogramming and the labeling rule therefore says it
+is not a finding.
+
+**A second threshold for test-class groups was measured and rejected.** The
+tempting move was to raise the bar where 19 of 20 of the junk lives. Sampled
+test-population precision is **0.14 above 0.80 against 0.08 below** — the junk
+is junk at every threshold, because sibling test methods are near-identical *by
+construction*: the shape they share is the harness, not the behaviour. A second
+constant would buy six points and add a number to explain forever. Sectioning
+plus payoff ranking already keeps that population out of the reader's way, and
+that is the mechanism that earns its keep.
+
+**The blended figure is retired.** rails' printed near precision mixes app and
+test populations and answers no question anybody has; the split above is what
+should be quoted.
+
 ## DEC-024 — The constant-scope caveat, as built
 
 **Status: built at M11c** against the M11 ruling recorded in `docs/PLAN.md`

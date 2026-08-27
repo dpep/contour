@@ -358,25 +358,38 @@ ActiveSupport's cache tests), which somebody could actually consolidate.
 Lowering the threshold buys almost nothing: **1 real pair in 15** sampled from
 0.55-0.70.
 
-**The printed rails precision is a blend and reads high.** The harness scores
-every labeled pair together, and rails' file now holds two populations: the ten
-original labels, drawn from the tier's own output and therefore true by
-construction, and this random sample. 0.52 as printed mixes them. **0.10 is the
-unbiased estimate**; the printed number is an upper bound on it.
+**The printed rails precision blends two things and answers neither.** It mixes
+label populations (the ten original circular labels with this random sample) and
+*code* populations (app with test). The per-population census below is the
+number to read.
 
-**This is evidence the M11b threshold ruling did not have.** 0.70 was ratified
-because it improved precision *and* recall over 0.80 on the labels as they then
-stood. On the re-audited labels, merged across both corpora, it is a trade
-rather than a free win:
+**And then the split, which is what the 0.10 actually meant.** Blended across
+populations, 0.70 looked like a trade against 0.80 (0.47/0.67 against
+0.55/0.50). But DEC-022 already sections test duplication away from app code,
+so blended precision answers no question anybody has. The app population needs
+no sampling — of the **230** near groups rails ships at 0.70, **22 are app
+code** (205 test, 3 mixed) — so all 22 were read:
 
-| threshold | precision | recall |
-| --------- | --------- | ------ |
-| 0.70 | 0.47 (24/51) | 0.67 (24/36) |
-| 0.80 | 0.55 (18/33) | 0.50 (18/36) |
+| band | real | precision |
+| ---- | ---- | --------- |
+| app, >= 0.80 | 8 of 11 | 0.73 |
+| app, 0.70-0.80 | 10 of 11 | **0.91** |
+| app, >= 0.70 | 18 of 22 | **0.82** |
 
-That is a decision, not a calculation, and it belongs to whoever owns the
-threshold. What the re-audit settles is that it must be made on these labels
-rather than the old ones.
+**The band nearest the threshold is the cleaner one**, so 0.70 stands and
+raising it would *lower* app precision while discarding 10 of 18 real findings.
+The three misses above 0.80 are deprecation accessor pairs — `X` and `X=` with
+identical bodies — where consolidating needs metaprogramming and the rule above
+says that is not a finding.
+
+A separate, higher threshold for test-class groups was measured and rejected:
+test-population precision is 0.14 above 0.80 against 0.08 below. Sibling test
+methods are near-identical *by construction* — the shape they share is the
+harness — so no threshold separates them, and sectioning plus payoff ranking is
+what does the work. See DEC-023's postscript.
+
+**So quote the split, never the blend.** rails' printed near precision mixes the
+two populations and is not a number about anything.
 
 **It still cannot compare the two measures.** The sample was drawn from what the
 *shape* measure reports, so it estimates that measure's precision honestly and

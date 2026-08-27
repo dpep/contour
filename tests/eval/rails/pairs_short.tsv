@@ -88,3 +88,39 @@ ExpiresInRenderTest#test_no_expires_now_with_public	LastModifiedRenderTest#test_
 ActiveRecord::LoadAsyncNullExecutorTest#test_reset	ActiveRecord::LoadAsyncNullExecutorTest#test_scheduled?	distinct
 # [0.56, 5L, below] PRODUCTION: subtract against merge — opposite operations on the same set (DEC-017's cousin)
 ActionDispatch::Flash::FlashHash#keep	ActionDispatch::Flash::FlashHash#discard	distinct
+
+# --- M11c: EVERY app-class near pair rails ships at 0.70, judged -------------
+#
+# Not a sample: the near tier reports 230 groups at 0.70 and only 22 are app
+# code (205 test, 3 mixed), so the app population is small enough to read end
+# to end. That is the number that decides the threshold, because DEC-022
+# already sections test duplication into its own population.
+#
+#   app pairs >= 0.80     8 of 11 real   (precision 0.73)
+#   app pairs 0.70-0.80  10 of 11 real   (precision 0.91)
+#   app pairs >= 0.70    18 of 22 real   (precision 0.82)
+#
+# The band nearest the threshold is the CLEANER one: the >=0.80 band holds
+# three deprecation accessor pairs whose bodies are identical and whose
+# consolidation needs metaprogramming, which the rule excludes.
+
+# [1.00, 4L] same, on the Uuid type
+ActiveRecord::ConnectionAdapters::PostgreSQL::OID::Uuid#changed_in_place?	ActiveRecord::ConnectionAdapters::PostgreSQL::OID::Uuid#changed?	near
+# [1.00, 5L] a deprecation accessor PAIR: consolidating needs metaprogramming, so by the rule this is not a finding
+ActiveJob.use_big_decimal_serializer	ActiveJob.use_big_decimal_serializer=	distinct
+# [1.00, 6L] as above
+ActiveRecord.commit_transaction_on_non_local_return	ActiveRecord.commit_transaction_on_non_local_return=	distinct
+# [1.00, 6L] as above
+ActiveRecord.allow_deprecated_singular_associations_name	ActiveRecord.allow_deprecated_singular_associations_name=	distinct
+# [0.80, 7L] identical warning, two commands, different receiver
+Rails::Command::EncryptedCommand#warn_if_encrypted_configuration_is_invalid	Rails::Command::CredentialsCommand#warn_if_credentials_are_invalid	near
+# [0.75, 6L] identical bodies, two visitor hooks — an alias consolidates
+ActionDispatch::Journey::Visitors::Dot#binary	ActionDispatch::Journey::Visitors::Dot#nary	near
+# [0.75, 7L] the readonly guard written twice before super
+ActiveRecord::ReadonlyAttributes::HasReadonlyAttributes#write_attribute	ActiveRecord::ReadonlyAttributes::HasReadonlyAttributes#_write_attribute	near
+# [0.71, 4L] an override that adds a nil check to the body it copies
+ActiveRecord::ConnectionAdapters::SchemaStatements#add_index	ActiveRecord::ConnectionAdapters::AbstractMysqlAdapter#add_index	near
+# [0.71, 4L] two generators sharing an attribute lookup
+TestUnit::Generators::ScaffoldGenerator#virtual?	Rails::Generators::ScaffoldControllerGenerator#attachments?	near
+# [0.71, 4L] charset and collation, same lookup
+ActiveRecord::Tasks::DatabaseTasks#collation_current	ActiveRecord::Tasks::DatabaseTasks#charset_current	near
