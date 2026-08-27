@@ -114,6 +114,10 @@ pub struct Unit {
     /// layout collapsed. `None` when there is no body to hash. Populated in
     /// milestone 2.
     pub norm_hash: Option<u64>,
+    /// Nodes in that normalized body — a size measure that survives a
+    /// reformat, where `end_line - line` does not. `None` wherever
+    /// `norm_hash` is.
+    pub nodes: Option<u32>,
 }
 
 /// Serialized with its [`Unit::id`] alongside the fields it is derived from.
@@ -247,6 +251,7 @@ mod tests {
             line: 1,
             end_line: 1,
             norm_hash: None,
+            nodes: None,
         }
     }
 

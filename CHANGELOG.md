@@ -111,6 +111,22 @@ Initial skeleton — nothing has been released, so everything below is new.
   counts are fooled by a delegating shim, which is called more precisely
   because it is the front door. Neither dominates, and the run reports which
   signal favours which member on every disagreement.
+- **`dupes` groups are ordered by what consolidating each would buy**, across
+  both tiers at once: the copies beyond the first, times the body's node count,
+  discounted by the near tier's measured Jaccard. Every component is printed
+  beside the estimate (`~191 nodes · 2 × (33 lines, 191 nodes) [structural]`),
+  so the order can be argued with rather than trusted. An exact group beats a
+  near one of the same size and a big near pair still beats a small exact one,
+  with no weight anywhere saying so.
+- The estimate counts **nodes, not lines**, and the choice was measured rather
+  than argued: on rails the two correlate at only 0.79 and their orderings
+  share 10 of their top 20 groups. Lines overstate a heredoc by 16x (one
+  83-line method is five nodes), which inflates exactly the duplications least
+  worth acting on; and an order that moves when somebody runs a formatter
+  contradicts a tool whose premise is that a reformat is not a change. Lines
+  are still printed, because a person feels lines.
+- **Forces a reindex**: every unit now carries the node count of its normalized
+  body, which the fold was already computing and discarding.
 - **`contour dupes --canonical`** names the likely-original member of every
   group and says why: git age (the oldest surviving line of each body),
   reference counts from `trekr --refs` with its confirmed/possible tiers, and

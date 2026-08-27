@@ -105,6 +105,7 @@ fn function(node: &Node<'_>, src: &[u8], owner: &str) -> Option<Unit> {
     let name = field_text(node, "name", src)?;
     let params = node.child_by_field_name("parameters");
     let body = node.child_by_field_name("body");
+    let folded = body.map(|body| token_hash(params.as_ref(), &body, src));
     Some(Unit {
         lang: Lang::Rust,
         name,
@@ -118,7 +119,8 @@ fn function(node: &Node<'_>, src: &[u8], owner: &str) -> Option<Unit> {
         end_line: node.end_position().row as u32 + 1,
         // A bodyless signature has nothing to hash — the same treatment a
         // macro-generated Ruby method gets.
-        norm_hash: body.map(|body| token_hash(params.as_ref(), &body, src)),
+        norm_hash: folded.map(|(hash, _)| hash),
+        nodes: folded.map(|(_, nodes)| nodes),
     })
 }
 
@@ -167,30 +169,47 @@ fn has_self(node: &Node<'_>) -> bool {
 ///
 /// The function's own **name is excluded**, matching Ruby: two identically
 /// bodied functions called `run` and `go` are the clone worth reporting.
-fn token_hash(params: Option<&Node<'_>>, body: &Node<'_>, src: &[u8]) -> u64 {
+fn token_hash(params: Option<&Node<'_>>, body: &Node<'_>, src: &[u8]) -> (u64, u32) {
     // Seeded with the language, so a Rust token stream can never collide with
     // a Ruby normalized body in the one `norm_hash` column they share.
     let mut hash = fnv1a(FNV_OFFSET, Lang::Rust.as_str().as_bytes());
     if let Some(params) = params {
-        hash = fold_tokens(params, src, hash);
+        (hash, _) = fold_tokens(params, src, hash);
     }
+    // Only the body's count, matching Ruby, where the parameter list is folded
+    // into the hash but not into the size.
     fold_tokens(body, src, hash)
 }
 
-fn fold_tokens(node: &Node<'_>, src: &[u8], mut hash: u64) -> u64 {
+/// Fold every leaf token, and count the **named** nodes on the way.
+///
+/// Named only, because that is the closest tree-sitter comes to Prism's node
+/// count: a CST counts every brace and comma, and `dupes` orders one report
+/// across both languages. The two counts are still not calibrated against each
+/// other — measured across rails and four Rust repos, Rust runs 5.6 named
+/// nodes per line against Ruby's 3.4, so ~1.6x for the same body length —
+/// so a mixed-language report's cross-language ordering is approximate, the
+/// same disclosure `Lang::hash_tier` already makes about the hashes themselves.
+fn fold_tokens(node: &Node<'_>, src: &[u8], mut hash: u64) -> (u64, u32) {
+    let mut nodes = 0;
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
         if child.kind().contains("comment") {
             continue;
         }
+        if child.is_named() {
+            nodes += 1;
+        }
         if child.child_count() == 0 {
             hash = fnv1a(hash, &src[child.byte_range()]);
             hash = fnv1a(hash, SEP);
         } else {
-            hash = fold_tokens(&child, src, hash);
+            let (folded, inner) = fold_tokens(&child, src, hash);
+            hash = folded;
+            nodes += inner;
         }
     }
-    hash
+    (hash, nodes)
 }
 
 fn field_text(node: &Node<'_>, field: &str, src: &[u8]) -> Option<String> {
@@ -310,7 +329,7 @@ mod tests {
     #[test]
     fn a_rust_hash_is_seeded_with_its_language() {
         let rust = hash("fn run() { }");
-        let empty_seed = fold_tokens(
+        let (empty_seed, _) = fold_tokens(
             &parse(b"fn run() { }").unwrap().root_node(),
             b"fn run() { }",
             FNV_OFFSET,

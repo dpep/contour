@@ -316,7 +316,7 @@ impl Store {
     pub fn units(&self, root: &str) -> Result<Vec<Located>> {
         let mut stmt = self.conn.prepare(
             "SELECT f.path, u.lang, u.name, u.owner, u.singleton, u.params, u.via,
-                    u.line, u.end_line, u.norm_hash
+                    u.line, u.end_line, u.norm_hash, u.nodes
                FROM checkout c
                JOIN file f ON f.checkout_id = c.id
                JOIN unit u ON u.blob_id = f.blob_id
@@ -339,6 +339,7 @@ impl Store {
                     line: r.get(7)?,
                     end_line: r.get(8)?,
                     norm_hash: r.get::<_, Option<i64>>(9)?.map(|h| h as u64),
+                    nodes: r.get::<_, Option<i64>>(10)?.map(|n| n as u32),
                 },
             })
         })?;
@@ -556,8 +557,9 @@ fn insert_blob(tx: &rusqlite::Transaction<'_>, oid: &Oid, blob: &Blob) -> rusqli
     }
     let mut stmt = tx.prepare_cached(
         "INSERT INTO unit
-           (blob_id, lang, name, owner, singleton, params, via, line, end_line, norm_hash)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+           (blob_id, lang, name, owner, singleton, params, via, line, end_line,
+            norm_hash, nodes)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
     )?;
     for u in &blob.units {
         stmt.execute(params![
@@ -571,6 +573,7 @@ fn insert_blob(tx: &rusqlite::Transaction<'_>, oid: &Oid, blob: &Blob) -> rusqli
             u.line,
             u.end_line,
             u.norm_hash.map(|h| h as i64),
+            u.nodes.map(|n| n as i64),
         ])?;
     }
     Ok(())

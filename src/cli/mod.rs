@@ -326,6 +326,9 @@ fn dupes(
             near_threshold,
         )?;
         groups.extend(near_groups);
+        // One order over both tiers, so a big near-duplicate is not buried
+        // under every exact one regardless of what consolidating it would buy.
+        crate::dupes::rank(&mut groups);
         stats = Some(found);
     }
     let ranked = match canonical {
@@ -339,10 +342,23 @@ fn dupes(
     match format {
         Format::Human => {
             for group in &groups {
+                // The estimate leads, because it is the order — and every
+                // component it is built from follows, so the order can be
+                // argued with rather than trusted (DEC-010). The `~` is not
+                // decoration: a near consolidation leaves two thin callers
+                // behind, so this is an upper bound.
+                let discount = match group.similarity {
+                    Some(jaccard) => format!(" × {jaccard:.2} jaccard"),
+                    None => String::new(),
+                };
+                let size = match group.nodes {
+                    Some(nodes) => format!("{} lines, {nodes} nodes", group.lines),
+                    None => format!("{} lines", group.lines),
+                };
                 println!(
-                    "{} × {} lines  [{}]",
+                    "~{} nodes  ·  {} × ({size}){discount}  [{}]",
+                    group.saves_nodes,
                     group.members.len(),
-                    group.lines,
                     group.how
                 );
                 let pick = group

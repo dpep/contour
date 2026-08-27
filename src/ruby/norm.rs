@@ -132,8 +132,13 @@ fn def_hash(def: &ruby_prism::DefNode<'_>) -> Normalized {
         Some(params) => fnv1a(hash, &fold.node(&params.as_node()).0.to_le_bytes()),
         None => fnv1a(hash, b"()"),
     };
+    let mut nodes = 0;
     hash = match def.body() {
-        Some(body) => fnv1a(hash, &fold.node(&body).0.to_le_bytes()),
+        Some(body) => {
+            let (folded, size) = fold.node(&body);
+            nodes = size;
+            fnv1a(hash, &folded.to_le_bytes())
+        }
         None => fnv1a(hash, b"{}"),
     };
     // Sorted and deduplicated: a signature is a *set*, and Jaccard over it
@@ -142,6 +147,7 @@ fn def_hash(def: &ruby_prism::DefNode<'_>) -> Normalized {
     fold.subtrees.dedup();
     Normalized {
         hash,
+        nodes,
         signature: fold.subtrees,
     }
 }
@@ -156,6 +162,10 @@ fn def_hash(def: &ruby_prism::DefNode<'_>) -> Normalized {
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct Normalized {
     pub(crate) hash: u64,
+    /// Nodes in the normalized body. Free — the fold already counts them to
+    /// apply `MIN_SUBTREE_NODES` — and a layout-invariant size measure, where
+    /// lines are a formatting artefact.
+    pub(crate) nodes: u32,
     pub(crate) signature: Vec<u64>,
 }
 

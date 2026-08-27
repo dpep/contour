@@ -27,7 +27,7 @@
 /// migration bug. It also makes adding a column free, so nothing needs to be
 /// carried speculatively. See the module header for what this version
 /// deliberately does *not* govern.
-pub(crate) const VERSION: i64 = 7;
+pub(crate) const VERSION: i64 = 8;
 
 /// Applied whole to a fresh database.
 pub(crate) const SCHEMA: &str = r#"
@@ -63,7 +63,12 @@ CREATE TABLE unit (
   -- format: see `crate::hash` for why it is not a `DefaultHasher`.
   -- Seeded with the language, so two languages sharing this column cannot
   -- collide into one another's hash space.
-  norm_hash INTEGER
+  norm_hash INTEGER,
+  -- Nodes in that normalized body. A size that survives a reformat, where
+  -- `end_line - line` does not, and free to compute: the fold already counts
+  -- every node to apply its subtree floor. NULL for Rust, whose token-stream
+  -- tier has no AST count to give (DEC-012).
+  nodes     INTEGER
 );
 
 -- ── Layer 2: the path→blob map, the only place a path appears ────────────

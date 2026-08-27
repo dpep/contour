@@ -41,6 +41,46 @@ pub struct Group {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub similarity: Option<f32>,
     pub members: Vec<Member>,
+    /// Nodes in one member's normalized body — the size the payoff estimate
+    /// is built from. `None` where `norm_hash` is.
+    pub nodes: Option<u32>,
+    /// **Estimated** AST nodes a consolidation would remove: the copies beyond
+    /// the first, times the body's node count, discounted by how much shape
+    /// they actually share.
+    ///
+    /// This is the report's ordering, because the rule `dupes` answers to is
+    /// "would consolidating this reduce net complexity" — so the biggest
+    /// reduction goes first. It needs no hand-tuned weight and encodes the
+    /// right intuition on its own: an exact group beats a near one of the same
+    /// size, while a big near pair still outranks a small exact one.
+    ///
+    /// ## Why nodes and not lines
+    ///
+    /// Measured on rails, and it is not a free choice: lines and nodes
+    /// correlate at only **0.79** across 24,465 bodies, and the two orderings
+    /// share **10 of their top 20** groups. Half the head of the report moves.
+    ///
+    /// Both proxies are distorted, in opposite directions. Lines overstate a
+    /// heredoc — `ActiveJobAdapterTest#make_inline_test_file` is 83 lines and
+    /// **5 nodes**, because a heredoc is one string node — and that inflates
+    /// exactly the duplications least worth acting on. Nodes overstate a dense
+    /// assertion list — `TimeExtCalculationsTest#test_advance` is 29 lines and
+    /// 752 nodes. The heredoc error is the larger (16x against 8x) and it
+    /// pushes the wrong things *up*.
+    ///
+    /// Two arguments settle it. **Layout invariance**: contour's whole premise
+    /// is that a reformat is not a change (DEC-003), and an order that moves
+    /// when somebody runs a formatter contradicts the system it belongs to.
+    /// **Unit consistency**: the near tier's Jaccard is a fraction over
+    /// node-space subtree sets, so `similarity × size` is only dimensionally
+    /// coherent when size is nodes. Multiplying it by a line count produces a
+    /// plausible number that means nothing — the exact failure DEC-010 exists
+    /// to prevent.
+    ///
+    /// Lines are still printed beside it, because a person feels lines. What is
+    /// ranked is what is shown, so the order can be argued with rather than
+    /// trusted.
+    pub saves_nodes: u32,
     /// Which member is likely the original, and on what basis. Filled by
     /// [`crate::canonical::annotate`] when asked for, and absent otherwise —
     /// the signals behind it are external process calls, so nothing computes
@@ -99,6 +139,8 @@ pub fn find(store: &Store, root: &str, scope: Option<&str>, min_lines: u32) -> R
             lang: members[0].unit.lang,
             lines: members[0].unit.end_line + 1 - members[0].unit.line,
             similarity: None,
+            nodes: members[0].unit.nodes,
+            saves_nodes: estimate(members[0].unit.nodes, members.len(), None),
             canonical: None,
             members: members
                 .into_iter()
@@ -112,16 +154,38 @@ pub fn find(store: &Store, root: &str, scope: Option<&str>, min_lines: u32) -> R
         })
         .collect();
 
-    // Biggest duplication first: lines × the copies beyond the original is the
-    // code a reader would delete.
+    rank(&mut groups);
+    Ok(groups)
+}
+
+/// Biggest expected payoff first.
+///
+/// Called by every producer *and* by every caller that merges two tiers, so a
+/// report is ordered whether or not it was assembled from one pass. Idempotent,
+/// which is what makes that safe.
+pub fn rank(groups: &mut [Group]) {
     groups.sort_by_key(|g| {
         (
-            std::cmp::Reverse(g.lines * (g.members.len() as u32 - 1)),
+            std::cmp::Reverse(g.saves_nodes),
             g.members[0].path.clone(),
             g.members[0].line,
         )
     });
-    Ok(groups)
+}
+
+/// Nodes a consolidation would remove, estimated.
+///
+/// `similarity` is the near tier's Jaccard — already a shared-fraction
+/// estimate over these very nodes, so it doubles as the discount and no second
+/// constant is invented to serve as one. Absent for an exact group, where the
+/// copies are the whole body.
+///
+/// A body with no node count scores zero and sorts last. That is the honest
+/// answer rather than a fallback in some other unit: a report ordered by two
+/// units is ordered by neither.
+fn estimate(nodes: Option<u32>, copies: usize, similarity: Option<f32>) -> u32 {
+    let beyond_the_first = copies.saturating_sub(1) as f32;
+    (nodes.unwrap_or(0) as f32 * beyond_the_first * similarity.unwrap_or(1.0)).round() as u32
 }
 
 /// Near-structural pairs in a checkout, as groups of two.
@@ -181,6 +245,8 @@ pub fn find_near(
                 lang: a.unit.lang,
                 lines: a.unit.end_line + 1 - a.unit.line,
                 similarity: Some(pair.similarity),
+                nodes: a.unit.nodes,
+                saves_nodes: estimate(a.unit.nodes, 2, Some(pair.similarity)),
                 canonical: None,
                 members: [a, b]
                     .into_iter()
@@ -194,6 +260,8 @@ pub fn find_near(
             })
         })
         .collect();
+    let mut groups: Vec<Group> = groups;
+    rank(&mut groups);
     Ok((groups, stats))
 }
 
@@ -276,6 +344,30 @@ mod tests {
         let (_, stats) = find_near(&store, "/r", None, 4, 0.8).unwrap();
         assert_eq!(stats.uncovered_small, 2, "the Ruby bodies, too small");
         assert_eq!(stats.uncovered_lang, 1, "the Rust body, wrong language");
+    }
+
+    /// The owner's stated intuitions about the ordering, as assertions. Each
+    /// falls out of the arithmetic — there is no weight anywhere making them
+    /// true, which is the property worth protecting.
+    #[test]
+    fn the_payoff_estimate_orders_by_what_consolidating_buys() {
+        assert_eq!(estimate(Some(60), 2, None), 60, "one copy removed");
+        assert_eq!(estimate(Some(60), 3, None), 120, "two copies removed");
+        assert_eq!(estimate(Some(100), 2, Some(0.9)), 90, "discounted by shape");
+
+        let exact = estimate(Some(100), 2, None);
+        assert!(
+            exact > estimate(Some(100), 2, Some(0.9)),
+            "exact beats near"
+        );
+        assert!(
+            estimate(Some(400), 2, Some(0.85)) > exact,
+            "a big near pair still beats a small exact one"
+        );
+
+        // No node count is no estimate. Falling back to lines here would order
+        // one report by two units, which is to order it by neither.
+        assert_eq!(estimate(None, 5, None), 0);
     }
 
     #[test]

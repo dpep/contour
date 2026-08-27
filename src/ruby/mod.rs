@@ -44,6 +44,9 @@ pub fn units(src: &[u8]) -> Blob {
             // extractor records. A macro-generated unit has no `def` node, so
             // it has no hash and nothing to summarize.
             norm_hash: normalized.get(&(def.pos.line, def.pos.col)).map(|n| n.hash),
+            nodes: normalized
+                .get(&(def.pos.line, def.pos.col))
+                .map(|n| n.nodes),
         })
         .collect();
     Blob {

@@ -175,7 +175,10 @@ fn tools() -> Vec<Value> {
             "name": "dupes",
             "description": "Report callables with identical bodies, and optionally ones that are \
                 nearly identical. Sees through renames, reformatting and comments, so it finds \
-                copy-paste that grep cannot. With `canonical`, each group also names which member \
+                copy-paste that grep cannot. Groups are ordered by `saves_nodes` — the \
+                estimated AST nodes consolidating each would remove — so the first result is \
+                the one most worth acting on, and the copies, body size and similarity it is \
+                estimated from travel with it. With `canonical`, each group also names which member \
                 is likely the original and why — and says so when the signals disagree, which \
                 usually means the old one was superseded and never deleted. Ruby gets AST-grade normalization; Rust gets a \
                 token-stream hash, disclosed per group as `structural` or `token_hash`.",
@@ -358,6 +361,7 @@ fn dupes(args: &Value) -> Result<Value> {
         let (near, found) =
             crate::dupes::find_near(&store, &root, scope.as_deref(), min_lines, threshold)?;
         groups.extend(near);
+        crate::dupes::rank(&mut groups);
         stats = Some(found);
     }
     let mut ranked = None;
