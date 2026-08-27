@@ -69,7 +69,11 @@ Initial skeleton — nothing has been released, so everything below is new.
   first migration of the purchased half, rather than a drop.
 - The cold embed pass uses one embedder per worker thread, so a corpus warms
   in parallel rather than serially through a single mutexed ONNX session.
-  Searches after the first are ~0.2 s.
+  Measured on rails (54,296 texts): 167 s wall against 1,192 s of cpu, which
+  is 7.1x on 8 cores; the same run pinned to one worker was abandoned at a
+  ten-minute timeout, so the pool is at least 3.6x. Warm searches are ~0.2 s
+  on a normal repo and ~5 s on rails, where loading 54k cached vectors is most
+  of the cost.
 - ONNX embedders now report which model they are, so two different models can
   no longer share a vector cache key (DEC-005 said they must not; the default
   `model()` had quietly made them).

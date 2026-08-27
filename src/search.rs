@@ -689,20 +689,31 @@ fn vectors_for(
         // its own ONNX session, so on a few hundred units that fixed cost IS
         // the run. The pool is meant to pay at corpus scale.
         //
-        // **The rails figure is not measured on this path, and the pool is
-        // unproven at corpus scale.** Earlier numbers published for rails
-        // (73s and 120s for 54,296 texts) were taken while `embed_all` was
-        // dead code that nothing called, so they measure the SERIAL loop and
-        // were attributed to the pool in error.
+        // **Measured at corpus scale, which the earlier retraction owed.**
+        // rails, 54,296 texts, same build, same machine:
         //
-        // An attempt to re-measure was abandoned after ~4 minutes on a
-        // machine that was compiling concurrently — too dirty to quote in
-        // either direction. So the open question is genuinely open: the pool
-        // may help at 54k units, or the per-thread session load and eight-way
-        // memory may make it *worse* there than the serial loop. It is kept
-        // because it is the structurally correct shape (gqls-proven, and it
-        // removes a per-job session reload), not because it is known to win.
-        // Measure on a quiet machine before trusting it either way.
+        // | path                          | wall   | cpu     |
+        // |-------------------------------|--------|---------|
+        // | pooled (this one)             |   167s |   1192s |
+        // | one worker (RAYON_NUM_THREADS=1) | >600s | —      |
+        // | warm (cached vectors)         |   5.4s |    0.4s |
+        //
+        // The one-worker run was abandoned at a ten-minute timeout, so the
+        // pool is **at least 3.6x** and the true figure is larger. 1192s of
+        // cpu against 167s of wall is 7.1x on 8 cores, which says the
+        // parallelism is real rather than nominal. The pool is worth keeping.
+        //
+        // Conditions, because they change how much to trust this: load
+        // average ~3 on 8 cores at the start of the pooled run, so the wall
+        // figure is if anything pessimistic. The earlier 73s/120s figures for
+        // rails are withdrawn rather than compared against — they were taken
+        // on the serial path while `embed_all` was dead code, and nothing
+        // about them is reproducible now.
+        //
+        // Note what `warm` costs at this size: **5.4s, not the 0.18s measured
+        // on contour's own 529 units.** Loading and scoring 54k cached vectors
+        // is most of it. "Instant after the first query" is true of a small
+        // repo and an overstatement of a large one.
         //
         // If this needs to be faster, the lever is embedding *less* — a
         // scope-bounded warm — rather than restructuring this loop: `user`
