@@ -69,6 +69,34 @@ a `semantic` one is a suggestion.
 If `search` returns less than you expect, run `contour --status` before
 concluding the code is not there.
 
+## What kind of file each answer is in
+
+Every hit, neighbour and duplicate group carries a `class`: `app`, `test`,
+`fixture`, `migration`, `generated`, or `vendored`.
+
+- **Migrations, generated and vendored code are withheld by default.** They are
+  frozen or re-copied, so consolidating one is not a refactor. Every answer
+  reports what it withheld under `withheld_paths`; pass `include_ignored` to see
+  them.
+- **Test and fixture code is included, tagged, and kept apart.** Duplication in
+  shared examples is real maintenance signal. `dupes` ranks app code first and
+  then those populations; `search` discounts them (`discount` on each answer)
+  rather than dropping them, so a spec that shares a name with the method it
+  tests no longer outranks it.
+
+A `mixed` duplicate group has copies in more than one class — usually a body
+that exists in both `vendor/` and your own code, which is a finding about your
+copy.
+
+A repo whose layout differs says so in `.contour.toml` at its root:
+
+```toml
+[paths]
+# Rules are path prefixes, exactly like a SCOPE, and beat the conventions.
+test = ["engines/billing/spec"]
+app = ["db/migrate"]          # these really are consolidatable here
+```
+
 ## Deciding which duplicate to keep
 
 `contour dupes --canonical` names the likely original of each group and shows

@@ -56,6 +56,27 @@ The index is per-machine (`~/.local/share/contour/contour.db`, `$CONTOUR_DB`
 overrides) and keyed by git blob OID, so branch switches, rebases, and N
 worktrees of one repo cost nothing.
 
+## What kind of file it is
+
+A path has a class — `app`, `test`, `fixture`, `migration`, `generated`,
+`vendored` — decided at the file layer from the path alone, never from the
+bytes (DEC-021, DEC-022). Migrations, generated and vendored code are frozen or
+re-copied rather than consolidated, so they are withheld by default and every
+run says how many it withheld; `--include-ignored` shows them. Test and fixture
+code is *included*, tagged, and ranked as its own population — duplication in
+shared examples is real maintenance signal, and `search` discounts it rather
+than dropping it.
+
+A repository whose layout differs says so at its root, in rules that are path
+prefixes matched exactly the way a `SCOPE` is:
+
+```toml
+# .contour.toml
+[paths]
+test = ["engines/billing/spec"]
+app = ["db/migrate"]      # these really are consolidatable here
+```
+
 See [docs/PLAN.md](docs/PLAN.md), [docs/DECISIONS.md](docs/DECISIONS.md), and
 [docs/PRIOR-ART.md](docs/PRIOR-ART.md).
 

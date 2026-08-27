@@ -175,6 +175,31 @@ errand: the module prefix that would disambiguate five identically-named
 `tests::find` functions lives in the path, which is why the extractor has never
 been able to reach it. Same layer, same seam, do them together.
 
+**Landed in 11a** (`paths::Class`, `paths::Classes`, `.contour.toml`), except
+the owner gap, which is deliberately **not** in that commit: it changes what a
+unit is *called*, so it moves every surface that prints an id and invalidates
+the `git<TAB>git` labels in the Rust eval sets. Behaviour or structure, not
+both — it wants its own step.
+
+Measured old → new, on the same checkouts:
+
+| corpus | number | before | after |
+| ------ | ------ | ------ | ----- |
+| discourse | exact precision | 0.73 (11/15) | **1.00 (11/11)** |
+| discourse | exact recall | 1.00 | 1.00 |
+| rails | search top-1 / top-5 | 1/77, 2/77 | **6/77, 12/77** |
+| rails | exact precision | 0.93 | 0.93 (its FP is the constant-scope pair) |
+| six Rust sets | every number | — | unchanged |
+
+Two limits worth knowing, both honest rather than fixable by a rule:
+
+- `CommentMigration#up`/`#down` lives in `lib/comment_migration.rb`, so no path
+  rule can see that it is a migration. It is still a near-tier false positive,
+  and discourse's near precision is still 0.83 because of it.
+- A Rust `#[cfg(test)] mod tests` sits in an app file. Classification is a pure
+  function of the path, so those units are `app`. Fixing that means an
+  owner-aware rule, which is the free-function owner gap above.
+
 ### 2. The near tier — a different measure, not a different number
 
 Ratified direction: **payoff against effort, both node-denominated.** Shared
@@ -316,6 +341,43 @@ as what *should* happen and currently failing — including identifier noise
 outranking genuine siblings in berater's `acquire_lock` family, which is a
 finding about ranking rather than about the harness. Wiring it is the
 cheapest next step in the eval, because the labels already exist.
+
+### The blend buries a summary hit under identifier noise
+
+**Top of the ranking work, from a field trial on rq** (an independent session
+ran a real dedup pass through the MCP surface and landed a green branch).
+Reproducible: `contour search "throwaway repository built for one test to
+index" src/tests --floor 0 -l 8`. The unit whose contributed summary literally
+says "build a throwaway indexed repository for one test" ranks **fifth at
+cosine 0.44**, below four identifier-tier hits at 0.38 / 0.26 / 0.25 / 0.20.
+The final score is not monotonic in cosine: RRF's lexical half dominates on a
+corpus of long, sentence-shaped Rust test names.
+
+This is the flywheel's own bet failing in public — the trial's verdict was
+"contributed summaries did not visibly improve search, so grazing stayed an act
+of faith" — and DEC-018 depends on grazing visibly paying off.
+
+**Path classes do not fix it, measured after 11a landed: the same query returns
+the same order.** Every candidate in that scope is test code, so a uniform
+discount cannot reorder them. What is left to look at is the blend itself — the
+1.0 lexical / 0.7 semantic weights and `RRF_K`, both inherited from gqls — and
+it wants the eval query sets plus this repro, not a retune by feel.
+
+Two smaller findings from the same trial:
+
+- **`saves_nodes` did not know test from production code**: a 5-line test
+  helper (112 nodes across 5 copies) outranked a 4-way production clock, the
+  most valuable find of the run. Fixed by 11a's populations.
+- **The token-hash tier split a human-visible 4-way Rust duplication into two
+  2-member groups**, because the string literals differ. Correct by design
+  (DEC-012) and worth a note in the report or the near tier below.
+
+### Rust near tier: DEC-012's "only if dogfooding proves the need"
+
+**The proof arrived.** The same field trial's biggest wanted-and-couldn't: the
+near tier would have caught a real `indexed` / `indexed_fixture` pair in rq,
+which the session found by hand instead. Recorded for **M12**, not M11 — it is
+a normalization tier, not a milestone about hardening.
 
 ### A serializer DSL mints writer methods that do not exist
 

@@ -4,6 +4,30 @@
 
 Initial skeleton — nothing has been released, so everything below is new.
 
+- **contour knows what kind of file it is looking at.** Every duplicate group,
+  search hit and neighbour carries a `class`: `app`, `test`, `fixture`,
+  `migration`, `generated` or `vendored`, decided from the path alone.
+  - Migrations, generated and vendored code are **withheld by default** — they
+    are frozen or re-copied, so consolidating one is not a refactor. Every run
+    reports what it withheld and why (`1 group(s) in ignored paths withheld (1
+    migration)`), and `--include-ignored` shows them.
+  - Test and fixture code is **included, tagged, and ranked as its own
+    population**: `dupes` puts app code first and sections the rest, and
+    `search` discounts a non-app hit (disclosed as `discount`) instead of
+    dropping it. Duplication in shared examples is real maintenance signal.
+  - A duplicate group is withheld only when *every* copy is in an ignored path.
+    One that spans classes reports as `mixed` and ranks with app code, because
+    a body in both `vendor/` and `app/` is a finding about the app copy.
+  - Measured: discourse exact-tier precision **0.73 → 1.00** with recall still
+    1.00 (its four migration false positives are gone), and rails search top-5
+    **2/77 → 12/77** (its library methods were drowning in `test/`).
+- **`.contour.toml`** at a checkout root states a layout the conventions get
+  wrong. Rules are path prefixes — matched exactly the way a `SCOPE` is, so
+  there is one path language rather than two — and they beat the conventions:
+  `[paths]` with `app = ["db/migrate"]` makes migrations ordinary code again. A
+  class name or rule the file gets wrong fails the run rather than being
+  half-applied.
+
 - `contour index [PATH]` scans a git checkout and indexes every Ruby callable
   in it. Facts are keyed by git blob OID, so N worktrees of one repo cost one
   index and a reindex with no edits parses nothing.
