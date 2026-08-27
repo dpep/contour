@@ -1,0 +1,128 @@
+# Pairs the duplicate report should and should not group, against a mastodon
+# checkout (~/code/lib/ruby/mastodon).
+#
+# DRAFTED BY CLAUDE, NOT YET REVIEWED BY THE OWNER. Every verdict below was
+# confirmed by reading both bodies against the labeling rule (DEC-020): a pair
+# is a duplicate iff consolidating it would reduce net complexity.
+#
+# The third Ruby corpus, and the second app-shaped one. Where discourse's
+# sharp edge was schema migrations (since path-classed, DEC-022), mastodon's
+# is RAILS CONVENTION DISPATCH: byte-identical mailer actions whose behaviour
+# differs only through the method's own name (template lookup, i18n subject
+# key). Same arithmetic as the `super` pairs (DEC-017): the consolidation
+# needs define_method metaprogramming, so it is not a finding. No path class
+# can fence these — they are app code.
+#
+# CAVEAT on this checkout: its git history is a single squashed commit
+# ("bench corpus for trekr", 2026-08), so `git log` proves nothing about
+# copy direction here. Pair verdicts don't need direction; see canonical.tsv
+# for what that caveat does cost.
+#
+# Near-candidates were sourced by sweeping --near-threshold down to 0.55 and
+# reading, per the README's sourcing rule — never from the calibrated tier's
+# own report. Measured jaccard noted per row; the threshold is 0.70.
+
+# --- confirmed duplicates: consolidation reduces complexity ------------------
+# Byte-identical batch-index loops; only the receiving index differs, and that
+# is already a per-class `index` hook. Hoisting into Importer::BaseImporter is
+# the template-method refactor.
+Importer::InstancesIndexImporter#import!	Importer::TagsIndexImporter#import!	duplicate
+# 17 identical lines of content negotiation; everything that differs lives in
+# other methods (follows, collection_presenter). A shared base controller
+# consolidates.
+FollowerAccountsController#index	FollowingAccountsController#index	duplicate
+# Byte-identical actor-update fanout in the suspend and unsuspend services; a
+# shared concern keeps behaviour intact.
+SuspendAccountService#distribute_update_actor!	UnsuspendAccountService#distribute_update_actor!	duplicate
+# Identical pure function copied between two CLI classes.
+Mastodon::CLI::EmailDomainBlocks#color	Mastodon::CLI::IpBlocks#color	duplicate
+# Identical memoized row count; ROWS_PROCESSING_LIMIT is 20_000 in both
+# classes — the write_query? judgment from the rails set: one shared concern
+# consolidates.
+Admin::Import#csv_row_count	Form::Import#csv_row_count	duplicate
+# Identical memoized domain-block check; ProcessStatusUpdateService copied it
+# (with its neighbour unsupported_media_type?) from Create wholesale.
+ActivityPub::Activity::Create#skip_download?	ActivityPub::ProcessStatusUpdateService#skip_download?	duplicate
+# Byte-identical between the v1 and v2 API controllers; only the serializer
+# in the sibling actions differs. A shared base controller consolidates — API
+# versions are live code, not frozen history like migrations.
+Api::V1::Notifications::PoliciesController#set_policy	Api::V2::Notifications::PoliciesController#set_policy	duplicate
+# The trends filter family: three byte-identical `results` scaffolds whose
+# varying parts (initial_scope, scope_for) are already per-class methods. A
+# base filter class is the consolidation.
+Trends::PreviewCardFilter#results	Trends::StatusFilter#results	duplicate
+# Byte-identical redis-socket checkin copied between the rack middleware and
+# the sidekiq middleware; a shared module consolidates. (Its 4-line sibling
+# clean_up_statsd_socket! sits below --min-lines only because of blank-line
+# counting — same copy.)
+Mastodon::Middleware::SocketCleanup#clean_up_redis_socket!	Mastodon::SidekiqMiddleware#clean_up_redis_socket!	duplicate
+# Identical case-on-action boilerplate in three Form batch classes; hoisting
+# into Form::BaseBatch with per-class action hooks consolidates.
+Form::EmailDomainBlockBatch#save	Form::UsernameBlockBatch#save	duplicate
+# Two files each define Paperclip::LazyThumbnail (ImageMagick original vs
+# libvips port) — the Ruby analogue of the Rust same-name convention: one id,
+# two units, and the pair row names the same id twice. Only the vips file is
+# required anywhere (config/application.rb); the IM original is dead code, and
+# deletion is the consolidation — the Modx judgment from the discourse set.
+Paperclip::LazyThumbnail#needs_different_geometry?	Paperclip::LazyThumbnail#needs_different_geometry?	duplicate
+# Shared status-key scope_for dispatching to a per-class status_scope; a
+# shared mixin keeps behaviour intact (the update_post judgment from the
+# discourse set). Provisional: the two classes are otherwise unrelated, so
+# the mixin is a weaker win than the batch/base-class rows above.
+Admin::AppealFilter#scope_for	Trends::PreviewCardProviderFilter#scope_for	duplicate	provisional
+
+# --- convention dispatch: byte-identical, DISTINCT, mastodon's sharp edge ----
+# Rails mailer actions: the body never names the template or the i18n subject
+# key — both derive from the action's own name. Byte-identical bodies run
+# different mail. Consolidating needs define_method metaprogramming, so under
+# DEC-020 these are not findings — exactly the `super` arithmetic (DEC-017),
+# but through a Rails convention normalization cannot see. The exact tier
+# currently groups all four rows (7-, 2-, 2- and 2-strong groups).
+UserMailer#password_change	UserMailer#email_changed	distinct
+UserMailer#two_factor_enabled	UserMailer#two_factor_disabled	distinct
+UserMailer#appeal_approved	UserMailer#appeal_rejected	distinct
+UserMailer#suspicious_sign_in	UserMailer#failed_2fa	distinct
+AdminMailer#end_of_support_three_months_warning	AdminMailer#end_of_support_two_weeks_warning	distinct
+# A migration embeds its own frozen copy of an app model's method. The group
+# is class `mixed` (DEC-022) so it is still reported — but migration history
+# cannot be consolidated with live code, so it is not a finding. The
+# mixed-class cousin of discourse's migration FP class.
+AccountConversation.add_status	MigrateAccountConversations::MigrationAccountConversation.add_status	distinct
+
+# --- true near-duplicates: copy-paste, then tweaked --------------------------
+# The remote-edit service copied Create's per-emoji block and wrapped it in a
+# loop (return -> next). A shared per-tag helper consolidates 17 lines (0.74).
+ActivityPub::Activity::Create#process_emoji	ActivityPub::ProcessStatusUpdateService#update_emojis!	near
+# Identical feed-clearing pipeline; only the key type and the unpush call
+# differ, both already parameterized elsewhere in the class (0.74).
+FeedManager#clear_from_home	FeedManager#clear_from_list	near
+# The local-edit and remote-edit services copied the same poll rescheduling;
+# the remote copy then gained two guards (votes.exists?, the #37948 re-expiry
+# fix) the local copy lacks — drifted-bugfix duplication, the best kind to
+# surface (0.60, below the threshold).
+UpdateStatusService#queue_poll_notifications!	ActivityPub::ProcessStatusUpdateService#queue_poll_notifications!	near
+# Same batch-index loop as the byte-identical pair above; accounts swaps the
+# scope line for an includes-scope (0.67, below the threshold).
+Importer::InstancesIndexImporter#import!	Importer::AccountsIndexImporter#import!	near
+# Identical password-or-username challenge; one tail saves under a redis
+# lock, the other validates. One shared verify_challenge helper, two thin
+# callers — the Macaddr judgment from the rails set (0.71).
+Form::Redirect#valid_with_challenge?	AccountMigration#save_with_challenge	near
+# Identical media-attachment JSON-LD builder; one guard predicate and one
+# type string differ — a two-argument helper consolidates 14 lines (0.57,
+# far below the threshold).
+SEO::SocialMediaPostingSerializer#video	SEO::SocialMediaPostingSerializer#audio	near
+# Same subscription hash; three values sourced from doorkeeper vs the active
+# session. A parameterized builder consolidates. Provisional: the differing
+# sources are auth context, so the reduction is modest (0.64).
+Api::V1::Push::SubscriptionsController#web_push_subscription_params	Api::Web::PushSubscriptionsController#web_push_subscription_params	near	provisional
+# The filter family's scaffold outside the byte-identical trio: same
+# param-loop, differing initial scope and final chain. The same base-class
+# template consolidates the whole family. Provisional: close to the
+# "class hierarchy IS the consolidation" line the discourse set drew for
+# scorables (0.85 — currently reported).
+Admin::StatusFilter#results	AnnouncementFilter#results	near	provisional
+# 34 lines of identical decay scoring copied between tag and link trends;
+# history source and upsert target differ. A shared scorer with two hooks is
+# a real reduction, but a wide one. Provisional (0.58).
+Trends::Tags#calculate_scores	Trends::Links#calculate_scores	near	provisional

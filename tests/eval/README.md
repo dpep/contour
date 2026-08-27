@@ -27,6 +27,7 @@ in the last column and are counted separately in the report.
 | `fixture/` | `fixture/corpus/` — 21 methods, in-repo | nothing; runs in CI |
 | `rails/` | a rails checkout | real summaries, so an API key |
 | `discourse/` | a discourse checkout | real summaries, so an API key |
+| `mastodon/` | a mastodon checkout | real summaries, so an API key |
 | `rust/<repo>/` | the sibling repos (trekr, rwr, rq, gqls, launder, navi) | nothing |
 | `berater/` | a berater checkout — `similar.tsv` only | nothing |
 
@@ -179,6 +180,41 @@ across limiter classes — the shape `similar` was built to answer.
 The verified-against state is identifier-only vectors (`coverage none`); a
 summarized corpus should only improve the semantic rows, but the expected
 tiers were chosen to be true under either.
+
+## What mastodon adds: the transfer verdict, third corpus
+
+discourse asked whether rails-calibrated thresholds transfer to an app; the
+mastodon set asks whether the *discourse-era fixes* transfer to a second app.
+Measured on a 2026-08 checkout (structural tiers; the search half awaits
+summaries):
+
+- **Path classes carry over.** 23 all-migration groups withheld, test
+  helpers ranked as their own population, `mixed` groups still reported —
+  discourse's migration FP class does not recur. Its residue does: a
+  migration that embeds its own copy of an app model's method survives as a
+  `mixed` group (`MigrateAccountConversations::MigrationAccountConversation`),
+  reported and still not consolidatable — labeled `distinct`.
+- **Exact precision 0.67 (12/18, recall 1.00), and the new FP class is RAILS
+  CONVENTION DISPATCH**: byte-identical mailer actions (7-strong UserMailer
+  group, plus AdminMailer's trio) whose behaviour differs only through the
+  method's own name — template lookup and i18n subject key both derive from
+  it. The `super` arithmetic (DEC-017) through a convention normalization
+  cannot see, and no path class can fence: they are app code. A fix would
+  have to know what a mailer is.
+- **Near recall 0.44 at 0.70 (4/9, precision 1.00)** — the discourse finding
+  reproduced on an independent corpus and an independently sourced label set
+  (0.55 sweep + reading): genuine one-edit copies land at 0.57–0.67
+  routinely, including a drifted-bugfix pair where the remote-edit service
+  gained two guards the local-edit copy lacks.
+- **Canonicality is unmeasurable here, and that is itself the finding**: the
+  checkout's git history is one squashed commit, so `git_age` — the signal
+  that carried 4/5 discourse edges — is structurally silent, and no in-repo
+  delegation exists to substitute. `canonical.tsv` documents why it is
+  empty; canonicality ground truth is a property of a corpus's provenance.
+- **A Ruby same-id twin exists** (two files defining `Paperclip::LazyThumbnail`
+  — ImageMagick original, libvips port; only the port is still required, so
+  the original is dead code). The same-id pair convention the Rust sets
+  introduced is now exercised by a Ruby set too.
 
 ## The Rust sets: measuring the token_hash tier
 

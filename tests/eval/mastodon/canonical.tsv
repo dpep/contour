@@ -1,0 +1,21 @@
+# Canonicality edges against a mastodon checkout — deliberately EMPTY.
+#
+# DRAFTED BY CLAUDE, NOT YET REVIEWED BY THE OWNER.
+#
+# This checkout's git history is a single squashed commit ("bench corpus for
+# trekr"), so `older` — the evidence that carried 4/5 discourse edges — cannot
+# be verified here, and labeling from upstream memory would violate the set's
+# rule that every verdict is verified in the corpus, never assumed. Nothing
+# in the duplicate population delegates to its twin, and the one declared
+# mirror (Mastodon::MigrationHelpers#extract_foreign_key_action, "copied
+# from" rails' schema_statements.rb) points at a different repo, which the
+# one-checkout harness cannot label — the same limit the Rust sets recorded
+# for ae's HashEmbedder::embed.
+#
+# The transfer finding this file records: canonicality ground truth is a
+# property of a corpus's PROVENANCE, not just its code. A squashed checkout
+# (or a vendored tree, or a plugin merged wholesale — the discourse caveat,
+# taken to its limit) supports duplicate and query labels but not canonical
+# ones. On such a corpus git_age is structurally silent, and the correct
+# tool behaviour is abstention — see abstain.tsv for the edges that assert
+# exactly that.
