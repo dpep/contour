@@ -1024,6 +1024,65 @@ fn one_query_gives_one_answer() {
     }
 }
 
+/// A summary outranks a name that merely looks like the query.
+///
+/// The field trial's finding, in miniature: on a partly-summarized rq the unit
+/// whose contributed summary literally answered the question ranked **fifth**,
+/// under four identifier-tier hits with long snake_case names that shared query
+/// tokens by accident. RRF consumes a rank and discards the cosine, so a
+/// summary hit and an identifier hit two places above it were worth almost the
+/// same — and the whole grazing bargain (DEC-018) was invisible in the results.
+#[test]
+fn a_summary_outranks_a_name_that_only_looks_right() {
+    let repo = Repo::new(
+        "search-tiers",
+        &[
+            (
+                "lib/support.rb",
+                "class Support\n  def indexed(tag)\n    build(tag)\n  end\nend\n",
+            ),
+            // Nothing summarizes this one. Its long name shares more query
+            // tokens by accident than the short name of the method that
+            // actually does the thing — and it sorts first, so a tie would
+            // hand it the top slot.
+            (
+                "lib/checks.rb",
+                "class Checks\n  def indexing_prunes_a_stale_checkout_but_keeps_the_live_one\n    run\n  end\nend\n",
+            ),
+        ],
+    );
+    let fixtures = repo.dir.join("f.json");
+    std::fs::write(
+        &fixtures,
+        r#"{"Support#indexed": {
+             "summary":"Creates a throwaway repository for one test and indexes it into a fresh store.",
+             "primary_purpose":"test fixture setup","secondary_concerns":[],
+             "side_effects":["filesystem"],"domain":"testing","patterns":[]}}"#,
+    )
+    .unwrap();
+    repo.run(&["index"]);
+    repo.run(&["summarize", "--fixtures", fixtures.to_str().unwrap()]);
+
+    let answer = repo.json(&[
+        "search",
+        // Both halves have something to say here: the long name shares "one"
+        // and prefix-matches "index", so it leads the lexical list, while the
+        // summary is what actually answers the question.
+        "throwaway repository built for one test to index",
+        "--json",
+    ]);
+    assert_eq!(answer["coverage_state"], "warming", "one of two summarized");
+    let top = &answer["hits"][0];
+    assert_eq!(top["id"], "Support#indexed", "{answer}");
+    assert_eq!(top["semantic_via"], "summary");
+    // The name-shaped hit is still an answer, just not the first one.
+    assert_eq!(
+        answer["hits"][1]["id"],
+        "Checks#indexing_prunes_a_stale_checkout_but_keeps_the_live_one"
+    );
+    assert_eq!(answer["hits"][1]["semantic_via"], "identifier");
+}
+
 /// Nothing in the corpus answers this, so nothing should come back.
 #[test]
 fn search_can_return_nothing() {

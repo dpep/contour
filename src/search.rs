@@ -21,10 +21,23 @@ use std::collections::HashMap;
 /// ranks are not winner-take-all.
 const RRF_K: f64 = 60.0;
 
-/// The semantic half's weight in the fusion. Below 1.0 so an exact name match
-/// keeps the lead: someone typing `unpaid_for` wants that method, not the one
-/// whose summary is most poetic about invoices.
-const SEMANTIC_WEIGHT: f64 = 0.7;
+/// What a **summary** match is worth in the fusion, against a name match's 1.0.
+///
+/// Parity, and the reason is DEC-018's: a summary is what the code *does*,
+/// bought with somebody's tokens and attention. Weighing it below a name match
+/// was the flywheel quietly failing to pay off — see the module header for the
+/// field trial that measured it.
+const SUMMARY_WEIGHT: f64 = 1.0;
+
+/// What an **identifier** match is worth: less, because it is a second look at
+/// the same evidence the lexical half already used.
+///
+/// This is the constant that used to weigh the whole semantic half, and it
+/// keeps its old value so a corpus with no summaries ranks exactly as it did.
+/// The two weights differ only where the tiers meet, which is precisely where
+/// the old single weight was wrong: it let a name-shaped match at cosine 0.20
+/// outrank a summary that answered the question at 0.44.
+const IDENTIFIER_WEIGHT: f64 = 0.7;
 
 /// How much a hit outside the app population is discounted in the fusion.
 ///
@@ -259,8 +272,16 @@ pub fn search(
         entry.1 = true;
     }
     for (rank, (i, _)) in semantic.iter().enumerate() {
+        // Weighted by which vector answered. RRF consumes a rank and throws the
+        // cosine away, so without this a summary hit and an identifier hit two
+        // places above it are worth almost the same — and the identifier hit
+        // wins on a long snake_case name that happens to share query tokens.
+        let weight = match summaries.vectors.get(i).map(|(_, via)| *via) {
+            Some("summary") => SUMMARY_WEIGHT,
+            _ => IDENTIFIER_WEIGHT,
+        };
         let entry = fused.entry(*i).or_insert((0.0, false, false));
-        entry.0 += SEMANTIC_WEIGHT / (RRF_K + rank as f64 + 1.0);
+        entry.0 += weight / (RRF_K + rank as f64 + 1.0);
         entry.2 = true;
     }
 
