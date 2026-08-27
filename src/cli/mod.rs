@@ -338,11 +338,18 @@ fn dupes(
              ({} bodies, {} sub-shapes, {} too common to use)",
             stats.candidates, stats.exhaustive, stats.bodies, stats.subtrees, stats.dropped_common
         );
-        if stats.uncovered > 0 {
+        if stats.uncovered_lang > 0 {
             eprintln!(
                 "contour: {} body/bodies skipped — the near tier is Ruby-only, \
                  because a Rust token hash has no sub-shapes to compare (DEC-012)",
-                stats.uncovered
+                stats.uncovered_lang
+            );
+        }
+        if stats.uncovered_small > 0 {
+            eprintln!(
+                "contour: {} body/bodies skipped — too small to hold a sub-shape \
+                 worth comparing, so the near tier has no evidence about them",
+                stats.uncovered_small
             );
         }
     }

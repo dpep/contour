@@ -139,7 +139,19 @@ pub fn find_near(
         .filter(|(norm_hash, _)| by_hash.contains_key(norm_hash))
         .collect();
     let (pairs, mut stats) = crate::near::pairs(&signatures, threshold);
-    stats.uncovered = by_hash.len() - signatures.len();
+    // A body with no signature is uncovered for one of two reasons, and they
+    // are not interchangeable: Rust has no sub-shapes at all (DEC-012), while
+    // a Ruby body can simply be too small to hold one above the size floor.
+    // Blaming the second on the first tells a pure-Ruby repo something false.
+    for (norm_hash, members) in &by_hash {
+        if signatures.contains_key(norm_hash) {
+            continue;
+        }
+        match members[0].unit.lang {
+            crate::core::Lang::Rust => stats.uncovered_lang += 1,
+            crate::core::Lang::Ruby => stats.uncovered_small += 1,
+        }
+    }
 
     let groups = pairs
         .into_iter()
@@ -205,6 +217,49 @@ pub(crate) fn under(path: &str, prefix: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Two bodies the near tier cannot consider, for two different reasons.
+    /// Found by running the Claude skill against a pure-Ruby gem, where the
+    /// only skipped body was Ruby and the message said Rust.
+    #[test]
+    fn a_body_the_near_tier_skips_is_blamed_on_the_right_thing() {
+        let mut store = Store::open_in_memory().unwrap();
+        // Two four-line bodies with no subtree big enough to enter a
+        // signature. Two rather than one, so the counts differ and a test
+        // with the buckets swapped fails — with one of each it passes both
+        // ways, which is how this nearly shipped proving nothing.
+        let ruby = "class A\n  def reset\n    super\n    @x = nil\n  end\n\
+                    \n  def clear\n    foo\n    bar\n  end\nend\n";
+        // Rust has no sub-shapes at any size — its hash is a token stream.
+        let rust = "impl A {\n    fn reset(&mut self) {\n        self.x = 1;\n\
+                    \n        self.y = 2;\n    }\n}\n";
+        let (ruby_oid, ruby_blob) = (
+            crate::scan::hash_blob(ruby.as_bytes()),
+            crate::ruby::units(ruby.as_bytes()),
+        );
+        let (rust_oid, rust_blob) = (
+            crate::scan::hash_blob(rust.as_bytes()),
+            crate::rust::units(rust.as_bytes()),
+        );
+        let files: crate::scan::Files = [
+            ("a.rb".to_string(), ruby_oid.clone()),
+            ("a.rs".to_string(), rust_oid.clone()),
+        ]
+        .into_iter()
+        .collect();
+        store
+            .write(
+                "/r",
+                &files,
+                vec![(ruby_oid, ruby_blob), (rust_oid, rust_blob)],
+                0,
+            )
+            .unwrap();
+
+        let (_, stats) = find_near(&store, "/r", None, 4, 0.8).unwrap();
+        assert_eq!(stats.uncovered_small, 2, "the Ruby bodies, too small");
+        assert_eq!(stats.uncovered_lang, 1, "the Rust body, wrong language");
+    }
 
     #[test]
     fn a_scope_stops_at_a_path_boundary() {

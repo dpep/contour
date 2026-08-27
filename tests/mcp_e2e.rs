@@ -247,7 +247,10 @@ fn tool_results_carry_the_disclosure_fields() {
         "dupes",
         serde_json::json!({"min_lines": 1, "near": true}),
     );
-    assert!(near["near_stats"]["uncovered"].as_u64().unwrap() >= 1);
+    // The corpus holds exactly one Rust body, and the skip is attributed to
+    // its language rather than to its size — two reasons an agent would act on
+    // differently.
+    assert_eq!(near["near_stats"]["uncovered_lang"].as_u64(), Some(1));
 }
 
 /// A bad call must not take the session down: the model reads the message and

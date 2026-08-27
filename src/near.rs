@@ -102,12 +102,18 @@ pub struct Stats {
     pub candidates: usize,
     /// Pairs a full scan would have compared.
     pub exhaustive: usize,
-    /// Bodies in scope the tier could not consider, because their language
-    /// has no subtree signature. Rust is the whole of this today: its hash is
-    /// a token stream, which admits no sub-shapes (DEC-012). Reported so that
-    /// "no near duplicates" and "this tier does not cover your language" are
-    /// never the same silence.
-    pub uncovered: usize,
+    /// Bodies in scope whose *language* has no subtree signature: Rust, whose
+    /// hash is a token stream and admits no sub-shapes (DEC-012).
+    pub uncovered_lang: usize,
+    /// Bodies in scope whose every sub-shape fell below `norm`'s
+    /// `MIN_SUBTREE_NODES`, leaving nothing to compare. A short body can be
+    /// one — `super` plus an assignment has no subtree big enough to be
+    /// evidence about any pair.
+    ///
+    /// Counted apart from [`Stats::uncovered_lang`] because they are different
+    /// facts with different fixes, and a pure-Ruby repo told "the near tier is
+    /// Ruby-only" has been handed a disclosure that is worse than none.
+    pub uncovered_small: usize,
 }
 
 /// Every near-structural pair among the given bodies, with the work it took.

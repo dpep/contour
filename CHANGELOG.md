@@ -96,6 +96,10 @@ Initial skeleton — nothing has been released, so everything below is new.
   returning a silence that looks like "nothing found".
 - **Forces a reindex**: signatures are new, and the fold that produces
   `norm_hash` changed shape to compute them.
+- The near tier's skip disclosure no longer blames Rust for a Ruby body. A
+  body with no comparable sub-shape is skipped for one of two reasons — its
+  language has none (Rust), or every sub-shape in it fell below the size floor
+  — and `near_stats` now counts and names them separately.
 - `contour eval <SET>` scores a checkout against a labeled set: search hit-rate
   (top-1 / top-5 / found) for contour and two baselines, duplicate precision
   and recall, and the cosine distributions that say where the relevance floor
