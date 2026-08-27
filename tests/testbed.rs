@@ -263,7 +263,9 @@ fn every_testbed_case_answers_as_recorded() {
                     match found {
                         None => fail(format!("no group holds exactly {want_ids:?}")),
                         Some(group) => {
-                            let got = group["canonical"]["pick"].as_str().unwrap_or("(none)");
+                            let got = group["canonical"]["pick"]["id"]
+                                .as_str()
+                                .unwrap_or("(none)");
                             let want = tail(rest);
                             if got != want {
                                 fail(format!(

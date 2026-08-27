@@ -13,6 +13,7 @@ you cannot guess.
 contour search "customer has not paid their bill"   # behaviour, in English
 contour similar 'Invoice#settle!'                    # does this already exist?
 contour dupes --near                                 # copy-paste, incl. tweaked
+contour dupes app/models --canonical                 # ...and which copy to keep
 contour --symbols app/models/invoice.rb              # outline before reading
 contour --status                                     # what the index knows
 ```
@@ -67,6 +68,25 @@ a `semantic` one is a suggestion.
 
 If `search` returns less than you expect, run `contour --status` before
 concluding the code is not there.
+
+## Deciding which duplicate to keep
+
+`contour dupes --canonical` names the likely original of each group and shows
+its work: git age (the **oldest surviving line** of each body, so a reformatted
+implementation looks young), reference counts from trekr with its
+confirmed/possible tiers, and namespace depth as a weak tiebreak. Nothing is
+blended into a score.
+
+**When it says the signals disagree, that is the answer, not a failure.** It
+names which signal favours which member, and the two fail in opposite
+directions: git age is fooled when an implementation is extracted to a new
+home, and reference counts are fooled by a delegating shim, which is called
+more precisely because it is the public front door. Read both clauses and you
+can usually settle it yourself in one look.
+
+It is off by default because it shells out — one `git blame` per body, one
+trekr call per Ruby name. **Scope it.** On a directory that is seconds; on a
+whole monorepo it is minutes, and every run prints what it spent.
 
 ## Feeding the index
 

@@ -67,6 +67,34 @@ impl Candidate {
     fn span(&self) -> (String, u32, u32) {
         (self.path.clone(), self.line, self.end_line)
     }
+
+    fn pick(&self) -> Pick {
+        Pick {
+            id: self.id.clone(),
+            path: self.path.clone(),
+            line: self.line,
+        }
+    }
+}
+
+/// One member, named the way the report names it.
+///
+/// A location and not just an id, because an id is **not unique within a
+/// group**: rq holds five `tests::find`, one per language plugin, and naming
+/// the winner by id there tells a reader nothing. Worse, two signals favouring
+/// two different members of that group would have compared equal and been
+/// reported as agreeing.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct Pick {
+    pub id: String,
+    pub path: String,
+    pub line: u32,
+}
+
+impl std::fmt::Display for Pick {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} ({}:{})", self.id, self.path, self.line)
+    }
 }
 
 /// The likely-canonical member of one candidate set, and the basis for saying
@@ -76,7 +104,7 @@ pub struct Canonical {
     /// The member every deciding signal that spoke agrees on. `None` when they
     /// disagree, and when nothing could be measured at all — both of which are
     /// answers rather than failures, spelled out in [`Canonical::basis`].
-    pub pick: Option<String>,
+    pub pick: Option<Pick>,
     /// What each signal measured and what it said, in one sentence. Never a
     /// score: a reader has to be able to disagree with the reasoning, which
     /// requires seeing it.
@@ -96,7 +124,7 @@ pub struct Signal {
     /// came out equal; `unavailable` — it could not measure at all.
     pub status: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub picks: Option<String>,
+    pub picks: Option<Pick>,
     /// What this signal found, or why it found nothing. The clause the group's
     /// `basis` is built from, kept per signal so a consumer reading one signal
     /// does not have to re-derive it.
@@ -109,7 +137,8 @@ pub struct Signal {
 /// One member's value for one signal.
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct Measured {
-    pub id: String,
+    #[serde(flatten)]
+    pub member: Pick,
     /// The number the pick is made from. Comparable within one signal and
     /// meaningless across them, which is the whole reason nothing sums them.
     pub value: i64,
@@ -218,7 +247,7 @@ pub fn annotate(root: &Path, groups: &mut [Group]) -> Result<Stats> {
 }
 
 /// Agreement, disagreement, or silence — and the sentence for each.
-fn resolve(signals: &[Signal]) -> (Option<String>, String) {
+fn resolve(signals: &[Signal]) -> (Option<Pick>, String) {
     let spoke: Vec<&Signal> = signals
         .iter()
         .filter(|s| s.weight == DECIDING && s.picks.is_some())
@@ -253,7 +282,10 @@ fn resolve(signals: &[Signal]) -> (Option<String>, String) {
                     .map(|s| format!(
                         "{} favours {} ({})",
                         s.signal,
-                        s.picks.as_deref().unwrap_or("?"),
+                        s.picks
+                            .as_ref()
+                            .map(Pick::to_string)
+                            .unwrap_or_else(|| "?".into()),
                         s.note
                     ))
                     .collect::<Vec<_>>()
@@ -300,7 +332,7 @@ fn git_age(
         let key = member.span();
         match ages.get(&key) {
             Some(Ok(at)) => measured.push(Measured {
-                id: member.id.clone(),
+                member: member.pick(),
                 value: *at,
                 display: date(*at),
             }),
@@ -323,7 +355,7 @@ fn git_age(
         Some(best) => {
             let runner_up = measured
                 .iter()
-                .filter(|m| m.id != best.id)
+                .filter(|m| m.member != best.member)
                 .map(|m| m.value)
                 .min()
                 .unwrap_or(best.value);
@@ -337,7 +369,7 @@ fn git_age(
                 signal: "git_age",
                 weight: DECIDING,
                 status: "measured",
-                picks: Some(best.id.clone()),
+                picks: Some(best.member.clone()),
                 note,
                 measured,
             }
@@ -375,7 +407,7 @@ fn reference_count(candidates: &[Candidate], refs: &HashMap<String, Refs>) -> Si
             Some(Refs::Counts {
                 confirmed,
                 possible,
-            }) => counts.push((member.id.clone(), *confirmed, *possible)),
+            }) => counts.push((member.pick(), *confirmed, *possible)),
             Some(Refs::Unavailable(why)) => {
                 return unavailable("references", DECIDING, why.clone());
             }
@@ -386,13 +418,13 @@ fn reference_count(candidates: &[Candidate], refs: &HashMap<String, Refs>) -> Si
     let tier_is_confirmed = counts.iter().any(|(_, confirmed, _)| *confirmed > 0);
     let measured: Vec<Measured> = counts
         .iter()
-        .map(|(id, confirmed, possible)| {
+        .map(|(member, confirmed, possible)| {
             let (value, label) = match tier_is_confirmed {
                 true => (*confirmed, "confirmed"),
                 false => (*possible, "possible"),
             };
             Measured {
-                id: id.clone(),
+                member: member.clone(),
                 value,
                 display: format!("{value} {label}"),
             }
@@ -403,7 +435,7 @@ fn reference_count(candidates: &[Candidate], refs: &HashMap<String, Refs>) -> Si
         Some(best) => {
             let rest: Vec<String> = measured
                 .iter()
-                .filter(|m| m.id != best.id)
+                .filter(|m| m.member != best.member)
                 .map(|m| m.value.to_string())
                 .collect();
             let note = format!(
@@ -416,7 +448,7 @@ fn reference_count(candidates: &[Candidate], refs: &HashMap<String, Refs>) -> Si
                 signal: "references",
                 weight: DECIDING,
                 status: "measured",
-                picks: Some(best.id.clone()),
+                picks: Some(best.member.clone()),
                 note,
                 measured,
             }
@@ -453,7 +485,7 @@ fn namespace_depth(candidates: &[Candidate]) -> Signal {
                 false => owner.split("::").count() as i64,
             };
             Measured {
-                id: m.id.clone(),
+                member: m.pick(),
                 value: depth,
                 display: format!("depth {depth}"),
             }
@@ -465,7 +497,7 @@ fn namespace_depth(candidates: &[Candidate]) -> Signal {
             signal: "namespace_depth",
             weight: TIEBREAK,
             status: "measured",
-            picks: Some(best.id.clone()),
+            picks: Some(best.member.clone()),
             note: format!("shallowest namespace at {}", best.display),
             measured,
         },
@@ -630,11 +662,19 @@ fn span(seconds: i64) -> String {
 mod tests {
     use super::*;
 
+    fn pick(id: &str) -> Pick {
+        Pick {
+            id: id.into(),
+            path: format!("{id}.rb"),
+            line: 1,
+        }
+    }
+
     fn measured(values: &[(&str, i64)]) -> Vec<Measured> {
         values
             .iter()
             .map(|(id, value)| Measured {
-                id: (*id).into(),
+                member: pick(id),
                 value: *value,
                 display: value.to_string(),
             })
@@ -646,7 +686,7 @@ mod tests {
             signal: name,
             weight,
             status: if picks.is_some() { "measured" } else { "tied" },
-            picks: picks.map(str::to_string),
+            picks: picks.map(pick),
             note: format!("{name} said something"),
             measured: Vec::new(),
         }
@@ -655,11 +695,11 @@ mod tests {
     #[test]
     fn a_tie_is_silence_rather_than_a_coin_flip() {
         assert_eq!(
-            winner(&measured(&[("a", 1), ("b", 2)]), true).map(|m| m.id.as_str()),
+            winner(&measured(&[("a", 1), ("b", 2)]), true).map(|m| m.member.id.as_str()),
             Some("a")
         );
         assert_eq!(
-            winner(&measured(&[("a", 1), ("b", 2)]), false).map(|m| m.id.as_str()),
+            winner(&measured(&[("a", 1), ("b", 2)]), false).map(|m| m.member.id.as_str()),
             Some("b")
         );
         assert!(winner(&measured(&[("a", 1), ("b", 1)]), true).is_none());
@@ -675,7 +715,7 @@ mod tests {
             signal("references", DECIDING, Some("A#run")),
             signal("namespace_depth", TIEBREAK, Some("B#run")),
         ];
-        assert_eq!(resolve(&agree).0, Some("A#run".into()));
+        assert_eq!(resolve(&agree).0, Some(pick("A#run")));
 
         let disagree = vec![
             signal("git_age", DECIDING, Some("A#run")),
@@ -684,6 +724,49 @@ mod tests {
         let (pick, basis) = resolve(&disagree);
         assert_eq!(pick, None, "a disagreement is reported, not resolved");
         assert!(basis.contains("disagree"), "got {basis:?}");
+    }
+
+    /// Found by dogfooding on rq, which holds five `tests::find` — one per
+    /// language plugin. Two signals favouring two *different* members of that
+    /// group would have compared equal and been reported as agreeing, which is
+    /// the one way this design can manufacture a confident wrong answer.
+    #[test]
+    fn two_members_sharing_a_name_are_still_two_members() {
+        let at = |id: &str, path: &str| Signal {
+            signal: "git_age",
+            weight: DECIDING,
+            status: "measured",
+            picks: Some(Pick {
+                id: id.into(),
+                path: path.into(),
+                line: 1,
+            }),
+            note: "note".into(),
+            measured: Vec::new(),
+        };
+        let same_name_different_file = vec![
+            at("tests::find", "src/lang/go/mod.rs"),
+            Signal {
+                signal: "references",
+                ..at("tests::find", "src/lang/ruby/mod.rs")
+            },
+        ];
+        let (pick, basis) = resolve(&same_name_different_file);
+        assert_eq!(pick, None, "same name, different member: not agreement");
+        assert!(basis.contains("disagree"), "got {basis:?}");
+
+        // The same two signals on the same member still agree.
+        let agreed = vec![
+            at("tests::find", "src/lang/go/mod.rs"),
+            Signal {
+                signal: "references",
+                ..at("tests::find", "src/lang/go/mod.rs")
+            },
+        ];
+        assert_eq!(
+            resolve(&agreed).0.map(|p| p.path),
+            Some("src/lang/go/mod.rs".into())
+        );
     }
 
     /// The weak signal decides only when both deciding ones are silent, and
@@ -696,7 +779,7 @@ mod tests {
             signal("namespace_depth", TIEBREAK, Some("A#run")),
         ];
         let (pick, basis) = resolve(&silent);
-        assert_eq!(pick, Some("A#run".into()));
+        assert_eq!(pick, Some(super::tests::pick("A#run")));
         assert!(basis.contains("weak"), "got {basis:?}");
 
         let nothing = vec![

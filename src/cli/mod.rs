@@ -345,9 +345,22 @@ fn dupes(
                     group.lines,
                     group.how
                 );
+                let pick = group
+                    .canonical
+                    .as_ref()
+                    .and_then(|c| c.pick.as_ref())
+                    .map(|p| (p.path.as_str(), p.line));
                 for member in &group.members {
+                    // The winner is marked in place rather than only named
+                    // below. rq holds five `tests::find`, one per language
+                    // plugin, so a line naming the pick by id there says
+                    // nothing a reader can act on.
+                    let mark = match pick == Some((member.path.as_str(), member.line)) {
+                        true => '*',
+                        false => ' ',
+                    };
                     println!(
-                        "  {}:{}-{}  {}",
+                        "{mark} {}:{}-{}  {}",
                         member.path, member.line, member.end_line, member.id
                     );
                 }
@@ -356,9 +369,7 @@ fn dupes(
                 // signals disagree" is a finding a reader should act on.
                 if let Some(canonical) = &group.canonical {
                     match &canonical.pick {
-                        Some(pick) => {
-                            println!("  likely canonical: {pick} — {}", canonical.basis)
-                        }
+                        Some(_) => println!("  * likely canonical — {}", canonical.basis),
                         None => println!("  no canonical pick — {}", canonical.basis),
                     }
                 }

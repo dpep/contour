@@ -99,6 +99,11 @@ Initial skeleton — nothing has been released, so everything below is new.
 - `contour similar UNIT [PATH]` can be pointed at a checkout, like `index` and
   `search` already could, and failing to find one now leads with what to do
   about it rather than with git's own `fatal:`.
+- A canonical pick names a **location**, not just an id. rq holds five
+  `tests::find`, one per language plugin: naming the winner by id there says
+  nothing, and two signals favouring two different members would have compared
+  equal and been reported as agreeing. Human output marks the winner in the
+  member list with `*`.
 - `contour eval` scores canonicality against `canonical.tsv`, per edge and per
   signal, counting an abstention apart from a wrong answer. On the rails
   labels the two deciding signals fail in **opposite** directions: git age is

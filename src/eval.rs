@@ -701,13 +701,13 @@ fn score_canonical(
                     signal: signal.signal.to_string(),
                     ..SignalScore::default()
                 });
-            match signal.picks.as_deref() {
+            match signal.picks.as_ref().map(|p| p.id.as_str()) {
                 Some(pick) if pick == label.canonical => score.correct += 1,
                 Some(_) => score.wrong += 1,
                 None => score.silent += 1,
             }
         }
-        let outcome = match ranked.pick.as_deref() {
+        let outcome = match ranked.pick.as_ref().map(|p| p.id.as_str()) {
             Some(pick) if pick == label.canonical => {
                 out.correct += 1;
                 "correct"
