@@ -13,6 +13,24 @@ use std::path::Path;
 
 /// Index the checkout containing `path`. Returns the repo root and the work
 /// that was actually done.
+/// Bytes → units, for whichever extractor reads this path.
+///
+/// The one place that choice is made. It used to be made in four — `index`,
+/// `--symbols`, the MCP `symbols` tool, and the fill loop's re-parse check —
+/// and the fourth had it wrong, parsing every body as Ruby. That made
+/// `summarize` reject every Rust unit in the corpus with "the file changed
+/// since it was indexed", which is a false statement about the user's files
+/// and unfixable by the reindex it asks for.
+///
+/// `None` when no extractor reads this path, which for anything the index
+/// holds cannot happen — `scan::language` is what put it there.
+pub fn units_at(path: &str, src: &[u8]) -> Option<Blob> {
+    Some(match crate::scan::language(path)? {
+        Lang::Ruby => crate::ruby::units(src),
+        Lang::Rust => crate::rust::units(src),
+    })
+}
+
 pub fn index(store: &mut Store, path: &Path) -> Result<(String, Indexed)> {
     let root = scan::repo_root(path)?;
     let files = scan::scan(&root)?;
@@ -38,14 +56,11 @@ pub fn index(store: &mut Store, path: &Path) -> Result<(String, Indexed)> {
             // The extractor is chosen by the path, but reads only bytes — so
             // the same blob still yields the same units wherever it sits, and
             // the layer-1 contract holds.
-            let blob = std::fs::read(root.join(path)).ok().map(|bytes| {
-                match crate::scan::language(path) {
-                    Some(Lang::Rust) => crate::rust::units(&bytes),
-                    // `language` already said yes, or this path would not be
-                    // in the map at all.
-                    _ => crate::ruby::units(&bytes),
-                }
-            });
+            let blob = std::fs::read(root.join(path))
+                .ok()
+                // `language` already said yes, or this path would not be in
+                // the map at all.
+                .and_then(|bytes| units_at(path, &bytes));
             ((*oid).clone(), blob)
         })
         .collect();

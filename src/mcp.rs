@@ -22,7 +22,6 @@
 //! if contour ever wants sampling, elicitation, or an HTTP transport, the
 //! hand-rolled loop stops paying and `rmcp` starts.
 
-use crate::core::Lang;
 use anyhow::Result;
 use serde_json::{Value, json};
 use std::io::{BufRead, Write};
@@ -379,12 +378,8 @@ fn symbols(args: &Value) -> Result<Value> {
         .as_str()
         .ok_or_else(|| anyhow::anyhow!("`file` is required"))?;
     let src = std::fs::read(file)?;
-    let lang =
-        crate::scan::language(file).ok_or_else(|| anyhow::anyhow!("no extractor for {file}"))?;
-    let blob = match lang {
-        Lang::Ruby => crate::ruby::units(&src),
-        Lang::Rust => crate::rust::units(&src),
-    };
+    let blob = crate::index::units_at(file, &src)
+        .ok_or_else(|| anyhow::anyhow!("no extractor for {file}"))?;
     Ok(json!({
         "units": blob.units,
         "parse_errors": blob.parse_errors,

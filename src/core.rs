@@ -156,15 +156,23 @@ impl Unit {
     /// so `singleton` is carried but not shown there. It is still the same
     /// fact in both languages: whether calling this needs an instance.
     pub fn id(&self) -> String {
-        if self.owner.is_empty() {
-            return self.name.clone();
-        }
-        match self.lang {
-            Lang::Rust => format!("{}::{}", self.owner, self.name),
-            Lang::Ruby => {
-                let sep = if self.singleton { '.' } else { '#' };
-                format!("{}{sep}{}", self.owner, self.name)
-            }
+        id(self.lang, &self.owner, &self.name, self.singleton)
+    }
+}
+
+/// The naming rule itself, so nothing has to restate it.
+///
+/// Restating it is how the fixture summarizer came to look up a Rust `fn`
+/// under `Widget#total`, a name no surface prints and no person would write.
+pub fn id(lang: Lang, owner: &str, name: &str, singleton: bool) -> String {
+    if owner.is_empty() {
+        return name.to_string();
+    }
+    match lang {
+        Lang::Rust => format!("{owner}::{name}"),
+        Lang::Ruby => {
+            let sep = if singleton { '.' } else { '#' };
+            format!("{owner}{sep}{name}")
         }
     }
 }

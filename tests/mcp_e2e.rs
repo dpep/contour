@@ -384,10 +384,13 @@ fn a_session_can_summarize_what_it_reads() {
     let pending = mcp.tool(3, "pending", serde_json::json!({"model": "claude-opus-5"}));
     let version = pending["prompt_version"].as_str().unwrap().to_string();
     let units = pending["units"].as_array().unwrap();
-    // Three distinct Ruby bodies; `Ledger#settle!` clones `Invoice#settle!`
+    // Three distinct Ruby bodies — `Ledger#settle!` clones `Invoice#settle!`
     // but sits under a different owner, so its context differs and it is its
-    // own piece of work.
-    assert_eq!(units.len(), 3);
+    // own piece of work — plus the one Rust fn. Four, not three: `pending`
+    // re-parses each body to check it still matches the index, did that as
+    // Ruby whatever the language, and so silently withheld every Rust unit in
+    // the corpus from every session that asked.
+    assert_eq!(units.len(), 4);
     let first = &units[0];
     assert!(first["source"].as_str().unwrap().contains("def "));
     assert!(first["context"].as_str().unwrap().contains("name: "));
@@ -416,7 +419,7 @@ fn a_session_can_summarize_what_it_reads() {
     // It is no longer pending, and search now answers from meaning rather than
     // from the name — a query sharing no token with the identifier.
     let after = mcp.tool(5, "pending", serde_json::json!({"model": "claude-opus-5"}));
-    assert_eq!(after["units"].as_array().unwrap().len(), 2);
+    assert_eq!(after["units"].as_array().unwrap().len(), 3, "four less one");
 
     let found = mcp.tool(
         6,
@@ -493,7 +496,8 @@ fn contributions_are_rejected_rather_than_repaired() {
     );
     assert!(vocabulary.contains("not a side effect"), "{vocabulary}");
 
-    // Nothing was stored by any of the above.
+    // Nothing was stored by any of the above: three Ruby bodies and one Rust
+    // fn, all still waiting.
     let pending = mcp.tool(6, "pending", serde_json::json!({"model": "m"}));
-    assert_eq!(pending["units"].as_array().unwrap().len(), 3);
+    assert_eq!(pending["units"].as_array().unwrap().len(), 4);
 }

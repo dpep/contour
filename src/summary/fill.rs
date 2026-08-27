@@ -106,7 +106,7 @@ pub fn fill(
     };
     for ((norm_hash, ctx_hash), units) in todo.into_iter().take(budget) {
         let here = &units[0];
-        let source = match slice_inner(root, here, norm_hash) {
+        let source = match slice(root, &here.path, here.line, here.end_line, norm_hash) {
             Ok(source) => source,
             Err(err) => {
                 eprintln!("contour: skipped {}:{} — {err}", here.path, here.line);
@@ -263,35 +263,19 @@ pub(crate) fn slice(
     end_line: u32,
     norm_hash: u64,
 ) -> Result<String> {
-    let unit = Located {
-        path: path.to_string(),
-        line,
-        end_line,
-        context: Context {
-            name: String::new(),
-            owner: String::new(),
-            singleton: false,
-            via: None,
-            params: Vec::new(),
-        },
-    };
-    slice_inner(root, &unit, norm_hash)
-}
-
-fn slice_inner(root: &Path, unit: &Located, norm_hash: u64) -> Result<String> {
-    let text = std::fs::read_to_string(root.join(&unit.path))?;
+    let text = std::fs::read_to_string(root.join(path))?;
     let lines: Vec<&str> = text.lines().collect();
-    let (from, to) = (unit.line as usize - 1, unit.end_line as usize);
+    let (from, to) = (line as usize - 1, end_line as usize);
     anyhow::ensure!(
         from < lines.len() && to <= lines.len(),
         "the file is shorter than the index expects; reindex"
     );
     let source = lines[from..to].join("\n");
 
-    let found = crate::ruby::units(source.as_bytes())
-        .units
-        .first()
-        .and_then(|u| u.norm_hash);
+    // Parsed by the extractor that indexed it. Assuming Ruby here told every
+    // Rust user their files had changed when they had not.
+    let found = crate::index::units_at(path, source.as_bytes())
+        .and_then(|blob| blob.units.first().and_then(|u| u.norm_hash));
     anyhow::ensure!(
         found == Some(norm_hash),
         "the file changed since it was indexed; reindex"

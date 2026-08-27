@@ -254,6 +254,7 @@ mod tests {
         let body = client.body(&Request {
             source: "def save\n  persist!\nend".into(),
             context: crate::summary::Context {
+                lang: crate::core::Lang::Ruby,
                 name: "save".into(),
                 owner: "Widget".into(),
                 singleton: false,

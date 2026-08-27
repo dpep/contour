@@ -37,15 +37,7 @@ impl Summarizer for Fixtures {
     }
 
     fn summarize(&self, request: &Request) -> Result<(Summary, Usage)> {
-        let id = match request.context.owner.is_empty() {
-            true => request.context.name.clone(),
-            false => format!(
-                "{}{}{}",
-                request.context.owner,
-                if request.context.singleton { '.' } else { '#' },
-                request.context.name
-            ),
-        };
+        let id = request.context.id();
         match self.summaries.get(&id) {
             // Zero usage, honestly: nothing was spent, and reporting a made-up
             // token count would put fiction into the run's totals.
@@ -62,17 +54,26 @@ mod tests {
     use super::*;
     use crate::summary::Context;
 
-    fn write(body: &str) -> std::path::PathBuf {
-        let path =
-            std::env::temp_dir().join(format!("contour-fixtures-{}.json", std::process::id()));
+    /// `label` must be unique per test: the suite runs them in threads in one
+    /// process, and a shared filename makes two tests overwrite each other.
+    fn write(label: &str, body: &str) -> std::path::PathBuf {
+        let path = std::env::temp_dir().join(format!(
+            "contour-fixtures-{}-{label}.json",
+            std::process::id()
+        ));
         std::fs::write(&path, body).unwrap();
         path
     }
 
     fn request(owner: &str, name: &str, singleton: bool) -> Request {
+        typed(crate::core::Lang::Ruby, owner, name, singleton)
+    }
+
+    fn typed(lang: crate::core::Lang, owner: &str, name: &str, singleton: bool) -> Request {
         Request {
             source: "def save; end".into(),
             context: Context {
+                lang,
                 name: name.into(),
                 owner: owner.into(),
                 singleton,
@@ -82,9 +83,25 @@ mod tests {
         }
     }
 
+    /// A Rust `fn` is looked up under the name Rust writes. The fixture path
+    /// used to rebuild the id itself and reach for `Widget#total`, which no
+    /// surface prints and nobody would put in a fixture file.
+    #[test]
+    fn replays_a_rust_fn_by_its_rust_name() {
+        let path = write(
+            "rust-name",
+            r#"{"Widget::total": {"summary":"s","primary_purpose":"p",
+                "secondary_concerns":[],"side_effects":[],"domain":"d","patterns":[]}}"#,
+        );
+        let fixtures = Fixtures::load(&path).unwrap();
+        let request = typed(crate::core::Lang::Rust, "Widget", "total", false);
+        assert!(fixtures.summarize(&request).is_ok());
+    }
+
     #[test]
     fn replays_by_the_name_a_person_writes() {
         let path = write(
+            "ruby-name",
             r#"{"Widget#save": {"summary":"Saves it.","primary_purpose":"persistence",
                 "domain":"inventory","side_effects":["persists"]}}"#,
         );

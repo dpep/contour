@@ -330,6 +330,66 @@ fn summarize_fills_a_budget_and_shares_clones() {
     assert_eq!(again["remaining"], 0);
 }
 
+/// The fill loop re-parses each body to prove it is still the one the index
+/// recorded. It used to do that as Ruby whatever the language, so every Rust
+/// unit in a corpus was refused with "the file changed since it was indexed" —
+/// a false claim about the user's files, and one the reindex it asks for
+/// cannot fix. Found by QA against a Rust checkout.
+#[test]
+fn summarize_fills_both_languages_not_just_ruby() {
+    let repo = Repo::new(
+        "summarize-langs",
+        &[
+            (
+                "app.rb",
+                "class Widget
+  def total(items)
+    sum = 0
+    items.each { |i| sum += i }
+    sum
+  end
+end
+",
+            ),
+            (
+                "lib.rs",
+                "impl Widget {
+    fn total(&self, items: &[u8]) -> u32 {
+        let mut sum = 0;
+                 
+        for i in items { sum += *i as u32; }
+        sum
+    }
+}
+",
+            ),
+        ],
+    );
+    repo.run(&["index"]);
+    // Keyed the way each language's own surface names it — `Widget#total` in
+    // Ruby, `Widget::total` in Rust. That the Rust key is not `Widget#total`
+    // is half the point: the fixture path used to rebuild the id itself and
+    // got Rust wrong.
+    let fixtures = repo.dir.join("fx.json");
+    std::fs::write(
+        &fixtures,
+        r#"{"Widget#total": {"summary":"sums numbers","primary_purpose":"aggregate",
+             "secondary_concerns":[],"side_effects":[],"domain":"math","patterns":[]},
+            "Widget::total": {"summary":"sums bytes","primary_purpose":"aggregate",
+             "secondary_concerns":[],"side_effects":[],"domain":"math","patterns":[]}}"#,
+    )
+    .unwrap();
+
+    let filled = repo.json(&[
+        "summarize",
+        "--fixtures",
+        fixtures.to_str().unwrap(),
+        "--json",
+    ]);
+    assert_eq!(filled["summarized"], 2, "one per language");
+    assert_eq!(filled["failed"], 0);
+}
+
 /// A budget bounds spend, and a stale index refuses to summarize rather than
 /// buying a wrong answer under a right key.
 #[test]

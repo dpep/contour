@@ -624,12 +624,8 @@ fn eval(set: &std::path::Path, min_lines: u32, format: Format) -> Result<i32> {
 fn symbols(file: &std::path::Path, format: Format) -> Result<i32> {
     let src = std::fs::read(file)?;
     let path = file.to_string_lossy();
-    let Some(lang) = crate::scan::language(&path) else {
+    let Some(blob) = crate::index::units_at(&path, &src) else {
         anyhow::bail!("no extractor for {}", file.display());
-    };
-    let blob = match lang {
-        crate::core::Lang::Ruby => crate::ruby::units(&src),
-        crate::core::Lang::Rust => crate::rust::units(&src),
     };
     if blob.parse_errors > 0 {
         // The outline is what survived, not what is there. Say so on stderr so
