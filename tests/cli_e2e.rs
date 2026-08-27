@@ -214,10 +214,14 @@ fn symbols_needs_no_index() {
         "live",
         &[("a.rb", "class Widget\n  def save(force:); end\nend\n")],
     );
-    let rows = repo.json(&["--symbols", "a.rb", "--json"]);
+    // An object carrying the units and what the parse cost, exactly what the
+    // MCP `symbols` tool returns for the same file.
+    let outline = repo.json(&["--symbols", "a.rb", "--json"]);
+    let rows = &outline["units"];
     assert_eq!(rows[0]["name"], "save");
     assert_eq!(rows[0]["owner"], "Widget");
     assert_eq!(rows[0]["params"][0]["kind"], "keyreq");
+    assert_eq!(outline["parse_errors"], 0);
 
     // `--ndjson` is one compact object per unit, not one pretty document.
     let (ndjson, _) = repo.run(&["--symbols", "a.rb", "--ndjson"]);
@@ -270,16 +274,25 @@ fn dupes_hides_bodies_too_short_to_mean_anything() {
 
     // The two three-line accessors are identical because there is only one way
     // to write them; the default floor drops them.
-    let groups = repo.json(&["dupes", "--json"]);
+    let report = repo.json(&["dupes", "--json"]);
+    let groups = &report["groups"];
     assert_eq!(groups.as_array().map(Vec::len), Some(1));
     assert_eq!(groups[0]["lines"], 5);
     assert_eq!(groups[0]["how"], "structural");
     // A u64 past 2^53 does not survive a JSON parser that stores numbers as
     // doubles, so the key travels as hex.
     assert_eq!(groups[0]["norm_hash"].as_str().map(str::len), Some(16));
+    // Absolute, so a consumer can resolve it without knowing our cwd.
+    assert!(
+        groups[0]["members"][0]["path"]
+            .as_str()
+            .unwrap()
+            .starts_with('/'),
+        "{report}"
+    );
 
     assert_eq!(
-        repo.json(&["dupes", "--min-lines", "1", "--json"])
+        repo.json(&["dupes", "--min-lines", "1", "--json"])["groups"]
             .as_array()
             .map(Vec::len),
         Some(2),
@@ -377,6 +390,33 @@ end
     assert!(
         out.contains("pool.rb:13") && out.contains("[structural]"),
         "got {out:?}"
+    );
+
+    // No unit is reported twice under two tiers. The dedup used to compare
+    // path strings, which stopped matching the moment JSON paths became
+    // absolute — so the same body came back once as `structural` and again as
+    // `semantic cos 1.00`, which is a structural fact wearing a graded number.
+    let neighbors = repo.json(&["similar", "pool.rb:3", "--json"]);
+    let listed: Vec<(&str, u64)> = neighbors["neighbors"]
+        .as_array()
+        .expect("an object with neighbours, like search's answer")
+        .iter()
+        .map(|n| (n["id"].as_str().unwrap(), n["line"].as_u64().unwrap()))
+        .collect();
+    let mut unique = listed.clone();
+    unique.sort_unstable();
+    unique.dedup();
+    assert_eq!(listed.len(), unique.len(), "reported twice: {listed:?}");
+    // And the answer discloses what it could see, which it used to not do.
+    assert!(neighbors["coverage_state"].is_string());
+    assert!(neighbors["embedder"].is_string());
+    // Paths a consumer can resolve without knowing where we were standing.
+    assert!(
+        neighbors["neighbors"][0]["path"]
+            .as_str()
+            .unwrap()
+            .starts_with('/'),
+        "{neighbors}"
     );
 
     // An unambiguous name is untouched.
@@ -782,12 +822,12 @@ fn similar_discloses_its_tier_and_only_grades_what_is_graded() {
     );
     repo.run(&["index"]);
 
-    let neighbors = repo.json(&["similar", "Alpha#run", "--json"]);
-    let first = &neighbors[0];
+    let answer = repo.json(&["similar", "Alpha#run", "--json"]);
+    let first = &answer["neighbors"][0];
     assert_eq!(first["id"], "Beta#go");
     assert_eq!(first["how"], "structural");
     assert!(
-        first["confidence"].is_null(),
+        first["cosine"].is_null() && first["similarity"].is_null(),
         "structural identity is a predicate, not a grade"
     );
     assert_eq!(first["lines"], 5, "it discloses evidence instead");

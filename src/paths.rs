@@ -27,9 +27,39 @@ pub fn pretty(path: &str) -> String {
     }
 }
 
+/// A checkout-relative path made absolute, for a machine consumer.
+///
+/// JSON carries absolute paths because the consumer is not standing anywhere:
+/// a `dupes` result saying `app/models/x.rb` is unresolvable without knowing
+/// which of the machine's checkouts it came from.
+pub fn absolute(root: &str, path: &str) -> String {
+    format!("{}/{path}", root.trim_end_matches('/'))
+}
+
+/// The inverse, for human output: a person *is* standing in the checkout, and
+/// a full path on every line is noise around the part they need.
+pub fn within<'a>(root: &str, path: &'a str) -> &'a str {
+    let root = root.trim_end_matches('/');
+    path.strip_prefix(root)
+        .and_then(|rest| rest.strip_prefix('/'))
+        .unwrap_or(path)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_path_round_trips_between_the_two_audiences() {
+        let abs = absolute("/repo", "app/models/x.rb");
+        assert_eq!(abs, "/repo/app/models/x.rb");
+        assert_eq!(within("/repo", &abs), "app/models/x.rb");
+        // A trailing slash on the root is a real shape and must not double up.
+        assert_eq!(absolute("/repo/", "a.rb"), "/repo/a.rb");
+        assert_eq!(within("/repo/", "/repo/a.rb"), "a.rb");
+        // A path from somewhere else is left alone rather than mangled.
+        assert_eq!(within("/repo", "/elsewhere/a.rb"), "/elsewhere/a.rb");
+    }
 
     #[test]
     fn shortens_home_and_nothing_else() {

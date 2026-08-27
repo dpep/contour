@@ -72,6 +72,7 @@ pub fn relevance_floor(kind: &str) -> f32 {
 /// One search result.
 #[derive(Debug, serde::Serialize)]
 pub struct Hit {
+    /// Absolute (`paths::absolute`).
     pub path: String,
     pub id: String,
     pub line: u32,
@@ -98,6 +99,9 @@ pub struct Hit {
 /// A search answer plus everything needed to judge it.
 #[derive(Debug, serde::Serialize)]
 pub struct Answer {
+    /// The checkout this answer is about. Record paths are absolute, so this
+    /// is not needed to resolve them — it names what was searched.
+    pub root: String,
     pub hits: Vec<Hit>,
     /// `complete` / `warming` / `none`, with the counts behind it.
     pub coverage: Coverage,
@@ -237,7 +241,7 @@ pub fn search(
     let hits = ranked
         .into_iter()
         .map(|(i, score, lex, sem)| Hit {
-            path: units[i].path.clone(),
+            path: crate::paths::absolute(root, &units[i].path),
             id: units[i].unit.id(),
             line: units[i].unit.line,
             how: match (lex, sem) {
@@ -245,12 +249,16 @@ pub fn search(
                 (false, true) => "semantic",
                 _ => "lexical",
             },
-            cosine: cosines.get(&i).copied(),
+            cosine: cosines.get(&i).copied().map(round2),
             semantic_via: match cosines.contains_key(&i) {
                 true => summaries.vectors.get(&i).map(|(_, via)| *via),
                 false => None,
             },
-            score,
+            // An RRF score is a rank artefact, and 0.02768376520359598 claims
+            // sixteen digits of evidence that a fusion of two rankings over a
+            // few hundred units does not have. Rounded here rather than in the
+            // renderer, so the JSON cannot keep digits the human output hid.
+            score: (score * 10_000.0).round() / 10_000.0,
             summary: summaries.text.get(&i).cloned(),
         })
         .collect();
@@ -264,19 +272,29 @@ pub fn search(
     }
 
     Ok(Answer {
+        root: root.to_string(),
         hits,
         tiers,
         coverage_state: summaries.coverage.state(),
         coverage: summaries.coverage,
         embedder: embedder.kind(),
-        floor,
+        floor: round2(floor),
         withheld,
     })
+}
+
+/// Two decimals: a cosine off a 256-dim vector has about that much meaning,
+/// and a floor of 0.4000000059604645 is an f32 artefact rather than a
+/// threshold anybody chose. Rounded where the value is built (the house rule),
+/// so JSON and human output cannot disagree about how much precision exists.
+fn round2(x: f32) -> f32 {
+    (x * 100.0).round() / 100.0
 }
 
 /// One neighbour of a named unit, and how it was found.
 #[derive(Debug, serde::Serialize)]
 pub struct Neighbor {
+    /// Absolute (`paths::absolute`).
     pub path: String,
     pub id: String,
     pub line: u32,
@@ -314,11 +332,22 @@ pub fn similar(
     id: &str,
     embedder: &dyn Embedder,
     limit: usize,
-) -> Result<Vec<Neighbor>> {
+) -> Result<Neighbors> {
     let units = in_scope(store, root, None)?;
     let target = resolve(&units, id)?;
     let summaries = vectors_for(store, &units, embedder, Prefer::Best)?;
     let here = &units[target];
+    let floor = relevance_floor(embedder.kind());
+    let mut withheld = 0;
+
+    // Which units a tier has already reported. Keyed by **index**, not by the
+    // path string: `path` is absolute on a `Neighbor` and relative on a
+    // `Located`, so comparing them silently never matched, and the same unit
+    // came back twice — once `structural`, once `semantic cos 1.00`. Reported
+    // by QA against rails and reintroduced here the moment paths changed
+    // shape, which is the argument for keying on identity rather than on
+    // whatever the renderer happens to be doing.
+    let mut claimed: std::collections::HashSet<usize> = std::iter::once(target).collect();
 
     // Structural: an identical normalized body, at a different place.
     let mut out: Vec<Neighbor> = Vec::new();
@@ -328,8 +357,9 @@ pub fn similar(
             if i == target || same_span || other.unit.norm_hash != Some(norm_hash) {
                 continue;
             }
+            claimed.insert(i);
             out.push(Neighbor {
-                path: other.path.clone(),
+                path: crate::paths::absolute(root, &other.path),
                 id: other.unit.id(),
                 line: other.unit.line,
                 how: "structural",
@@ -345,25 +375,20 @@ pub fn similar(
     // meaning. Runs before the semantic tier so a reader sees the cheaper,
     // sharper evidence first.
     {
-        let claimed: std::collections::HashSet<(String, u32)> = out
-            .iter()
-            .map(|n| (n.path.clone(), n.line))
-            .chain(std::iter::once((here.path.clone(), here.unit.line)))
-            .collect();
         for near in crate::near::neighbors(store, root, here, crate::near::NEAR_THRESHOLD, None)? {
-            if claimed.contains(&(near.path.clone(), near.line)) {
-                continue;
-            }
             let index = units
                 .iter()
                 .position(|u| u.path == near.path && u.unit.line == near.line);
+            if index.is_some_and(|i| !claimed.insert(i)) {
+                continue;
+            }
             out.push(Neighbor {
-                path: near.path,
+                path: crate::paths::absolute(root, &near.path),
                 id: near.id,
                 line: near.line,
                 how: "near_structural",
                 cosine: None,
-                similarity: Some(near.similarity),
+                similarity: Some(round2(near.similarity)),
                 lines: Some(near.end_line + 1 - near.line),
                 summary: index.and_then(|i| summaries.text.get(&i).cloned()),
             });
@@ -374,26 +399,26 @@ pub fn similar(
     // claimed — a result reported twice under two tiers is a result a reader
     // has to de-duplicate by hand.
     if let Some((vec, _)) = summaries.vectors.get(&target) {
-        let claimed: std::collections::HashSet<(&str, u32)> =
-            out.iter().map(|n| (n.path.as_str(), n.line)).collect();
         let mut scored: Vec<(usize, f32)> = summaries
             .vectors
             .iter()
-            .filter(|(i, _)| **i != target)
-            .filter(|(i, _)| !claimed.contains(&(units[**i].path.as_str(), units[**i].unit.line)))
+            .filter(|(i, _)| !claimed.contains(*i))
             .map(|(i, (other, _))| (*i, mrl::cosine_similarity(vec, other)))
-            .filter(|(_, cosine)| *cosine >= relevance_floor(embedder.kind()))
             .collect();
+        // Counted before it is applied, so "nothing similar" and "nothing
+        // above the bar" are never the same silence (DEC-010).
+        withheld = scored.iter().filter(|(_, c)| *c < floor).count();
+        scored.retain(|(_, cosine)| *cosine >= floor);
         scored.sort_by(|a, b| b.1.total_cmp(&a.1));
         for (i, cosine) in scored.into_iter().take(limit) {
             out.push(Neighbor {
-                path: units[i].path.clone(),
+                path: crate::paths::absolute(root, &units[i].path),
                 id: units[i].unit.id(),
                 line: units[i].unit.line,
                 how: "semantic",
                 // A graded judgment, so it gets a number — and the number is
                 // the measurement itself, not a mapping of it.
-                cosine: Some(cosine),
+                cosine: Some(round2(cosine)),
                 similarity: None,
                 lines: None,
                 summary: summaries.text.get(&i).cloned(),
@@ -401,7 +426,43 @@ pub fn similar(
         }
     }
     out.truncate(limit);
-    Ok(out)
+    Ok(Neighbors {
+        root: root.to_string(),
+        unit: here.unit.id(),
+        path: crate::paths::absolute(root, &here.path),
+        line: here.unit.line,
+        neighbors: out,
+        coverage_state: summaries.coverage.state(),
+        coverage: summaries.coverage,
+        embedder: embedder.kind(),
+        floor: round2(floor),
+        withheld,
+    })
+}
+
+/// Neighbours of one unit, with what the search could and could not see.
+///
+/// An object rather than a bare list, for the same reason `search` returns
+/// one: a reader shown three neighbours has no way to tell a thin corpus from
+/// a thorough answer, and `similar` used to disclose nothing at all — no
+/// coverage, no floor, no count of what the floor withheld (DEC-010). An empty
+/// result was zero bytes and an exit code.
+#[derive(Debug, serde::Serialize)]
+pub struct Neighbors {
+    pub root: String,
+    /// The unit that was asked about, resolved — which matters when the name
+    /// given was ambiguous and a location settled it.
+    pub unit: String,
+    pub path: String,
+    pub line: u32,
+    pub neighbors: Vec<Neighbor>,
+    pub coverage: Coverage,
+    pub coverage_state: &'static str,
+    pub embedder: &'static str,
+    /// The cosine floor applied to the semantic tier. The structural and
+    /// near-structural tiers are predicates and no floor touches them.
+    pub floor: f32,
+    pub withheld: usize,
 }
 
 /// Resolve what the user typed to exactly one unit.

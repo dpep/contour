@@ -394,6 +394,12 @@ fn dupes(
         false => None,
     };
 
+    let whole = serde_json::json!({
+        "root": root,
+        "groups": groups,
+        "near_stats": stats,
+        "canonical_stats": ranked,
+    });
     match format {
         Format::Human => {
             for group in &groups {
@@ -432,7 +438,10 @@ fn dupes(
                     };
                     println!(
                         "{mark} {}:{}-{}  {}",
-                        member.path, member.line, member.end_line, member.id
+                        crate::paths::within(&root, &member.path),
+                        member.line,
+                        member.end_line,
+                        member.id
                     );
                 }
                 // Never a bare crown: the pick and the basis travel together,
@@ -452,7 +461,7 @@ fn dupes(
                 );
             }
         }
-        _ => emit(format, &groups)?,
+        _ => answer(format, &whole, &groups)?,
     }
     // Diagnostics, so stderr in every format — stdout stays the groups, and
     // `-J` stays one result per line. The scale claim is stated rather than
@@ -574,7 +583,10 @@ fn search(
                 };
                 println!(
                     "{}:{}  {}  [{}]{cosine}",
-                    hit.path, hit.line, hit.id, hit.how
+                    crate::paths::within(&answer.root, &hit.path),
+                    hit.line,
+                    hit.id,
+                    hit.how
                 );
                 if let Some(summary) = &hit.summary {
                     println!("    {summary}");
@@ -584,7 +596,7 @@ fn search(
             // half-summarized repo must not look like a search over a small one.
             disclose(&answer);
         }
-        _ => emit(format, &answer)?,
+        _ => self::answer(format, &answer, &answer.hits)?,
     }
     Ok(if answer.hits.is_empty() { MISS } else { HIT })
 }
@@ -641,26 +653,61 @@ fn similar(
 
     match format {
         Format::Human => {
-            for n in &neighbors {
+            for n in &neighbors.neighbors {
                 // An exact structural clone is a predicate, so it shows its
                 // evidence (the body size) rather than a manufactured
-                // confidence; a semantic neighbour shows the cosine, which is
-                // a real graded measurement (DEC-010).
+                // confidence; a semantic neighbour shows the cosine and a near
+                // one its Jaccard, because those judgments really are graded
+                // (DEC-010).
                 let evidence = match (n.cosine, n.similarity, n.lines) {
                     (Some(cosine), _, _) => format!("  cos {cosine:.2}"),
                     (_, Some(jaccard), _) => format!("  jaccard {jaccard:.2}"),
                     (_, _, Some(lines)) => format!("  {lines} lines"),
                     _ => String::new(),
                 };
-                println!("{}:{}  {}  [{}]{evidence}", n.path, n.line, n.id, n.how);
+                println!(
+                    "{}:{}  {}  [{}]{evidence}",
+                    crate::paths::within(&neighbors.root, &n.path),
+                    n.line,
+                    n.id,
+                    n.how
+                );
                 if let Some(summary) = &n.summary {
                     println!("    {summary}");
                 }
             }
+            // `similar` disclosed nothing at all until now, so an empty answer
+            // was zero bytes and an exit code — indistinguishable from a thin
+            // corpus, a cold index, or a floor doing its job.
+            if neighbors.neighbors.is_empty() {
+                eprintln!(
+                    "contour: nothing similar to {} in {}",
+                    neighbors.unit,
+                    crate::paths::pretty(&neighbors.root)
+                );
+            }
+            eprintln!(
+                "contour: coverage {} via the {} embedder — {}/{} summarized",
+                neighbors.coverage_state,
+                neighbors.embedder,
+                neighbors.coverage.summarized,
+                neighbors.coverage.summarizable
+            );
+            if neighbors.withheld > 0 {
+                eprintln!(
+                    "contour: {} semantic neighbour(s) below the relevance floor \
+                     ({:.2}) withheld",
+                    neighbors.withheld, neighbors.floor
+                );
+            }
         }
-        _ => emit(format, &neighbors)?,
+        _ => answer(format, &neighbors, &neighbors.neighbors)?,
     }
-    Ok(if neighbors.is_empty() { MISS } else { HIT })
+    Ok(if neighbors.neighbors.is_empty() {
+        MISS
+    } else {
+        HIT
+    })
 }
 
 fn eval(set: &std::path::Path, min_lines: u32, format: Format) -> Result<i32> {
@@ -724,7 +771,16 @@ fn symbols(file: &std::path::Path, format: Format) -> Result<i32> {
                 );
             }
         }
-        _ => emit(format, &blob.units)?,
+        _ => answer(
+            format,
+            &serde_json::json!({
+                "file": file.canonicalize().unwrap_or_else(|_| file.to_path_buf()),
+                "units": blob.units,
+                "parse_errors": blob.parse_errors,
+                "lines": blob.lines,
+            }),
+            &blob.units,
+        )?,
     }
     Ok(if blob.units.is_empty() { MISS } else { HIT })
 }
@@ -840,6 +896,27 @@ fn signature(unit: &Unit) -> String {
         })
         .collect();
     format!("({})", parts.join(", "))
+}
+
+/// One answer, rendered for whichever audience asked.
+///
+/// `--json` is the **whole** answer — records plus the disclosure that says
+/// what the search could and could not see — and is byte-for-byte what the
+/// MCP tool returns for the same question. That equality is the point: no
+/// field may exist for an agent and go missing for a human, or the reverse.
+///
+/// `-J` is the records alone, one compact object per line, because that is
+/// what a shell pipeline consumes. Nothing is lost: the disclosure has already
+/// gone to stderr, which is where diagnostics go in every format.
+fn answer<W: serde::Serialize, R: serde::Serialize>(
+    format: Format,
+    whole: &W,
+    records: &[R],
+) -> Result<()> {
+    match format {
+        Format::Ndjson => emit(format, &records),
+        _ => emit(format, whole),
+    }
 }
 
 fn emit<T: serde::Serialize>(format: Format, value: &T) -> Result<()> {

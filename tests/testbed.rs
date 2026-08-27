@@ -182,7 +182,7 @@ fn every_testbed_case_answers_as_recorded() {
                 // source order.
                 "symbols" => {
                     let (answer, _, _) = contour(&db, &dir, &["--symbols", target, "--json"]);
-                    let got: Vec<String> = answer
+                    let got: Vec<String> = answer["units"]
                         .as_array()
                         .map(|rows| rows.iter().filter_map(unit_id).collect())
                         .unwrap_or_default();
@@ -216,7 +216,7 @@ fn every_testbed_case_answers_as_recorded() {
                             "--json",
                         ],
                     );
-                    let got = clone_groups(&answer);
+                    let got = clone_groups(&answer["groups"]);
                     let mut want: Vec<String> = rest
                         .split_whitespace()
                         .filter(|g| *g != "(none)")
@@ -252,14 +252,18 @@ fn every_testbed_case_answers_as_recorded() {
                     );
                     let mut want_ids: Vec<&str> = target.split('+').collect();
                     want_ids.sort_unstable();
-                    let found = answer.as_array().into_iter().flatten().find(|group| {
-                        let mut ids: Vec<&str> = group["members"]
-                            .as_array()
-                            .map(|ms| ms.iter().filter_map(|m| m["id"].as_str()).collect())
-                            .unwrap_or_default();
-                        ids.sort_unstable();
-                        ids == want_ids
-                    });
+                    let found = answer["groups"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .find(|group| {
+                            let mut ids: Vec<&str> = group["members"]
+                                .as_array()
+                                .map(|ms| ms.iter().filter_map(|m| m["id"].as_str()).collect())
+                                .unwrap_or_default();
+                            ids.sort_unstable();
+                            ids == want_ids
+                        });
                     match found {
                         None => fail(format!("no group holds exactly {want_ids:?}")),
                         Some(group) => {

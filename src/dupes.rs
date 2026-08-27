@@ -91,6 +91,8 @@ pub struct Group {
 
 #[derive(Debug, serde::Serialize)]
 pub struct Member {
+    /// Absolute. See `paths::absolute` for why a record leaving the process
+    /// does not carry a checkout-relative path.
     pub path: String,
     pub id: String,
     pub line: u32,
@@ -146,7 +148,10 @@ pub fn find(store: &Store, root: &str, scope: Option<&str>, min_lines: u32) -> R
                 .into_iter()
                 .map(|l| Member {
                     id: l.unit.id(),
-                    path: l.path,
+                    // Absolute from here on: a record leaving the process has
+                    // to be resolvable by a reader who is not standing in the
+                    // checkout. Human output shortens it back.
+                    path: crate::paths::absolute(root, &l.path),
                     line: l.unit.line,
                     end_line: l.unit.end_line,
                 })
@@ -252,7 +257,7 @@ pub fn find_near(
                     .into_iter()
                     .map(|l| Member {
                         id: l.unit.id(),
-                        path: l.path.clone(),
+                        path: crate::paths::absolute(root, &l.path),
                         line: l.unit.line,
                         end_line: l.unit.end_line,
                     })

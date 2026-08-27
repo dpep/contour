@@ -370,7 +370,12 @@ fn dupes(args: &Value) -> Result<Value> {
     // The scale and coverage disclosure the CLI prints to stderr has nowhere
     // to go in a tool result but the result itself — and an agent needs to
     // know the near tier skipped its Rust files.
-    Ok(json!({"groups": groups, "near_stats": stats, "canonical_stats": ranked}))
+    Ok(json!({
+        "root": root,
+        "groups": groups,
+        "near_stats": stats,
+        "canonical_stats": ranked,
+    }))
 }
 
 fn symbols(args: &Value) -> Result<Value> {
@@ -387,6 +392,7 @@ fn symbols(args: &Value) -> Result<Value> {
     let blob = crate::index::units_at(file, &src)
         .ok_or_else(|| anyhow::anyhow!("no extractor for {file}"))?;
     Ok(json!({
+        "file": path.canonicalize().unwrap_or_else(|_| path.to_path_buf()),
         "units": blob.units,
         "parse_errors": blob.parse_errors,
         "lines": blob.lines,
