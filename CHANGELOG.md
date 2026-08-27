@@ -99,6 +99,23 @@ Initial skeleton — nothing has been released, so everything below is new.
 - `contour similar UNIT [PATH]` can be pointed at a checkout, like `index` and
   `search` already could, and failing to find one now leads with what to do
   about it rather than with git's own `fatal:`.
+- **`contour dupes --canonical`** names the likely-original member of every
+  group and says why: git age (the oldest surviving line of each body),
+  reference counts from `trekr --refs` with its confirmed/possible tiers, and
+  namespace depth as a weak tiebreak. Each signal reports its own pick and its
+  own measurement; nothing is blended into a score. **When the signals disagree
+  there is no pick** — that usually means the older one was superseded and never
+  deleted, which is a finding rather than a failure.
+- A signal that cannot be measured says so and why — "trekr reads Ruby, and
+  this is rust", or trekr's own "never been indexed" with the command that
+  would fix it — and never degrades into a guess.
+- Off by default: it is the only part of `dupes` that leaves the process, at
+  one `git blame` per body and one `trekr` call per Ruby name. A rails scope is
+  seconds; the whole of rails is minutes, and every run prints what it spent.
+  `$CONTOUR_TREKR` names the binary, so a machine without trekr just reports
+  the signal absent.
+- The MCP `dupes` tool takes `canonical` too, and returns byte-for-byte what
+  `--json` does.
 - The near tier's skip disclosure no longer blames Rust for a Ruby body. A
   body with no comparable sub-shape is skipped for one of two reasons — its
   language has none (Rust), or every sub-shape in it fell below the size floor

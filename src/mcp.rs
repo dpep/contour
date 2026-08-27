@@ -175,7 +175,9 @@ fn tools() -> Vec<Value> {
             "name": "dupes",
             "description": "Report callables with identical bodies, and optionally ones that are \
                 nearly identical. Sees through renames, reformatting and comments, so it finds \
-                copy-paste that grep cannot. Ruby gets AST-grade normalization; Rust gets a \
+                copy-paste that grep cannot. With `canonical`, each group also names which member \
+                is likely the original and why — and says so when the signals disagree, which \
+                usually means the old one was superseded and never deleted. Ruby gets AST-grade normalization; Rust gets a \
                 token-stream hash, disclosed per group as `structural` or `token_hash`.",
             "inputSchema": {
                 "type": "object",
@@ -184,7 +186,8 @@ fn tools() -> Vec<Value> {
                     "scope": {"type": "string", "description": "Repo-relative file or directory."},
                     "min_lines": {"type": "integer", "description": "Ignore bodies shorter than this. Default 4."},
                     "near": {"type": "boolean", "description": "Also report nearly-identical bodies."},
-                    "near_threshold": {"type": "number", "description": "Jaccard for `near`. Default 0.8."}
+                    "near_threshold": {"type": "number", "description": "Jaccard for `near`. Default 0.8."},
+                    "canonical": {"type": "boolean", "description": "Name the likely-original member of each group, with the signals behind it (git age, reference counts, namespace depth) and what each measured. Costs one git blame per body and one trekr call per Ruby name, so scope it."}
                 }
             },
             "annotations": {"readOnlyHint": true}
@@ -357,10 +360,14 @@ fn dupes(args: &Value) -> Result<Value> {
         groups.extend(near);
         stats = Some(found);
     }
+    let mut ranked = None;
+    if args["canonical"].as_bool() == Some(true) {
+        ranked = Some(crate::canonical::annotate(Path::new(&root), &mut groups)?);
+    }
     // The scale and coverage disclosure the CLI prints to stderr has nowhere
     // to go in a tool result but the result itself — and an agent needs to
     // know the near tier skipped its Rust files.
-    Ok(json!({"groups": groups, "near_stats": stats}))
+    Ok(json!({"groups": groups, "near_stats": stats, "canonical_stats": ranked}))
 }
 
 fn symbols(args: &Value) -> Result<Value> {

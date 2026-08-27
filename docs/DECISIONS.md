@@ -309,3 +309,71 @@ nightly fills. Skill-level proactivity first: if instructing sessions to be
 coverage-aware turns out to be insufficient, that is the evidence that
 justifies infrastructure. Building both at once would leave us unable to say
 which one worked.
+
+## DEC-019 — Canonicality is agreeing signals, not a score
+
+A duplicate group's next question is *which one do I keep*, and the answer is
+not in the bodies — they are identical. It is outside them, in three signals
+that are each cheap, local, and independently checkable.
+
+**No composite.** Each signal is measured separately and names its own pick.
+Nothing sums, weights, or normalizes a commit date against a call count into
+one number, because that number would mean nothing and look like it means
+something — DEC-010's rule, applied to a judgment with several inputs instead
+of one. When every signal that spoke agrees, that agreement is the answer. When
+they disagree there is **no pick**, and the disagreement is reported: it
+usually means the older implementation was superseded and nobody deleted it,
+which is precisely what a reader needs before consolidating.
+
+One asymmetry, spelled into the output rather than hidden in a weight:
+`git_age` and `references` are **deciding**, and `namespace_depth` is a
+**tiebreak** consulted only when both are silent. Depth genuinely correlates
+with generality and genuinely does so weakly; letting it disagree its way into
+an abstention would make abstention the usual answer.
+
+### What each signal actually measures
+
+- **git_age** — the oldest *surviving* line of the body, via `git blame`. Not
+  its introduction: a body nobody has edited dates to when it was written, and
+  one reformatted last week dates to last week. rails' two `XmlMini#merge!`
+  backends are a year apart in history and five days apart by this measurement,
+  because both have been reformatted since. The note says "oldest surviving
+  line" for that reason — a reader told "oldest" cannot discount it.
+- **references** — `trekr --refs`, whose confirmed/possible tiering no grep can
+  reproduce. Confirmed decides where anything has one; otherwise the comparison
+  falls back to possible and **says which tier it used**, because idiomatic Ruby
+  leaves most counts zero-confirmed and collapsing the tiers would report a
+  weaker measurement under a stronger name.
+- **namespace_depth** — `::` segments in the owner. The weak one, and a
+  tiebreak only.
+
+### Shelling out is the right call here
+
+git owns history and trekr owns Ruby call resolution. A second, worse copy of
+either inside contour would be the expensive kind of not-invented-here. The
+price is that both can be absent, so both degrade to `unavailable` **with the
+reason attached** — including trekr's own hint for making it available — and
+never to a guess. A signal that cannot see one member of a set reports the
+whole set unmeasured, rather than ranking the members it happened to see.
+
+### Why it is opt-in, against the brief
+
+The milestone asked for canonicality on *every* group. It is behind
+`--canonical` instead, because the cost was measured rather than assumed: one
+`git blame` costs ~1 s on rails (90k commits) and ~30 ms on a young repo, and
+one `trekr --refs` ~2 s on an indexed rails. A full `dupes` of rails is 296
+groups and 665 members, so annotating all of it is minutes against the 0.5 s
+the report costs today. Making the cheap command expensive by default is the
+wrong default; `contour dupes app/models --canonical` is seconds, and is the
+shape somebody actually uses when they are about to consolidate something.
+
+Reversible in one line if the owner disagrees, and every run prints what it
+spent so the tradeoff stays auditable.
+
+### Not on `similar`
+
+`similar` returns neighbours across three tiers, and only the structural and
+near ones are "the same implementation twice". Crowning a member of a list that
+includes semantic neighbours would assert an equivalence nothing measured.
+Canonicality ranks a set of candidates that are claimed to be interchangeable;
+`dupes` produces such a set and `similar` does not.

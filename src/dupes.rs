@@ -22,6 +22,13 @@ pub struct Group {
     /// `token_hash` for Rust's degraded token stream (DEC-012). A group never
     /// mixes the two, because each language seeds its own hash space.
     pub how: &'static str,
+    /// The one language every member is written in — hash spaces are seeded
+    /// per language, so a group cannot mix them.
+    ///
+    /// Carried rather than inferred from `how`, which cannot answer it for a
+    /// near-structural group, and which would make every consumer that needs
+    /// the language re-derive it from a string.
+    pub lang: crate::core::Lang,
     /// Source lines spanned, `def` through `end`. The size disclosure that
     /// makes the floor honest: a reader can see whether a match is a real
     /// duplicate or two three-line accessors that happen to agree.
@@ -34,6 +41,12 @@ pub struct Group {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub similarity: Option<f32>,
     pub members: Vec<Member>,
+    /// Which member is likely the original, and on what basis. Filled by
+    /// [`crate::canonical::annotate`] when asked for, and absent otherwise —
+    /// the signals behind it are external process calls, so nothing computes
+    /// them on a report that did not ask.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub canonical: Option<crate::canonical::Canonical>,
 }
 
 #[derive(Debug, serde::Serialize)]
@@ -83,8 +96,10 @@ pub fn find(store: &Store, root: &str, scope: Option<&str>, min_lines: u32) -> R
         .map(|(hash, members)| Group {
             norm_hash: format!("{hash:016x}"),
             how: members[0].unit.lang.hash_tier(),
+            lang: members[0].unit.lang,
             lines: members[0].unit.end_line + 1 - members[0].unit.line,
             similarity: None,
+            canonical: None,
             members: members
                 .into_iter()
                 .map(|l| Member {
@@ -163,8 +178,10 @@ pub fn find_near(
             Some(Group {
                 norm_hash: format!("{:016x}", pair.a),
                 how: "near_structural",
+                lang: a.unit.lang,
                 lines: a.unit.end_line + 1 - a.unit.line,
                 similarity: Some(pair.similarity),
+                canonical: None,
                 members: [a, b]
                     .into_iter()
                     .map(|l| Member {

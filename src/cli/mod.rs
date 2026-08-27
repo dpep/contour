@@ -69,6 +69,14 @@ enum Command {
         /// Jaccard at or above which two bodies count as near-structural.
         #[arg(long, value_name = "J", default_value_t = crate::near::NEAR_THRESHOLD)]
         near_threshold: f32,
+        /// Name the likely-original member of each group, with the basis.
+        ///
+        /// Off by default because it is the only part of this report that
+        /// leaves the process: one `git blame` per body and one `trekr --refs`
+        /// per Ruby name. On a scope that is milliseconds; on all of rails it
+        /// is minutes, and the run prints what it spent.
+        #[arg(long)]
+        canonical: bool,
     },
     /// Summarize callables with an LLM, up to a budget.
     Summarize {
@@ -202,10 +210,18 @@ fn dispatch(cli: &Cli) -> Result<i32> {
                 min_lines,
                 near,
                 near_threshold,
+                canonical,
             }),
             _,
             _,
-        ) => dupes(scope.as_deref(), *min_lines, *near, *near_threshold, format),
+        ) => dupes(
+            scope.as_deref(),
+            *min_lines,
+            *near,
+            *near_threshold,
+            *canonical,
+            format,
+        ),
         (
             Some(Command::Summarize {
                 scope,
@@ -293,6 +309,7 @@ fn dupes(
     min_lines: u32,
     near: bool,
     near_threshold: f32,
+    canonical: bool,
     format: Format,
 ) -> Result<i32> {
     let (root, relative) = scoped(scope)?;
@@ -311,6 +328,13 @@ fn dupes(
         groups.extend(near_groups);
         stats = Some(found);
     }
+    let ranked = match canonical {
+        true => Some(crate::canonical::annotate(
+            std::path::Path::new(&root),
+            &mut groups,
+        )?),
+        false => None,
+    };
 
     match format {
         Format::Human => {
@@ -327,6 +351,17 @@ fn dupes(
                         member.path, member.line, member.end_line, member.id
                     );
                 }
+                // Never a bare crown: the pick and the basis travel together,
+                // and an abstention prints its reasoning too, because "the
+                // signals disagree" is a finding a reader should act on.
+                if let Some(canonical) = &group.canonical {
+                    match &canonical.pick {
+                        Some(pick) => {
+                            println!("  likely canonical: {pick} — {}", canonical.basis)
+                        }
+                        None => println!("  no canonical pick — {}", canonical.basis),
+                    }
+                }
             }
             if groups.is_empty() {
                 eprintln!(
@@ -340,6 +375,14 @@ fn dupes(
     // Diagnostics, so stderr in every format — stdout stays the groups, and
     // `-J` stays one result per line. The scale claim is stated rather than
     // asserted: pairs actually compared against pairs a full scan would need.
+    if let Some(ranked) = &ranked {
+        eprintln!(
+            "contour: canonicality took {} git blame(s) and {} trekr call(s) in {:.1}s",
+            ranked.git_probes,
+            ranked.trekr_probes,
+            ranked.millis as f64 / 1000.0
+        );
+    }
     if let Some(stats) = &stats {
         eprintln!(
             "contour: near tier compared {} candidate pair(s) of {} possible \

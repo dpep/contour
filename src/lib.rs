@@ -17,6 +17,8 @@
 //!   it. N worktrees of one repo cost one index (DEC-003).
 //! - [`index`] — the three above, wired together.
 //! - [`dupes`] — the exact tier: a group-by over one column.
+//! - [`canonical`] — which member of a duplicate group is likely the original,
+//!   from signals outside the bodies, each reported with its own pick.
 //! - [`near`] — the near-structural tier: Jaccard over subtree signatures,
 //!   with an inverted index so nothing is compared pairwise.
 //! - [`summary`] — the expensive layer, and the first one that leaves the
@@ -27,6 +29,7 @@
 //! - [`eval`] — the labeled set that settles every threshold (DEC-011).
 //! - [`mcp`] — the agent surface, returning exactly the JSON the CLI does.
 
+pub mod canonical;
 pub mod cli;
 pub mod core;
 pub mod dupes;

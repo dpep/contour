@@ -60,6 +60,10 @@ impl Session {
             .arg("mcp")
             .current_dir(&dir)
             .env("CONTOUR_DB", &db)
+            // Hermetic: a test must not shell out to whatever trekr this
+            // machine has, or index a temp repo into its global store. An
+            // unrunnable path is also the degraded path worth exercising.
+            .env("CONTOUR_TREKR", "/nonexistent/trekr")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
@@ -251,6 +255,36 @@ fn tool_results_carry_the_disclosure_fields() {
     // its language rather than to its size — two reasons an agent would act on
     // differently.
     assert_eq!(near["near_stats"]["uncovered_lang"].as_u64(), Some(1));
+
+    // The one-serialization rule, verified rather than assumed: canonicality
+    // reaches an agent through the same JSON the CLI prints, disclosure and
+    // all. `billing.rb` and `ledger.rb` hold one clone pair.
+    let ranked = mcp.tool(
+        6,
+        "dupes",
+        serde_json::json!({"min_lines": 1, "canonical": true}),
+    );
+    let canonical = &ranked["groups"][0]["canonical"];
+    assert!(canonical["basis"].is_string(), "got {ranked}");
+    let signals: Vec<&str> = canonical["signals"]
+        .as_array()
+        .expect("signals")
+        .iter()
+        .map(|s| s["signal"].as_str().unwrap())
+        .collect();
+    assert_eq!(signals, ["git_age", "references", "namespace_depth"]);
+    // Every member was committed together, so age ties; trekr is unrunnable
+    // here, so references is unavailable and says so rather than guessing.
+    assert_eq!(canonical["signals"][0]["status"], "tied");
+    assert_eq!(canonical["signals"][1]["status"], "unavailable");
+    assert!(
+        canonical["signals"][1]["note"]
+            .as_str()
+            .is_some_and(|n| n.contains("not installed")),
+        "got {}",
+        canonical["signals"][1]
+    );
+    assert!(ranked["canonical_stats"]["git_probes"].as_u64().unwrap() >= 2);
 }
 
 /// A bad call must not take the session down: the model reads the message and
