@@ -20,7 +20,9 @@
 //! summarized units, so a search over a half-summarized repo answers from what
 //! exists and says so — rather than looking like the corpus is small.
 
-use crate::embed::{Embedder, config_key, humanize, identifier_text, mrl, summary_text, text_key};
+use crate::embed::{
+    Embedder, config_key, humanize, identifier_text, mrl, summary_text, text_key, tokenize,
+};
 use crate::store::{Located, Store};
 use crate::summary::Coverage;
 use anyhow::{Result, bail};
@@ -693,11 +695,11 @@ fn common_prefix(a: &str, b: &str) -> usize {
 /// the elaborate fuzzy scorer gqls uses for GraphQL paths would be a borrowed
 /// abstraction doing a job this does in twenty lines.
 fn lexical_score(query: &str, id: &str) -> f64 {
-    let name: Vec<String> = words(&humanize(id));
+    let name: Vec<String> = tokenize(&humanize(id)).collect();
     if name.is_empty() {
         return 0.0;
     }
-    let query = words(query);
+    let query: Vec<String> = tokenize(query).collect();
     if query.is_empty() {
         return 0.0;
     }
@@ -712,13 +714,6 @@ fn lexical_score(query: &str, id: &str) -> f64 {
         }
     }
     score / query.len() as f64
-}
-
-fn words(text: &str) -> Vec<String> {
-    text.split(|c: char| !c.is_alphanumeric())
-        .filter(|t| !t.is_empty())
-        .map(str::to_lowercase)
-        .collect()
 }
 
 fn in_scope(store: &Store, root: &str, scope: Option<&str>) -> Result<Vec<Located>> {
