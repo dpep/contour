@@ -312,6 +312,14 @@ fn call(params: &Value) -> Result<Value> {
     }))
 }
 
+/// A string argument a tool cannot run without, with the one wording every
+/// tool reports a missing one in.
+fn required<'a>(args: &'a Value, name: &str) -> Result<&'a str> {
+    args[name]
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("`{name}` is required"))
+}
+
 /// The path policy for a tool call: the checkout's, plus this call's
 /// `include_ignored`. Named apart from `scoped` because a tool may want one
 /// without the other.
@@ -357,9 +365,7 @@ fn answered(mut result: Value, refreshed: &crate::store::Indexed) -> Value {
 }
 
 fn search(args: &Value) -> Result<Value> {
-    let query = args["query"]
-        .as_str()
-        .ok_or_else(|| anyhow::anyhow!("`query` is required"))?;
+    let query = required(args, "query")?;
     let (opened, scope) = opened(args)?;
     let classes = classes(Path::new(&opened.root), args)?;
     let embedder = crate::embed::default_embedder(None, crate::embed::Workload::Query);
@@ -383,9 +389,7 @@ fn search(args: &Value) -> Result<Value> {
 }
 
 fn similar(args: &Value) -> Result<Value> {
-    let unit = args["unit"]
-        .as_str()
-        .ok_or_else(|| anyhow::anyhow!("`unit` is required"))?;
+    let unit = required(args, "unit")?;
     let (opened, _) = opened(args)?;
     let classes = classes(Path::new(&opened.root), args)?;
     let embedder = crate::embed::default_embedder(None, crate::embed::Workload::Query);
@@ -456,9 +460,7 @@ fn dupes(args: &Value) -> Result<Value> {
 }
 
 fn symbols(args: &Value) -> Result<Value> {
-    let file = args["file"]
-        .as_str()
-        .ok_or_else(|| anyhow::anyhow!("`file` is required"))?;
+    let file = required(args, "file")?;
     let path = Path::new(file);
     anyhow::ensure!(
         !path.is_dir(),
@@ -515,9 +517,7 @@ fn status() -> Result<Value> {
 }
 
 fn pending(args: &Value) -> Result<Value> {
-    let model = args["model"]
-        .as_str()
-        .ok_or_else(|| anyhow::anyhow!("`model` is required"))?;
+    let model = required(args, "model")?;
     // Refreshed like any other read of the index — offering a session a unit
     // that has moved is asking it to pay for a summary the store will refuse.
     let (opened, scope) = opened(args)?;
@@ -538,11 +538,6 @@ fn pending(args: &Value) -> Result<Value> {
 }
 
 fn store_summary(args: &Value) -> Result<Value> {
-    let field = |name: &str| -> Result<&str> {
-        args[name]
-            .as_str()
-            .ok_or_else(|| anyhow::anyhow!("`{name}` is required"))
-    };
     // The contribution is checked against the body the index holds, so the
     // index has to hold the body that is there now.
     let here = args["root"].as_str().unwrap_or(".");
@@ -550,10 +545,10 @@ fn store_summary(args: &Value) -> Result<Value> {
     let accepted = crate::summary::contributed::store(
         &mut opened.store,
         Path::new(&opened.root),
-        field("unit")?,
+        required(args, "unit")?,
         args["path"].as_str(),
-        field("model")?,
-        field("prompt_version")?,
+        required(args, "model")?,
+        required(args, "prompt_version")?,
         &args["summary"],
     )?;
     Ok(answered(serde_json::to_value(accepted)?, &opened.refreshed))
@@ -643,6 +638,22 @@ mod tests {
         assert!(reply["error"].is_null(), "not a protocol error");
         assert_eq!(reply["result"]["isError"], true);
         assert!(reply["result"]["content"][0]["text"].is_string());
+    }
+
+    /// The one thing a model can act on when a call is rejected is which
+    /// argument it left out, so the message names it rather than reporting
+    /// that something was wrong.
+    #[test]
+    fn a_missing_argument_is_named_in_the_error() {
+        let reply = request(
+            r#"{"jsonrpc":"2.0","id":4,"method":"tools/call",
+                "params":{"name":"search","arguments":{}}}"#,
+        );
+        assert_eq!(reply["result"]["isError"], true);
+        let text = reply["result"]["content"][0]["text"]
+            .as_str()
+            .expect("a message");
+        assert!(text.contains("query"), "should name the argument: {text}");
     }
 
     #[test]
