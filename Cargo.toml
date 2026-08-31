@@ -1,5 +1,7 @@
 [package]
-name = "contour"
+# `contour` is taken on crates.io. The binary, the lib and the tool are all
+# still `contour` — only the package someone types `cargo install` at differs.
+name = "contour-index"
 version = "0.1.0"
 edition = "2024"
 description = "A multi-resolution semantic index of source code: search, navigation, and duplicate detection over intent rather than syntax."
@@ -7,6 +9,12 @@ license = "MIT"
 repository = "https://github.com/dpep/contour"
 keywords = ["ruby", "code-search", "semantic", "duplicate-detection", "prism"]
 categories = ["development-tools", "command-line-utilities"]
+
+# Named explicitly so the crates.io package name stays confined to this file:
+# the binary on PATH and `use contour::` in the source are both unaffected.
+[lib]
+name = "contour"
+path = "src/lib.rs"
 
 [[bin]]
 name = "contour"

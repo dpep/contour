@@ -5,12 +5,22 @@ Deliberately outside the skill, so the skill stays a copy of one file.
 ## 1. Install the binary
 
 ```sh
-cargo install --path . --features semantic
-# or, against a system onnxruntime (smaller, no build-time download):
-brew install onnxruntime && cargo install --path . --features semantic-dynamic
+brew install dpep/tools/contour
 ```
 
-**Install it with a feature, and reinstall it with the same one.** Without
+That is the one to want: it builds `semantic-dynamic` against the `onnxruntime`
+keg, so the real embedder is on by default. From source, pick the feature
+yourself — the crate is published as `contour-index`, because `contour` was
+taken; the binary is still `contour`.
+
+```sh
+cargo install contour-index --features semantic
+# or, against a system onnxruntime (smaller, no build-time download):
+brew install onnxruntime && cargo install contour-index --features semantic-dynamic
+```
+
+**From cargo, install it with a feature, and reinstall it with the same one.**
+Without
 either, contour still runs, using a deterministic hash embedder that exercises
 the whole pipeline but is not a trained model — English search then matches what
 code is *called*, not what it does, which is most of the tool.

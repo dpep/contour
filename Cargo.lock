@@ -313,7 +313,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "contour"
+name = "contour-index"
 version = "0.1.0"
 dependencies = [
  "anyhow",

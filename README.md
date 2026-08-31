@@ -35,9 +35,19 @@ contour --symbols FILE   # outline one file — parses it live, no index needed
 contour --status [PATH]  # what the index holds, and what it is missing
 ```
 
-Built with `--features semantic` (or `semantic-dynamic`, which dlopens a
-system ONNX Runtime) for real embeddings; the default build falls back to a
-deterministic hash embedder that exercises the pipeline offline.
+## Install
+
+```sh
+brew install dpep/tools/contour
+# from source (the crate is `contour-index`; `contour` was taken):
+cargo install contour-index --features semantic
+```
+
+Brew builds the `semantic-dynamic` feature, which dlopens the `onnxruntime`
+keg, so English search answers on meaning. A build with neither feature falls
+back to a deterministic hash embedder that exercises the pipeline offline but
+matches what code is *called* — `contour --version` says which one you have.
+See [claude/INSTALL.md](claude/INSTALL.md) to wire it into Claude Code.
 
 ## How it is put together
 
