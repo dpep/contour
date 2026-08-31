@@ -348,6 +348,42 @@ owner took it as a uniquely-cheap-moment argument: it cost three surfaces, and
 the price was re-keying 42 Rust summaries, a number that only grows. Composed at
 the file layer per DEC-021, so layer 1 stays byte-pure and no reindex is needed.
 
+## M12b material: the lexical half scores on words that carry no signal
+
+**A fresh repro, on a corpus that is actually summarized** — which the DEC-023
+repro on rq never was. `contour search "notice the program on disk is not the
+one running" src --floor 0` puts `mcp::superseded` **third**, behind
+`paths::Class::is_app` (cos 0.33) and `paths::is_module_name` (cos 0.24), while
+`superseded` carries the highest cosine on the page at **0.46** and is the only
+unit whose summary answers the question.
+
+The mechanism is measurable and it is not DEC-023's. Strip the common tokens and
+the ranking is clean:
+
+| query | `superseded` | what else is in the top 3 |
+| ----- | ------------ | ------------------------- |
+| `binary replaced disk detect` | **1st**, cos 0.52 | genuine semantic neighbours |
+| `is the binary replaced on disk` | 1st, cos 0.49 | `is_module_name` (0.17), `is_unqualified` (0.12) |
+| `notice the program on disk is not the one running` | **3rd**, cos 0.46 | `is_app` (0.33), `is_module_name` (0.24) |
+
+One `is` in the query is enough to pull two units into the top three on the
+strength of a token that appears in a large fraction of every corpus's
+identifiers. DEC-023 weighted *which vector* answered; this is the other half —
+the lexical scorer has no notion of how informative a token is, and RRF gives it
+equal standing regardless.
+
+Two notes for whoever picks this up:
+
+- **Qualified ids (DEC-026) make it slightly worse and did not cause it.** A
+  longer id carries more tokens, so more units match something. The seven Rust
+  eval sets moved 7/21 to 8/21 top5 across that change, so this is an anecdote
+  the eval does not yet capture — which is itself the finding: no labeled query
+  contains a stopword-heavy phrasing, and a person's would.
+- **The obvious shape is IDF over the identifier corpus**, which is cheap
+  (the identifiers are already tokenized and embedded per checkout) and
+  falsifiable against all eight query sets. Do not tune `RRF_K` by feel first;
+  this says the input to the lexical half is wrong, not its weight.
+
 ## The recurring shape: identical bodies that mean different things
 
 Worth naming, because it has now arrived three times wearing three different
