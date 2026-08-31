@@ -114,6 +114,14 @@ pub struct Labels {
     pub queries: Vec<QueryLabel>,
     pub pairs: Vec<PairLabel>,
     pub canonical: Vec<CanonicalLabel>,
+    /// The same questions a person would actually type — filler words and all —
+    /// with the same expected answers, kept apart so the band's numbers never
+    /// blur the headline ones.
+    ///
+    /// It exists because M12b's stopword bug was found by an anecdote: no
+    /// labeled query was phrased the way a person phrases one, so the eval was
+    /// structurally unable to see a defect that only natural phrasing triggers.
+    pub natural: Vec<QueryLabel>,
     /// The 4–8 line band, in the same grammar as `pairs` and kept apart so its
     /// numbers never blur the headline ones. This is the population the near
     /// tier was failing: 0.80 missed 11 of 13 of them.
@@ -130,20 +138,12 @@ pub struct Labels {
 pub fn load(dir: &Path) -> Result<Labels> {
     let mut labels = Labels::default();
 
-    for (line_no, line) in rows(&dir.join("queries.tsv"))? {
-        let mut fields = line.split('\t').map(str::trim);
-        let (Some(query), Some(expected)) = (fields.next(), fields.next()) else {
-            bail!("queries.tsv:{line_no}: expected `query<TAB>Owner#method`");
-        };
-        if query.is_empty() || expected.is_empty() {
-            bail!("queries.tsv:{line_no}: empty query or expectation");
-        }
-        labels.queries.push(QueryLabel {
-            query: query.to_string(),
-            expected: expected.to_string(),
-            provisional: fields.next() == Some("provisional"),
-        });
-    }
+    labels.queries = query_labels("queries.tsv", rows(&dir.join("queries.tsv"))?)?;
+    // Optional, and its own population for `pairs_short.tsv`'s reason: the
+    // band asks a different question, and averaging it into the headline is
+    // exactly how the phrasing gap stayed invisible.
+    let natural = dir.join("queries_natural.tsv");
+    labels.natural = query_labels("queries_natural.tsv", optional_rows(&natural)?)?;
 
     labels.pairs = pair_labels(&dir.join("pairs.tsv"), rows(&dir.join("pairs.tsv"))?)?;
     // Optional, and read into its own bucket: the band is a *population*, not
@@ -211,6 +211,25 @@ pub fn load(dir: &Path) -> Result<Labels> {
 }
 
 /// `a<TAB>b<TAB>duplicate|near|distinct`, one grammar for both pair files.
+fn query_labels(name: &str, rows: Vec<(usize, String)>) -> Result<Vec<QueryLabel>> {
+    let mut out = Vec::new();
+    for (line_no, line) in rows {
+        let mut fields = line.split('\t').map(str::trim);
+        let (Some(query), Some(expected)) = (fields.next(), fields.next()) else {
+            bail!("{name}:{line_no}: expected `query<TAB>Owner#method`");
+        };
+        if query.is_empty() || expected.is_empty() {
+            bail!("{name}:{line_no}: empty query or expectation");
+        }
+        out.push(QueryLabel {
+            query: query.to_string(),
+            expected: expected.to_string(),
+            provisional: fields.next() == Some("provisional"),
+        });
+    }
+    Ok(out)
+}
+
 fn pair_labels(path: &Path, rows: Vec<(usize, String)>) -> Result<Vec<PairLabel>> {
     let name = path.file_name().unwrap_or_default().to_string_lossy();
     let mut out = Vec::new();
@@ -576,6 +595,47 @@ pub fn run(
     }
 
     let mut rankings = ranked;
+    // The natural-phrasing band, scored by the ranker a caller actually gets.
+    // Its own row rather than more rows in the headline: it asks whether the
+    // same answers survive the way a person types the question, and blending
+    // that into the headline would hide exactly what it exists to show.
+    if !labels.natural.is_empty() {
+        let mut ranking = Ranking {
+            label: "contour:natural".to_string(),
+            ..Ranking::default()
+        };
+        for query in &labels.natural {
+            if !by_id.contains_key(&query.expected) {
+                ranking.unknown += 1;
+                continue;
+            }
+            ranking.total += 1;
+            let answer = crate::search::search(
+                store,
+                &root_str,
+                &query.query,
+                embedder,
+                crate::search::Options {
+                    limit: depth,
+                    ..crate::search::Options::new(&classes)
+                },
+            )?;
+            match answer.hits.iter().position(|h| h.id == query.expected) {
+                Some(0) => {
+                    ranking.top1 += 1;
+                    ranking.top5 += 1;
+                    ranking.found += 1;
+                }
+                Some(r) if r < 5 => {
+                    ranking.top5 += 1;
+                    ranking.found += 1;
+                }
+                Some(_) => ranking.found += 1,
+                None => {}
+            }
+        }
+        rankings.push(ranking);
+    }
     rankings.push(baseline(
         "baseline:name",
         labels,

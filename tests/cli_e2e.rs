@@ -1508,9 +1508,17 @@ fn eval_scores_a_labeled_set() {
     assert_eq!(contour["label"], "contour");
     assert_eq!(contour["unknown"], 0, "a label names a unit that is gone");
     assert_eq!(contour["total"], 22);
-    // contour, contour:identifier, and the two baselines.
-    assert_eq!(report["rankings"].as_array().map(Vec::len), Some(4));
+    // contour, contour:identifier, the natural-phrasing band, and the two
+    // baselines. The band is its own row and its own population — same 22
+    // expected answers, asked the way a person types them.
+    assert_eq!(report["rankings"].as_array().map(Vec::len), Some(5));
     assert_eq!(report["rankings"][1]["label"], "contour:identifier");
+    assert_eq!(report["rankings"][2]["label"], "contour:natural");
+    assert_eq!(report["rankings"][2]["total"], 22);
+    assert_eq!(
+        report["rankings"][2]["unknown"], 0,
+        "a natural label is orphaned"
+    );
     assert_eq!(report["coverage_state"], "complete");
 
     // The duplicate labels are the embedder-independent half: all three

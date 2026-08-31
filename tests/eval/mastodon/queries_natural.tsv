@@ -1,0 +1,38 @@
+# The same questions, phrased the way a person types them.
+#
+# DRAFTED BY CLAUDE, NOT YET REVIEWED BY THE OWNER. Every row rewrites a row of
+# queries.tsv and keeps its expected answer exactly; only the wording moves,
+# toward how somebody actually asks. A query must still never contain its own
+# answer's name — the rule matters more here, not less, because filler makes it
+# easy to smuggle one in.
+#
+# See `tests/eval/fixture/queries_natural.tsv` for why the band exists. This is
+# the app-shaped half of it: the fixture corpus is 22 dense units, and whether
+# phrasing costs anything on a real Rails app is a different question.
+
+# --- easy on purpose ---------------------------------------------------------
+how do I suspend an account that has been misbehaving	SuspendAccountService#call
+is there something that blocks federation with a whole domain	BlockDomainService#call
+what do I call to approve a follow request that is pending	FollowRequest#authorize!	provisional
+how do I generate a backup archive of all of an account's data	BackupService#call
+where is the code that recalculates which hashtags are trending	Trends::Tags#refresh
+is there anything that redirects an old permalink to where it now lives	PermalinkRedirector#redirect_path
+how does a new toot get pushed into the home feeds of followers	FeedManager#push_to_home
+
+# --- no token shared with the answer's identifier ----------------------------
+how do I look up who an @user@server address actually belongs to	ResolveAccountService#call
+what builds the timeline you see when you first open the app	Feed#get
+is there something that decides whether this visitor may read this post	StatusPolicy#show?
+how do I keep a toot out of a follower's stream when it fails the rules	FeedManager#filter?
+what caps how often one user is allowed to repeat an action	RateLimiter#record!
+how do we notice an instance has been unreachable for days and give up	DeliveryFailureTracker#available?	provisional
+is there anything that strips the markup out of a status for a preview	PlainTextFormatter#to_s
+where do I get the canonical web address of a remote user's profile	ActivityPub::TagManager#url_for
+what tells me whether this login looks risky	SuspiciousSignInDetector#suspicious?
+how do we prove an incoming federation message came from its author	SignatureVerification#signed_request_actor
+
+# --- behaviour that appears in NO identifier ---------------------------------
+is there something that reopens a dropped connection and tries once more	RequestPool::Connection#use
+how do I make sure two workers never run the same critical section at once	Lockable#with_redis_lock
+what treats a login from the same subnet as one we have already seen	SuspiciousSignInDetector#previously_seen_ip?
+how do the viewer-specific fields get filled into a cached toot payload	StatusCacheHydrator#hydrate

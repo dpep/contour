@@ -61,6 +61,56 @@ bills a client has not settled	Invoice#unpaid_for	provisional
 Queries deliberately avoid naming the method. A query containing its own answer
 measures string matching, which is what `baseline:name` is there to isolate.
 
+`queries_natural.tsv` — the same questions, phrased the way a person types
+them. Optional, same grammar as `queries.tsv`, and every row rewrites a row of
+it with **the same expected answer**, so a gap between the two is a fact about
+phrasing and nothing else:
+
+```text
+customer owes us money                                  Invoice#unpaid_for
+is there anything that tells me a customer owes us money	Invoice#unpaid_for
+```
+
+It exists because M12b's stopword defect was found by an **anecdote**. One `is`
+in a ten-word question put two predicates above the only unit whose summary
+answered it, and no labeled query in any set was phrased that way — the eval
+was structurally unable to see a fault that only natural phrasing triggers.
+`queries.tsv`'s rows are terse by design (they are keyword-shaped, which is what
+makes them sharp); this band is the complement, not a replacement.
+
+Scored as its own row, `contour:natural`, for `pairs_short.tsv`'s reason: it is
+a different population asking a different question, and averaging it into the
+headline is exactly how the gap stayed invisible. Two sets carry one — `fixture`
+(runs in CI, complete coverage) and `mastodon` (app-shaped, no coverage).
+
+**What it found immediately, and it is not what anyone expected.** Phrasing does
+not cost a fixed amount; **it costs where there are no summaries and pays where
+there are**:
+
+| corpus | coverage | terse t1/t5 | natural t1/t5 |
+| ------ | -------- | ----------- | ------------- |
+| fixture | complete (24/24) | 10/21 | **14/22** |
+| mastodon | none (0/8890) | 4/6 | **1/4** |
+
+Read the mechanism rather than the numbers: filler words add tokens the
+identifier tier can never match, so on an unsummarized corpus a natural question
+is a worse question. Against summaries the same words are signal, and the fuller
+sentence is a *better* question than the keyword-shaped one. That is DEC-018's
+flywheel argued from the eval instead of from first principles — grazing is what
+makes contour answerable by somebody who types the way people type.
+
+It also prices M12b's ranking fix more sharply than the headline can. On the
+fixture corpus, before and after, same corpus and same summaries:
+
+| | terse | natural |
+| --- | --- | --- |
+| before (DEC-027) | 7/12 | 7/13 |
+| after | 10/21 | **14/22** |
+
+Before the fix, phrasing a question naturally bought nothing. After it, it buys
+four top-1s — because the filler is now priced as filler instead of being worth
+a full place in the fusion.
+
 `pairs.tsv` — pairs that should and should not be reported as duplicates:
 
 ```text

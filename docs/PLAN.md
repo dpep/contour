@@ -471,6 +471,75 @@ The phenomenon is sharper than `#call`: an entry point is named for the
 **protocol** and its private helpers for the **behaviour**. DEC-029 records what
 was built, including the container-lexical half that was built and dropped.
 
+## The read/write axis — DESIGN ONLY, nothing built
+
+Recorded at M12b as briefed: **specify what would validate it, build nothing.**
+
+The question is whether contour can answer "which of these *changes* something"
+against "which of these just *reads*" — the distinction behind "where do we
+settle an invoice" (a write) versus "where do we work out what is owed" (a
+read), which today are the same query to the ranker.
+
+**The discriminator may already exist and be free.** Every contributed summary
+carries `side_effects` from a closed seven-word vocabulary
+(`summary::SIDE_EFFECTS`): `persists`, `network`, `filesystem`, `mutates`,
+`observes`, `raises`, `spawns`. A unit whose summary names `persists` or
+`mutates` writes; one that names neither, or only `observes`, reads. That is a
+fact already bought and already stored, in the purchased half, on every summary
+anyone has grazed. Nothing needs to be built to *have* it — only to use it.
+
+### What would validate it, before anything is built
+
+Three things, in this order, and the first two are measurements rather than
+code:
+
+1. **Coverage.** The facet is worth nothing at `coverage none`, which is every
+   corpus in the eval except `fixture`. Count how many summaries in the
+   purchased half name a side effect at all, and how the seven words are
+   distributed — a vocabulary where 90% of rows say `persists` discriminates
+   nothing. **This is the gate**: below some real coverage the rest of the list
+   is unanswerable, and the honest answer is "come back when grazing has run
+   longer".
+2. **Agreement.** Sample summarized units and judge by reading whether
+   `side_effects` matches what the body does. It is a *model's* claim about a
+   body, contributed by whatever model was running (DEC-018 keys contributions
+   by model for exactly this reason), and no one has ever checked it against the
+   source. A facet that is right 70% of the time is a filter that lies to a
+   reader once every three answers.
+3. **Labels that ask the question.** Neither `queries.tsv` nor
+   `queries_natural.tsv` contains a read/write pair — two queries over the same
+   domain whose answers differ only in whether they mutate. Half a dozen such
+   pairs per corpus, drafted the way every other label is, would say whether the
+   axis separates anything a person actually asks for. Without them any
+   mechanism can only be argued about.
+
+### The three shapes it could take, and what each costs
+
+Recorded so the choice is made once rather than drifted into:
+
+- **A ranking signal** — `search` biases toward matching side effects. Cheapest,
+  and the worst of the three: it would be a fourth weight in a fusion that DEC-027
+  has just finished making legible, and a query that does not care about the axis
+  would silently pay for one that does.
+- **A facet filter** — `search --writes` / `--reads`, disclosed and off by
+  default, answering from `side_effects` where it exists and *saying so where it
+  does not*. Composes with DEC-009's coverage disclosure, and it is honest at
+  partial coverage in a way a ranking bias is not: a filter can report "14 of 60
+  candidates had no summary to filter on", where a weight just quietly ranks them
+  wrong. **This is the shape to build if any is.**
+- **A metadata facet in the record** — promoting read/write out of `side_effects`
+  into its own column. Rejected in advance on DEC-016's arithmetic: it would be a
+  key-adjacent change in the purchased half to store something derivable from what
+  is already there.
+
+**The trap to avoid**, named because it is the tempting one: deriving the axis
+from the *body* instead of the summary — `save`, `update!`, `<<`, an assignment
+to `@x`. That is a fifth language-specific heuristic living where DEC-012 says
+only extraction and normalization may be language-specific, it would disagree
+with the summary's own claim on some units, and contour would then have two
+answers to one question. If `side_effects` is not good enough, the fix is a
+better prompt, not a second oracle.
+
 ## The recurring shape: identical bodies that mean different things
 
 Worth naming, because it has now arrived three times wearing three different

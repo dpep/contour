@@ -1,0 +1,49 @@
+# The same questions, phrased the way a person types them.
+#
+# DRAFTED BY CLAUDE, NOT YET REVIEWED BY THE OWNER. Every row is a rewrite of a
+# row in queries.tsv with the SAME expected answer — only the wording moves,
+# toward how somebody actually asks: articles, auxiliaries, "how do I", "is
+# there anything that", "which one of these". The rule from queries.tsv still
+# holds and matters more here: a query must never contain its own answer's name.
+#
+# Why the band exists: M12b's stopword defect was found by an anecdote, because
+# no labeled query was phrased this way and the eval was structurally unable to
+# see a fault that only natural phrasing triggers. Scored as its own row
+# (`contour:natural`) so it can never flatter, or be flattered by, the headline.
+#
+# What it is NOT: a second opinion on the same 22 questions. The expected answers
+# are identical by construction, so a gap between this row and `contour` is a
+# fact about PHRASING and nothing else — which is the one thing the headline
+# cannot tell you.
+
+# --- billing -----------------------------------------------------------------
+is there anything that tells me a customer owes us money	Invoice#unpaid_for
+which bills has a client not settled yet	Invoice#unpaid_for
+how do I record that a bill was paid	Invoice#settle!
+what is it that adds up what a bill comes to	Invoice#total_cents
+how can I tell if this bill is past its due date	Invoice#overdue?
+where do I find what a buyer still has to pay	Receipt#outstanding
+
+# --- accounts ----------------------------------------------------------------
+how do I check a password against the one that is stored	Account#authenticate
+is there something that stops a person from signing in	Account#lock!
+what tells me whether this user can still sign in	Account#active?
+how do I get a full name for showing to a person	Account#display_name
+what should I call to validate a bearer token	Session#authenticate
+is there a way to end a login early	Session#expire!
+
+# --- geometry ----------------------------------------------------------------
+how much space is it that a shape encloses	Polygon#area
+what is the distance around the outside of a shape	Polygon#perimeter
+how do I get the middle point of a shape	Polygon#centroid
+
+# --- behaviour that is in no name --------------------------------------------
+which one of these retries a few times before it gives up	Dispatcher#send_reminder
+is there anything that waits longer after each failed attempt	Dispatcher#send_reminder
+what is the thing that is computed once and remembered for later calls	Dispatcher#rates
+which of these is safe for me to call twice with the same result	Dispatcher#close
+
+# --- inventory ---------------------------------------------------------------
+how do I hold some stock for a customer before they check out	Warehouse#reserve
+is there something that says how many units can still be sold	Warehouse#available
+what do I use to add more units to a shelf	Warehouse#restock

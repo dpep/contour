@@ -4,6 +4,14 @@
 
 Initial skeleton — nothing has been released, so everything below is new.
 
+- **The eval has a naturally-phrased band.** Every set may carry a
+  `queries_natural.tsv` — the same expected answers as `queries.tsv`, asked the
+  way a person types instead of in keywords — scored as its own `contour:natural`
+  row. It exists because the ranking defect above was found by an anecdote: no
+  labeled query was phrased that way, so the eval could not see it. It found
+  something immediately: natural phrasing **costs you where there are no
+  summaries and pays where there are** (fixture, fully summarized: 14/22 top-1
+  against 10/22 terse; mastodon, unsummarized: 1/21 against 4/21).
 - **`dupes` and `similar` now agree with `search` about what is test code.** A
   Rust `#[cfg(test)] mod tests` lives inside the file it tests, so the file is
   app code and those units are not — `search` has known that since it started
