@@ -1,0 +1,33 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    types: [ opened, edited, synchronize ]
+
+jobs:
+  test:
+    name: Rust
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: clone ${{ github.repository }}
+        uses: actions/checkout@v7
+
+      - name: setup Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+          components: rustfmt, clippy
+
+      - name: cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      # The repo's own gate, not a copy of its steps: it also lints the
+      # `semantic-dynamic` build, which the release ships and the default one
+      # never compiles. That config dlopens ONNX Runtime rather than linking
+      # it, so it compiles on a runner that has no runtime installed — CI
+      # proves the code path builds, not that the embedder answers.
+      - name: gate
+        run: script/check.sh
