@@ -146,7 +146,11 @@ impl Embedder for HashEmbedder {
 }
 
 /// Lowercased alphanumeric tokens.
-fn tokenize(text: &str) -> impl Iterator<Item = String> + '_ {
+///
+/// The one splitter: the lexical half of search and the eval baseline score
+/// against these same tokens, so a change to the rule has to move all three
+/// together or the halves stop agreeing on what a word is.
+pub fn tokenize(text: &str) -> impl Iterator<Item = String> + '_ {
     text.split(|c: char| !c.is_alphanumeric())
         .filter(|t| !t.is_empty())
         .map(|t| t.to_lowercase())

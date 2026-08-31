@@ -19,7 +19,7 @@
 //!    floor experiment rerun on method summaries, which is what DEC-011 asks
 //!    for.
 
-use crate::embed::Embedder;
+use crate::embed::{Embedder, tokenize};
 use crate::store::{Located, Store};
 use anyhow::{Context, Result, bail};
 use std::collections::HashMap;
@@ -641,7 +641,7 @@ fn baseline(
     let texts: Vec<Vec<String>> = units
         .iter()
         .enumerate()
-        .map(|(i, u)| tokens(&text_of(u, i)))
+        .map(|(i, u)| tokenize(&text_of(u, i)).collect())
         .collect();
 
     let mut ranking = Ranking {
@@ -654,7 +654,7 @@ fn baseline(
             continue;
         };
         ranking.total += 1;
-        let query = tokens(&query_label.query);
+        let query: Vec<String> = tokenize(&query_label.query).collect();
         let mut scored: Vec<(usize, usize, u32)> = texts
             .iter()
             .enumerate()
@@ -681,13 +681,6 @@ fn baseline(
         }
     }
     Ok(ranking)
-}
-
-fn tokens(text: &str) -> Vec<String> {
-    text.split(|c: char| !c.is_alphanumeric())
-        .filter(|t| !t.is_empty())
-        .map(str::to_lowercase)
-        .collect()
 }
 
 fn read_sources(root: &Path, units: &[Located]) -> HashMap<usize, String> {
