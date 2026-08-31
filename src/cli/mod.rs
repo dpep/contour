@@ -876,6 +876,13 @@ fn search(
                     Some(c) => format!("  cos {c:.2}"),
                     None => String::new(),
                 };
+                // Both halves show their measurement, because both are now
+                // graded: `name` is the fraction of the query this unit's
+                // name accounts for.
+                let name = match hit.lexical {
+                    Some(l) => format!("  name {l:.2}"),
+                    None => String::new(),
+                };
                 // The class rides in the same bracket as `how`, and only when
                 // it is not app code — on the majority of hits it would be a
                 // word that never varies.
@@ -884,7 +891,7 @@ fn search(
                     false => format!(", {}", hit.class.as_str()),
                 };
                 println!(
-                    "{}:{}  {}  [{}{class}]{cosine}",
+                    "{}:{}  {}  [{}{class}]{name}{cosine}",
                     crate::paths::within(&answer.root, &hit.path),
                     hit.line,
                     hit.id,

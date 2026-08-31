@@ -384,6 +384,67 @@ Two notes for whoever picks this up:
   falsifiable against all eight query sets. Do not tune `RRF_K` by feel first;
   this says the input to the lexical half is wrong, not its weight.
 
+### RULED BY MEASUREMENT: it was the weight, and IDF did not earn itself
+
+Built and scored all four ways against every labeled set (DEC-027). **The
+diagnosis above was half right and the prescription was wrong.** The lexical
+half's *input* was fine; what was broken is that the fusion never heard its
+output. `lexical_score` has always returned "how much of the query this name
+accounts for", and RRF threw it away — so `is_app` matching one `is` out of ten
+words bought the same place as a name that answered the question outright, and
+with `RRF_K` 60 it went on doing so about 135 places down the list. Multiplying
+each half's RRF term by its own measurement is what fixes the repro, and it is
+not a tuning of `RRF_K`: it is DEC-023's argument applied to the other half.
+
+IDF was built twice, because the first shape had a real flaw and the second
+exposed a bigger one:
+
+| variant | fixture t1/t5 | 7 Rust sets | mastodon | discourse | rails | total t1/t5 |
+| ------- | ------------- | ----------- | -------- | --------- | ----- | ----------- |
+| shipped before | 7/12 | 6/7 | 2/4 | 0/1 | 6/10 | 21/34 |
+| **weight only (shipped)** | **10/21** | 6/8 | **3/4** | 0/3 | **11/21** | **30/57** |
+| IDF only | 7/12 | 6/9 | 2/5 | 0/1 | — | — |
+| IDF + weight | 7/14 | 6/9 | 3/4 | **0/5** | — | — |
+
+Denominators: fixture 22, Rust 21, mastodon 21, discourse 25, rails 77. `found`
+is identical in every column — **every movement is rank, not recall.** rails was
+scored on the shipped pair only; at 77 queries over 54k units it is an
+hours-long run per variant, and the two IDF variants had already been decided
+against on the ten sets above.
+
+**rails is the strongest confirmation and the least surprising one.** It is the
+largest corpus, so it has the most units whose long names accidentally share a
+word with a question, and it is where the old fusion had the most places to hide
+an answer behind them: top-1 6 → 11 and top-5 10 → 21, both close to doubled,
+with the same 77 answers found either way.
+
+**Why IDF backfired, which is the part worth keeping.** With the weight in
+place, the denominator of `lexical_score` decides how much a partial match is
+worth, and IDF has to choose what to do with a query word no identifier
+contains. Both available answers are bad:
+
+- *Count it at full weight* (the textbook clamp): on a natural sentence most
+  words are unmatchable, so every score is crushed toward zero by roughly the
+  same factor. Measured identical to the weight alone on every set — IDF bought
+  nothing.
+- *Leave it out of the denominator*: a seven-word question becomes a two-word
+  one. On the fixture corpus, `retries a few times before giving up` left `a`
+  (which prefix-matches `available`, `account`, `authenticate`, …) as half the
+  askable query, and six unrelated units tied at `name 0.50`. That is the
+  0.50-shaped rubbish in the table's last row.
+
+The whole query is the honest denominator: a name that accounted for one word
+of seven accounted for a seventh, whether or not the other six are findable
+anywhere.
+
+**IDF is not refuted, it is unmeasurable here**, and the reason is the next
+item on the milestone list. It was ahead on discourse (0/5 against 0/3) and
+level on the Rust sets, and behind only on the one corpus that is both small and
+fully summarized. No labeled query in any set is phrased the way the repro is —
+which is exactly the gap `queries_natural.tsv` exists to close. **Re-ask this
+question against that band before deciding IDF is dead**; the four binaries and
+the harness are in the milestone's scratch directory.
+
 ## The recurring shape: identical bodies that mean different things
 
 Worth naming, because it has now arrived three times wearing three different

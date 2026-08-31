@@ -1223,6 +1223,66 @@ fn a_summary_outranks_a_name_that_only_looks_right() {
     assert_eq!(answer["hits"][1]["semantic_via"], "identifier");
 }
 
+/// One filler word shared with the query is not worth a place in the ranking.
+///
+/// M12b's repro, in miniature and with its own phrasing. `Class#is_app` shares
+/// exactly `is` with a ten-word question and nothing else; the unit whose
+/// summary answers it shares no word at all. RRF consumes a rank and discards
+/// the score, so being *in* the lexical list at all used to be worth a full
+/// `1/(K+1)` — and that plus an identifier-tier cosine beat a summary that
+/// answered the question outright.
+///
+/// **This test fails if the lexical half's weight is dropped back to 1.0**,
+/// which is the whole of DEC-027.
+#[test]
+fn a_name_that_shares_one_filler_word_does_not_outrank_the_answer() {
+    let repo = Repo::new(
+        "search-filler",
+        &[
+            // Sorts first, so a near-tie hands it the top slot.
+            (
+                "lib/checks.rb",
+                "class Class\n  def is_app\n    true\n  end\nend\n",
+            ),
+            (
+                "lib/server.rb",
+                "class Server\n  def superseded\n    stat\n  end\nend\n",
+            ),
+        ],
+    );
+    let fixtures = repo.dir.join("f.json");
+    std::fs::write(
+        &fixtures,
+        r#"{"Server#superseded": {
+             "summary":"Notices that the program running is no longer the one on disk and returns what replaced it.",
+             "primary_purpose":"detect a replaced binary","secondary_concerns":[],
+             "side_effects":[],"domain":"process","patterns":[]}}"#,
+    )
+    .unwrap();
+    repo.run(&["index"]);
+    repo.run(&["summarize", "--fixtures", fixtures.to_str().unwrap()]);
+
+    let answer = repo.json(&[
+        "search",
+        "notice the program on disk is not the one running",
+        "--json",
+    ]);
+    let top = &answer["hits"][0];
+    assert_eq!(top["id"], "Server#superseded", "{answer}");
+    assert_eq!(top["semantic_via"], "summary");
+
+    // The filler match is still an answer, and now says how little it matched:
+    // one word of ten, which is what `how: both` alone could never convey.
+    let filler = answer["hits"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|h| h["id"] == "Class#is_app")
+        .unwrap_or_else(|| panic!("{answer}"));
+    assert_eq!(filler["how"], "both");
+    assert_eq!(filler["lexical"], 0.1);
+}
+
 /// Nothing in the corpus answers this, so nothing should come back.
 #[test]
 fn search_can_return_nothing() {

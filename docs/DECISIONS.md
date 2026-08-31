@@ -855,3 +855,51 @@ identical, no set worse. Fifty-seven labels were relabelled by measuring each id
 against its checkout; two rows turned out to have been **ambiguous all along**,
 which is written up in `tests/eval/README.md` because it is a finding about the
 eval and not only about this change.
+
+## DEC-027 — Both halves of the fusion state their own evidence
+
+**Status: built at M12b**, and it is DEC-023's ruling applied to the other half
+rather than a new idea. That entry says RRF consumes a rank and discards the
+cosine, so the semantic half has to *say* which vector answered or the fusion
+cannot tell a summary from a name. The lexical half has exactly the same
+problem and had no such voice: `lexical_score` returns how much of the query a
+name accounts for, and the fusion added `1.0 / (K + rank)` whatever that number
+was.
+
+So a name sharing one filler word with a ten-word question was worth what a name
+that answered the question outright was worth. With `RRF_K` at 60 the two stay
+within a factor of two for about 135 places, which is why reordering the lexical
+list could not fix it and why the shipped fix multiplies instead:
+
+```
+lexical:   score  / (K + rank)      where score is lexical_score, 0 to 1
+semantic:  weight / (K + rank)      where weight is SUMMARY_ or IDENTIFIER_WEIGHT
+```
+
+**No constant was added.** The semantic half's weight names a tier; the lexical
+half's *is the measurement*, which the ranker was already computing. A full name
+match still contributes exactly `1.0 / (K + rank)`, so the top of the lexical
+ranking is bit-for-bit what it was and only weak evidence is repriced as weak.
+
+Measured on all eleven labeled query sets — every number and the two rejected
+variants are in `docs/PLAN.md`. **Top-1 21 → 30 and top-5 34 → 57 of 195
+queries**, `found` identical everywhere (this moves ranks, never recall), and no
+set worse anywhere. The two most convincing rows are the extremes: `fixture`,
+12/22 → 21/22 at top-5, the **only set with complete summary coverage** and so
+the state DEC-018's flywheel is walking every corpus toward; and `rails`, 10/77
+→ 21/77, the largest corpus and therefore the one with the most long names able
+to share a word with a question by accident.
+
+**What follows from it, and needs the owner:** the milestone was briefed to fix
+this with IDF over the identifier corpus, and IDF was built, measured, and
+**not shipped** — see `docs/PLAN.md` for the numbers and for why the natural
+phrasings in `queries_natural.tsv` are the labels that could still settle it.
+Retiring a recorded direction on a measurement is the implementer's job;
+declaring it dead is not.
+
+**The lexical measurement is now disclosed on every hit** (`lexical` in JSON,
+`name 0.14` in human output), for the reason DEC-010 gives: the half used to be
+a predicate, where `how: both` said everything there was to say, and it is now
+graded. `both` on a name that matched one filler word and `both` on a name that
+answered the whole query are the same word for very different evidence, and a
+reader could not otherwise tell which one they were looking at.

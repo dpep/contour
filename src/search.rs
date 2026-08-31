@@ -6,14 +6,25 @@
 //! scale-free, so a token-overlap count and a cosine need no common
 //! normalization, and a unit strong in both rises above one strong in either.
 //!
-//! The semantic half is weighted by **which vector answered**: a summary is
-//! worth more than an identifier, because it is what the code does rather than
-//! a second look at the name the lexical half already read. RRF discards the
-//! cosine and keeps only the rank, and without that weighting the two tiers are
-//! indistinguishable in the fusion — a field trial on a partly-summarized rq
-//! had the summary that answered the question ranking fifth at cosine 0.44,
-//! under identifier hits at 0.20 whose long snake_case names shared query
-//! tokens by accident.
+//! **RRF discards the score and keeps only the rank**, which is the property
+//! that makes it scale-free and also the one both halves have had to correct
+//! for. Each contributes `weight / (K + rank)`, and the weight is what says
+//! how strong the evidence behind that rank was:
+//!
+//! - The semantic half is weighted by **which vector answered** (DEC-023): a
+//!   summary is worth more than an identifier, because it is what the code does
+//!   rather than a second look at the name the lexical half already read. A
+//!   field trial on a partly-summarized rq had the summary that answered the
+//!   question ranking fifth at cosine 0.44, under identifier hits at 0.20 whose
+//!   long snake_case names shared query tokens by accident.
+//! - The lexical half is weighted by **how much of the query the name accounted
+//!   for** — [`lexical_score`], which it already computed and the fusion then
+//!   threw away. Without it, sharing one filler word with the query bought the
+//!   same place in the fusion as answering the query outright, and with K=60 it
+//!   went on doing so a hundred places down the list.
+//!
+//! Neither weight is a knob. One names a tier; the other is a measurement the
+//! ranking was already making.
 //!
 //! Every answer discloses what produced it (DEC-010) and how much of the
 //! corpus could have participated (DEC-009). The semantic half only covers
@@ -122,6 +133,16 @@ pub struct Hit {
     /// unit was found by name alone.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cosine: Option<f64>,
+    /// The lexical half's measurement, when it contributed: how much of the
+    /// query this unit's name accounts for, 0 to 1.
+    ///
+    /// Disclosed for the same reason `cosine` is (DEC-010). The lexical half
+    /// used to be a predicate — a name either shared query words or did not —
+    /// and `how: both` said everything there was to say. It is now graded, and
+    /// `both` on a name that matched one filler word means something very
+    /// different from `both` on a name that answered the whole query.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lexical: Option<f64>,
     /// The fused rank score, after any path-class discount. Deliberately
     /// **not** called confidence: RRF is scale-free and its value means nothing
     /// outside this result set (DEC-010). `cosine` above is the measurement a
@@ -249,7 +270,7 @@ pub fn search(
         .collect();
     let summaries = vectors_for(store, &units, embedder, prefer)?;
 
-    // Lexical: token overlap against the humanized name, best first.
+    // Lexical: how much of the query each humanized name accounts for.
     let mut lexical: Vec<(usize, f64)> = units
         .iter()
         .enumerate()
@@ -281,10 +302,19 @@ pub fn search(
     semantic.sort_by(|a, b| b.1.total_cmp(&a.1).then(a.0.cmp(&b.0)));
 
     let cosines: HashMap<usize, f32> = semantic.iter().copied().collect();
+    let scores: HashMap<usize, f64> = lexical.iter().copied().collect();
     let mut fused: HashMap<usize, (f64, bool, bool)> = HashMap::new();
-    for (rank, (i, _)) in lexical.iter().enumerate() {
+    for (rank, (i, score)) in lexical.iter().enumerate() {
+        // Weighted by how much of the query the name accounted for — the same
+        // argument DEC-023 made for the semantic half, and for the same reason.
+        // RRF consumes a rank and throws the score away, so a name that
+        // answered the whole query and one that shared a single filler word are
+        // worth the same, and with K=60 that stays true a hundred places down
+        // the list. A full match still scores exactly 1.0, so the top of the
+        // lexical ranking is untouched and only weak evidence is priced as
+        // weak. Not a constant: the weight is the measurement.
         let entry = fused.entry(*i).or_insert((0.0, false, false));
-        entry.0 += 1.0 / (RRF_K + rank as f64 + 1.0);
+        entry.0 += score / (RRF_K + rank as f64 + 1.0);
         entry.1 = true;
     }
     for (rank, (i, _)) in semantic.iter().enumerate() {
@@ -340,6 +370,7 @@ pub fn search(
                 _ => "lexical",
             },
             cosine: cosines.get(&i).copied().map(round2),
+            lexical: scores.get(&i).copied().map(|score| round2(score as f32)),
             semantic_via: match cosines.contains_key(&i) {
                 true => summaries.vectors.get(&i).map(|(_, via)| *via),
                 false => None,
@@ -689,11 +720,18 @@ fn common_prefix(a: &str, b: &str) -> usize {
     a.bytes().zip(b.bytes()).take_while(|(x, y)| x == y).count()
 }
 
-/// Token overlap between a query and a unit's humanized name.
+/// How much of a query a unit's humanized name accounts for, 0 to 1.
 ///
 /// Deliberately simple. RRF consumes a *ranking*, not a calibrated score, so
 /// the elaborate fuzzy scorer gqls uses for GraphQL paths would be a borrowed
 /// abstraction doing a job this does in twenty lines.
+///
+/// **The denominator is the whole query, findable or not.** A name that
+/// accounted for one word of seven accounted for a seventh, whether or not the
+/// other six appear anywhere in the corpus. Normalizing by what was reachable
+/// instead was tried and measured (see `docs/PLAN.md`): it turns a seven-word
+/// question into a two-word one and hands a name that matched only `a` half
+/// the credit.
 fn lexical_score(query: &str, id: &str) -> f64 {
     let name: Vec<String> = tokenize(&humanize(id)).collect();
     if name.is_empty() {
@@ -891,10 +929,21 @@ mod tests {
 
     /// Every query term has to pull its weight: a query that matches one of
     /// four words is a weaker match than one that matches one of one.
+    ///
+    /// This is also the number the fusion now multiplies by, which is what
+    /// M12b changed: a name that answered a tenth of the question used to buy
+    /// the same place in the ranking as one that answered all of it.
     #[test]
     fn the_score_is_a_fraction_of_the_query() {
         assert_eq!(lexical_score("unpaid", "Invoice#unpaid"), 1.0);
         assert!(lexical_score("unpaid invoices for a customer", "Invoice#unpaid") < 0.5);
+        // The M12b repro's shape: one filler word out of ten, and the name
+        // says nothing else about the question.
+        let filler = lexical_score(
+            "notice the program on disk is not the one running",
+            "Class#is_app",
+        );
+        assert!(filler < 0.2, "{filler} is not weak evidence");
     }
 
     /// The hash embedder is not a trained model, so a floor measured on MiniLM

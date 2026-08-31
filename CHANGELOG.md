@@ -4,6 +4,21 @@
 
 Initial skeleton — nothing has been released, so everything below is new.
 
+- **`search` stops letting a name that shares one word with your question
+  outrank one that answers it.** The ranker fuses a name match with a meaning
+  match, and it was reading only each half's *position* — so a unit whose name
+  contained `is` scored the same on "notice the program on disk is not the one
+  running" as a unit whose name was the answer, and went on doing so a hundred
+  places down the list. Each half now carries how strong its own evidence was.
+  - Measured across all eleven labeled query sets, 195 queries: **top-1 21 → 30,
+    top-5 34 → 57**, with the same answers found in every case — this moves
+    ranks, not recall — and no set worse. On rails, top-5 goes 10/77 → 21/77;
+    on the only corpus with complete summary coverage, 12/22 → 21/22.
+  - **Every hit now shows `name`, the fraction of your query its name accounts
+    for**, beside the `cos` the meaning half already showed — `[both] name 0.14
+    cos 0.33` is a hit that half-matched loudly and meant little. `lexical` in
+    the JSON and the MCP tools.
+  - **Nothing to do:** no reindex, no re-embed, no stored data changes.
 - **The index is two files now, and a schema bump can no longer break a running
   contour.** Derived data (blobs, units, checkouts, vectors, signatures) lives in
   `contour-derived-v<N>.db`, named for its schema version, so two contours of
