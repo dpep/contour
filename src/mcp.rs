@@ -26,6 +26,7 @@ use anyhow::Result;
 use serde_json::{Value, json};
 use std::io::{BufRead, Write};
 use std::path::{Path, PathBuf};
+use std::time::SystemTime;
 
 /// Protocol revisions this server knows how to speak. The newest first: an
 /// `initialize` naming any of them is answered in that revision, and anything
@@ -37,7 +38,23 @@ const SUPPORTED: [&str; 3] = ["2025-06-18", "2025-03-26", "2024-11-05"];
 /// **Nothing but protocol may reach stdout.** Every diagnostic in this module
 /// goes to stderr, because one stray line of human text corrupts the session
 /// in a way that reads to the client as a malformed server.
+///
+/// ## Upgrading underneath a live session
+///
+/// This process outlives the binary it was launched from. Install a new contour
+/// and the resident server is instantly the old one — and the moment anything
+/// brings the shared database up to the new schema, every tool that reads it
+/// fails for the rest of the session, with no way for the session to recover.
+/// Two field trials lost their whole grazing budget to exactly that.
+///
+/// So the server becomes the new build instead: it stamps the binary it was
+/// launched from, restats it after each answer, and `exec`s the replacement in
+/// place when it differs. `exec` keeps the pid and the file descriptors, so the
+/// client's pipes survive and it never learns that the program on the other end
+/// was replaced. Nothing needs carrying across, because [`handle_line`] holds
+/// no session state — a property a test pins, since the restart depends on it.
 pub fn serve() -> Result<()> {
+    let launched_from = stamp();
     let stdin = std::io::stdin();
     let mut stdout = std::io::stdout();
     for line in stdin.lock().lines() {
@@ -45,18 +62,75 @@ pub fn serve() -> Result<()> {
         if line.trim().is_empty() {
             continue;
         }
-        let Some(response) = handle_line(&line) else {
+        let Some(response) = handle_line(&line, &launched_from) else {
             continue;
         };
         writeln!(stdout, "{response}")?;
         stdout.flush()?;
+        // The one moment this process owes nobody anything: an answer has just
+        // gone out and the next request has not been read. A client that
+        // pipelined a batch can still have siblings sitting in a buffer we
+        // cannot see, and those are lost — the known edge of doing this in
+        // process, and the reason `docs/DECISIONS.md` records the proxy-parent
+        // shim as the shape that removes it.
+        if let Some(newer) = superseded(&launched_from) {
+            let err = restart(&newer);
+            eprintln!(
+                "contour: could not restart into {} ({err}); still serving the \
+                 build this session started with",
+                newer.display()
+            );
+        }
     }
     Ok(())
 }
 
+/// A binary's identity on disk: where it is, how big it is, when it changed.
+type Stamp = (PathBuf, u64, SystemTime);
+
+/// What the binary this process was launched from looks like on disk.
+///
+/// Size and mtime rather than a hash: this is taken after every answer, and a
+/// 26 MB digest per request would be a real cost to detect something an
+/// installer always changes. `None` when the path cannot be read at all.
+fn stamp() -> Option<Stamp> {
+    let path = std::env::current_exe().ok()?;
+    let meta = std::fs::metadata(&path).ok()?;
+    Some((path, meta.len(), meta.modified().ok()?))
+}
+
+/// The binary to become, if the one on disk is no longer the one running.
+///
+/// Both stamps must be readable. A path that has *become* unreadable is not an
+/// upgrade — exec'ing it would fail on every request from then on — and a path
+/// that was never readable cannot tell us anything changed.
+fn superseded(launched_from: &Option<Stamp>) -> Option<PathBuf> {
+    let (was, now) = (launched_from.as_ref()?, stamp()?);
+    match *was == now {
+        true => None,
+        false => Some(now.0),
+    }
+}
+
+/// Become the binary at `path`, keeping this process's pid and open files.
+///
+/// Returns only on failure — a successful `exec` never comes back. Unix only,
+/// like `$HOME`-relative storage and every other assumption in this tool.
+fn restart(path: &Path) -> std::io::Error {
+    use std::os::unix::process::CommandExt;
+    std::process::Command::new(path)
+        .args(std::env::args_os().skip(1))
+        .exec()
+}
+
 /// One request in, at most one response out. `None` for a notification, which
 /// by JSON-RPC must not be answered at all.
-fn handle_line(line: &str) -> Option<String> {
+///
+/// Holds no state between calls, deliberately: a request is answered the same
+/// way whether or not this process is the one the client handshook with, which
+/// is what lets [`serve`] replace itself mid-session without replaying
+/// anything.
+fn handle_line(line: &str, launched_from: &Option<Stamp>) -> Option<String> {
     let request: Value = match serde_json::from_str(line) {
         Ok(value) => value,
         // No id is recoverable from unparseable input, so this is the one
@@ -101,15 +175,27 @@ fn handle_line(line: &str) -> Option<String> {
         // A tool that failed is a *result* with `isError`, not a protocol
         // error: the model is meant to see the message and adapt, which it
         // cannot do if the failure is swallowed by the transport layer.
-        Err(err) => json!({
-            "jsonrpc": "2.0",
-            "id": id,
-            "result": {
-                "isError": true,
-                "content": [{"type": "text", "text": format!("{err:#}")}]
+        Err(err) => {
+            let mut text = format!("{err:#}");
+            // Almost always the schema-skew refusal, and the caller's next move
+            // depends on something the message cannot know: whether a newer
+            // contour is already installed. When it is, "upgrade contour" is
+            // advice they have taken, and what they need to hear instead is
+            // that no session restart is required.
+            if superseded(launched_from).is_some() {
+                text.push_str(
+                    "\n\nA newer contour is installed than the one serving this session. \
+                     The server is restarting into it now — retry this call; there is no \
+                     need to restart the session.",
+                );
             }
-        })
-        .to_string(),
+            json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "result": {"isError": true, "content": [{"type": "text", "text": text}]}
+            })
+            .to_string()
+        }
     })
 }
 
@@ -568,7 +654,7 @@ mod tests {
     use super::*;
 
     fn request(line: &str) -> Value {
-        serde_json::from_str(&handle_line(line).expect("a response")).unwrap()
+        serde_json::from_str(&handle_line(line, &None).expect("a response")).unwrap()
     }
 
     #[test]
@@ -594,7 +680,28 @@ mod tests {
     /// one is the classic way to desynchronise a client.
     #[test]
     fn a_notification_is_not_answered() {
-        assert!(handle_line(r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#).is_none());
+        assert!(
+            handle_line(
+                r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#,
+                &None
+            )
+            .is_none()
+        );
+    }
+
+    /// The property [`serve`]'s self-restart rests on: a request is answered
+    /// the same way whether or not this process saw the handshake. If a tool
+    /// ever starts requiring `initialize`, a session that restarts into a new
+    /// build breaks on its very next call — so this is the guard, not a test of
+    /// protocol leniency.
+    #[test]
+    fn a_tool_call_needs_no_handshake_before_it() {
+        let reply = request(
+            r#"{"jsonrpc":"2.0","id":7,"method":"tools/call",
+                "params":{"name":"symbols","arguments":{"file":"/nope/missing.rb"}}}"#,
+        );
+        assert!(reply["error"].is_null(), "answered without an initialize");
+        assert_eq!(reply["result"]["isError"], true, "the file, not the state");
     }
 
     #[test]

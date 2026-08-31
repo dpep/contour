@@ -21,6 +21,13 @@ struct Session {
 
 impl Session {
     fn start(label: &str, files: &[(&str, &str)]) -> Session {
+        Session::start_using(label, files, Path::new(env!("CARGO_BIN_EXE_contour")))
+    }
+
+    /// The same session, served by a named program rather than by the build
+    /// under test. Only the upgrade case needs this: it launches from a *copy*
+    /// so the copy can be replaced underneath the running process.
+    fn start_using(label: &str, files: &[(&str, &str)], program: &Path) -> Session {
         let base = std::env::temp_dir();
         let dir = base.join(format!("contour-mcp-{}-{label}", std::process::id()));
         let db = base.join(format!("contour-mcp-{}-{label}.db", std::process::id()));
@@ -56,7 +63,7 @@ impl Session {
             );
         }
 
-        let mut child = Command::new(env!("CARGO_BIN_EXE_contour"))
+        let mut child = Command::new(program)
             .arg("mcp")
             .current_dir(&dir)
             .env("CONTOUR_DB", &db)
@@ -529,4 +536,70 @@ fn contributions_are_rejected_rather_than_repaired() {
     // fn, all still waiting.
     let pending = mcp.tool(6, "pending", serde_json::json!({"model": "m"}));
     assert_eq!(pending["units"].as_array().unwrap().len(), 4);
+}
+
+/// A resident server outlives the binary it was launched from. Install a new
+/// contour and the running process is instantly the old one; the moment
+/// anything brings the shared database up to the new schema, every tool that
+/// reads it fails for the rest of the session. Two field trials lost their
+/// whole grazing budget to that, with no in-session recovery.
+///
+/// So the server becomes the new build. This drives the real arc: launch from a
+/// copy, replace the copy underneath a live session, and check that the next
+/// request is served by the replacement — same pid, same pipes, no handshake.
+#[test]
+fn a_server_restarts_into_a_contour_installed_underneath_it() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let installed = std::env::temp_dir().join(format!("contour-upgrade-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&installed);
+    std::fs::create_dir_all(&installed).unwrap();
+    let program = installed.join("contour");
+    std::fs::copy(env!("CARGO_BIN_EXE_contour"), &program).unwrap();
+
+    let mut mcp = Session::start_using("upgrade", &corpus(), &program);
+    mcp.request(
+        1,
+        "initialize",
+        serde_json::json!({"protocolVersion": "2025-06-18", "capabilities": {}}),
+    );
+    mcp.notify("notifications/initialized");
+    // Healthy first, so a later failure cannot be blamed on the session never
+    // having worked.
+    let outline = mcp.tool(
+        2,
+        "symbols",
+        serde_json::json!({"file": mcp.dir.join("billing.rb").to_string_lossy()}),
+    );
+    assert_eq!(outline["units"].as_array().map(Vec::len), Some(2));
+
+    // The upgrade. A stand-in rather than a second build of contour: what has
+    // to be proved is that the process becomes whatever is at that path, and a
+    // program with an answer of its own proves it where a rebuild of the same
+    // code could not.
+    std::fs::write(
+        &program,
+        "#!/bin/sh\nwhile read -r _; do\n  \
+         printf '%s\\n' '{\"jsonrpc\":\"2.0\",\"id\":4,\"result\":{\"upgraded\":true}}'\ndone\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&program, PermissionsExt::from_mode(0o755)).unwrap();
+
+    // One last answer from the build that started the session — it owes this
+    // request a reply — and the restart happens after that reply goes out.
+    let still_ours = mcp.tool(
+        3,
+        "symbols",
+        serde_json::json!({"file": mcp.dir.join("ledger.rb").to_string_lossy()}),
+    );
+    assert_eq!(still_ours["units"].as_array().map(Vec::len), Some(1));
+
+    // And now the replacement is answering, on the same pid and the same pipes.
+    let after = mcp.request(4, "tools/list", serde_json::json!({}));
+    assert_eq!(
+        after["result"]["upgraded"], true,
+        "the session should have restarted into the newer binary: {after}"
+    );
+
+    let _ = std::fs::remove_dir_all(&installed);
 }

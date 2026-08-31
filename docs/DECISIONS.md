@@ -676,3 +676,73 @@ quiet when they agree. `rq` already returns each definition's file and line, so
 the text is one read away. Not built — a literal text comparison is fragile
 (computed values, multi-line literals), and on this evidence the noise is three
 groups in sixty.
+
+## DEC-025 — A resident MCP server becomes the binary that replaced it
+
+A `contour mcp` process outlives the binary it was launched from. Install a new
+contour mid-session and the server is instantly the old one; the moment anything
+brings the shared database up to the new derived schema, `Store::init`'s guard
+fires — correctly, DEC-016's "an older binary must not drop a newer database" —
+and **every** tool that reads the index fails for the rest of the session. Two
+M11 field trials lost their whole grazing budget to that, twice, with no
+in-session recovery. One trial contributed nothing at all; the other hand-rolled
+a Python stdio client against a fresh `contour mcp` to get around it.
+
+That makes it the flywheel's single point of failure: DEC-018 says the expensive
+layer fills by grazing, and grazing happens through this one process.
+
+**As built: the server becomes the new build.** It stamps the binary it was
+launched from (path, size, mtime), restats after each answer, and `exec`s the
+replacement in place when the stamp moves. `exec` keeps the pid and the file
+descriptors, so the client's pipes survive and it never learns that the program
+on the other end was replaced.
+
+Three things make this small enough to be worth it:
+
+- **Nothing needs carrying across.** `handle_line` holds no session state — a
+  `tools/call` is answered the same way with or without a preceding
+  `initialize` — so there is no handshake to replay and no environment variable
+  to smuggle it in. That property is now pinned by a test, because the restart
+  depends on it rather than merely benefiting from it.
+- **The trigger is the binary, not the failure.** Skew is the *symptom*; the
+  upgrade is the cause, and statting a path is free where opening a database is
+  not. Restarting on the skew instead would loop forever in the one case exec
+  cannot fix — a database moved ahead by some *other* contour on the machine,
+  where the installed binary really is too old and "upgrade contour" is the
+  right answer. So: exec when the binary changed, report when it did not.
+- **The praised error text is unchanged.** A failed tool call gains one sentence
+  — and only when a newer contour is actually on disk — saying the server is
+  restarting into it and the session does not need restarting. That is the fact
+  the message could not otherwise know: "upgrade contour" is stale advice to
+  somebody who just did.
+
+### The known edge, and the shape that removes it
+
+The `exec` happens at the one moment the process owes nobody an answer: a reply
+has just been flushed and the next request has not been read. A client that
+*pipelined* a batch can still have siblings sitting in a buffer we cannot see,
+and those are lost. It is bounded — those calls were already failing — but a
+lost request is a hang where a failed one is an error, which is worse.
+
+Removing it properly means the Envoy hot-restarter shape: a thin, stable parent
+that owns stdio and proxies to a restartable child. That is genuinely more
+robust and it is a second component, a second process, and a protocol between
+them. Recorded as the fallback if self-exec meets a platform edge — the one to
+watch for is an install that replaces the *symlink* rather than the file
+`current_exe` resolves to, which a Homebrew upgrade does and `cargo install`
+does not.
+
+### The other way to define this out of existence
+
+Worth writing down because it is a smaller idea than either restart mechanism:
+**version the derived database in its filename.** DEC-016 already splits the
+schema into a derived half that may be dropped and a purchased half that may
+not. If the derived half lived in `contour-v10.db` beside the purchased
+`contour.db`, a v9 binary and a v10 binary would each build their own and never
+collide — no skew, no restart, and the "two contours take turns wiping each
+other's index" hazard that `Store::init` guards against would stop existing too.
+
+Not built, and not because it is wrong: it is an on-disk restructure (an
+`ATTACH`, every derived query qualified, a one-time split of existing
+databases), which is a structural change on top of a behavioural one. Left for
+the owner to rule on.
