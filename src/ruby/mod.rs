@@ -12,7 +12,7 @@ mod generated;
 mod node_tag;
 mod norm;
 
-use crate::core::{Blob, Lang, Param, ParamKind, Unit};
+use crate::core::{self, Blob, Lang, Param, ParamKind, Unit};
 
 /// Every callable in one blob.
 ///
@@ -36,6 +36,11 @@ pub fn units(src: &[u8]) -> Blob {
             name: def.name.clone(),
             owner: owner_path(&def.nesting),
             singleton: def.singleton,
+            visibility: match def.visibility {
+                facts::Visibility::Public => core::Visibility::Public,
+                facts::Visibility::Protected => core::Visibility::Protected,
+                facts::Visibility::Private => core::Visibility::Private,
+            },
             params: def.params.iter().map(param).collect(),
             via: def.via.clone(),
             line: def.pos.line,
@@ -124,6 +129,46 @@ mod tests {
             .iter()
             .map(Unit::id)
             .collect::<Vec<_>>()
+    }
+
+    fn visible(src: &str) -> Vec<(String, &'static str)> {
+        units(src.as_bytes())
+            .units
+            .iter()
+            .map(|u| (u.id(), u.visibility.as_str()))
+            .collect()
+    }
+
+    /// What a caller may actually call — the fact a container needs to know
+    /// which of its methods is its entry point (DEC-028).
+    ///
+    /// `initialize` is the one Ruby decides for you: it is private however it
+    /// is written, and a reader looking for a class's entry points is not
+    /// looking for its constructor.
+    #[test]
+    fn a_unit_carries_who_may_call_it() {
+        assert_eq!(
+            visible(
+                "class W
+  def initialize; end
+  def call; end
+                   protected
+  def peer; end
+  private
+  def helper; end
+                   def self.build; end
+end
+"
+            ),
+            [
+                ("W#initialize".into(), "private"),
+                ("W#call".into(), "public"),
+                ("W#peer".into(), "protected"),
+                ("W#helper".into(), "private"),
+                // A visibility modifier never reaches `def self.x`.
+                ("W.build".into(), "public"),
+            ]
+        );
     }
 
     #[test]

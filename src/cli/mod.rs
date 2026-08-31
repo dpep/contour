@@ -1092,7 +1092,19 @@ fn symbols(file: &std::path::Path, format: Format) -> Result<i32> {
     match format {
         Format::Human => {
             for unit in &blob.units {
-                println!("{:>5}  {}{}", unit.line, unit.id(), signature(unit));
+                // Only when it is not public: an outline is mostly public
+                // methods, and a word that never varies is a word nobody
+                // reads. The same rule the `class` tag follows on a search hit.
+                let visibility = match unit.visibility {
+                    crate::core::Visibility::Public => String::new(),
+                    other => format!("  [{}]", other.as_str()),
+                };
+                println!(
+                    "{:>5}  {}{}{visibility}",
+                    unit.line,
+                    unit.id(),
+                    signature(unit)
+                );
             }
             // Zero bytes and exit 1 is a correct answer nobody can read.
             if blob.units.is_empty() {

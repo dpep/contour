@@ -306,6 +306,7 @@ mod tests {
             name: "unpaid_for".into(),
             owner: "Billing::Invoice".into(),
             singleton: false,
+            visibility: Default::default(),
             nodes: None,
             params: vec![crate::core::Param {
                 kind: crate::core::ParamKind::Req,

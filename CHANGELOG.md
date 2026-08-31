@@ -4,6 +4,18 @@
 
 Initial skeleton — nothing has been released, so everything below is new.
 
+- **Every unit records who may call it**, and `contour --symbols` marks anything
+  that is not public: `StatusCacheHydrator#hydrate` stands out from its
+  fourteen private helpers at a glance. `visibility` (`public` / `protected` /
+  `private`) is on every unit in JSON and over MCP.
+  - Ruby reads visibility stacks, `module_function` and `private_class_method`,
+    and now reads **`def initialize` as private**, which Ruby makes it whatever
+    the source says. Rust reads `pub` as public, a bare `fn` as private, and
+    `pub(crate)` / `pub(super)` as protected.
+  - **What you must do: nothing.** The index rebuilds itself on the next query
+    (seconds). No summary is re-keyed and nothing re-embeds — visibility is
+    deliberately never shown to the summarizer, because that would move every
+    summary's cache key and orphan work somebody paid for.
 - **`search` stops letting a name that shares one word with your question
   outrank one that answers it.** The ranker fuses a name match with a meaning
   match, and it was reading only each half's *position* — so a unit whose name

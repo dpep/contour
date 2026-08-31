@@ -31,7 +31,7 @@
 /// entire class of migration bug, and makes adding a column free, so nothing
 /// needs to be carried speculatively. See the module header for what this
 /// version deliberately does *not* govern.
-pub(crate) const VERSION: i64 = 11;
+pub(crate) const VERSION: i64 = 12;
 
 /// Applied whole to a fresh database.
 pub(crate) const SCHEMA: &str = r#"
@@ -56,6 +56,7 @@ CREATE TABLE unit (
   name      TEXT    NOT NULL,
   owner     TEXT    NOT NULL,             -- lexical namespace, '::'-joined
   singleton INTEGER NOT NULL,             -- `def self.x` / inside `class << self`
+  visibility TEXT   NOT NULL,             -- public | protected | private
   params    TEXT    NOT NULL,             -- 'req:a;key:b', Ruby's vocabulary
   via       TEXT,
   line      INTEGER NOT NULL,

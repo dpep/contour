@@ -113,6 +113,7 @@ fn function(node: &Node<'_>, src: &[u8], owner: &str) -> Option<Unit> {
         // Rust's own distinction, and the same fact `singleton` carries in
         // Ruby: calling an associated function needs no instance.
         singleton: !has_self(node),
+        visibility: visibility(node, src),
         params: parameters(params.as_ref(), src),
         via: None,
         line: node.start_position().row as u32 + 1,
@@ -122,6 +123,36 @@ fn function(node: &Node<'_>, src: &[u8], owner: &str) -> Option<Unit> {
         norm_hash: folded.map(|(hash, _)| hash),
         nodes: folded.map(|(_, nodes)| nodes),
     })
+}
+
+/// Who may call this `fn`, mapped onto the shared vocabulary.
+///
+/// `pub` is public and a bare `fn` is private, which is Rust's own reading.
+/// `pub(crate)`, `pub(super)` and `pub(in path)` are **protected**: visible
+/// past the module that wrote them, not to everyone — the same shape Ruby's
+/// `protected` has, and the reason [`crate::core::Visibility`] is a three-way
+/// rather than a flag.
+///
+/// A trait method carries no modifier and is as public as its trait; reading
+/// it as private would be wrong, but knowing better needs the trait's own
+/// visibility, which this walk does not carry down. Left as the extractor sees
+/// it rather than guessed at — the nomination rule this feeds abstains on a
+/// container with no single public unit anyway, so a wrong guess would cost
+/// more than an honest silence.
+fn visibility(node: &Node<'_>, src: &[u8]) -> crate::core::Visibility {
+    use crate::core::Visibility;
+    let Some(modifier) = node
+        .children(&mut node.walk())
+        .find(|c| c.kind() == "visibility_modifier")
+    else {
+        return Visibility::Private;
+    };
+    match std::str::from_utf8(&src[modifier.byte_range()]) {
+        Ok("pub") => Visibility::Public,
+        // `pub(crate)`, `pub(super)`, `pub(in path)` — and an unreadable byte
+        // range, which cannot be public since `pub` alone is three ASCII bytes.
+        _ => Visibility::Protected,
+    }
 }
 
 /// Parameters, mapped onto the shared vocabulary.
@@ -244,6 +275,33 @@ mod tests {
 
     fn hash(src: &str) -> u64 {
         units(src.as_bytes()).units[0].norm_hash.expect("a body")
+    }
+
+    /// Rust's three visibilities onto the shared vocabulary: `pub` is public,
+    /// a bare `fn` is private, and the scoped forms are protected — visible
+    /// past here, not to everyone (DEC-028).
+    #[test]
+    fn a_unit_carries_who_may_call_it() {
+        let visible: Vec<(String, &str)> = units(
+            b"pub fn open() {}
+fn shut() {}
+pub(crate) fn peek() {}
+pub(super) fn up() {}
+",
+        )
+        .units
+        .iter()
+        .map(|u| (u.id(), u.visibility.as_str()))
+        .collect();
+        assert_eq!(
+            visible,
+            [
+                ("open".to_string(), "public"),
+                ("shut".to_string(), "private"),
+                ("peek".to_string(), "protected"),
+                ("up".to_string(), "protected"),
+            ]
+        );
     }
 
     #[test]

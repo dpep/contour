@@ -369,7 +369,7 @@ impl Store {
     pub fn units(&self, root: &str) -> Result<Vec<Located>> {
         let mut stmt = self.conn.prepare(
             "SELECT f.path, u.lang, u.name, u.owner, u.singleton, u.params, u.via,
-                    u.line, u.end_line, u.norm_hash, u.nodes
+                    u.line, u.end_line, u.norm_hash, u.nodes, u.visibility
                FROM checkout c
                JOIN file f ON f.checkout_id = c.id
                JOIN unit u ON u.blob_id = f.blob_id
@@ -392,6 +392,11 @@ impl Store {
                 end_line: r.get(8)?,
                 norm_hash: r.get::<_, Option<i64>>(9)?.map(|h| h as u64),
                 nodes: r.get::<_, Option<i64>>(10)?.map(|n| n as u32),
+                // An unrecognized word means a newer contour wrote the row.
+                // Public is the reading that hides nothing, which is the safe
+                // direction for a field whose only consumer nominates.
+                visibility: crate::core::Visibility::parse(&r.get::<_, String>(11)?)
+                    .unwrap_or_default(),
             };
             // The file layer, doing the one job DEC-021 reserves for it: the
             // row holds the bare lexical owner, and the path says which module
@@ -643,8 +648,8 @@ fn insert_blob(tx: &rusqlite::Transaction<'_>, oid: &Oid, blob: &Blob) -> rusqli
     let mut stmt = tx.prepare_cached(
         "INSERT INTO unit
            (blob_id, lang, name, owner, singleton, params, via, line, end_line,
-            norm_hash, nodes)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+            norm_hash, nodes, visibility)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
     )?;
     for u in &blob.units {
         stmt.execute(params![
@@ -659,6 +664,7 @@ fn insert_blob(tx: &rusqlite::Transaction<'_>, oid: &Oid, blob: &Blob) -> rusqli
             u.end_line,
             u.norm_hash.map(|h| h as i64),
             u.nodes.map(|n| n as i64),
+            u.visibility.as_str(),
         ])?;
     }
     Ok(())
@@ -875,6 +881,38 @@ mod tests {
         store.write("/r", &files, vec![]).unwrap();
         assert_eq!(store.units("/r").unwrap().len(), 2);
         assert_eq!(store.status().unwrap()[0].units, 2);
+    }
+
+    /// Visibility survives the round trip. It is a column rather than a
+    /// derivation, so nothing re-reads the source to answer "may a caller call
+    /// this" — and the nomination rule that asks (DEC-028) runs per query.
+    #[test]
+    fn who_may_call_a_unit_survives_the_store() {
+        let mut store = Store::open_in_memory().unwrap();
+        let (oid, parsed) = blob(
+            "class W
+  def call; end
+  private
+  def helper; end
+end
+",
+        );
+        let files: Files = [("a.rb".to_string(), oid.clone())].into_iter().collect();
+        store.write("/r", &files, vec![(oid, parsed)]).unwrap();
+
+        let seen: Vec<(String, &str)> = store
+            .units("/r")
+            .unwrap()
+            .iter()
+            .map(|l| (l.unit.id(), l.unit.visibility.as_str()))
+            .collect();
+        assert_eq!(
+            seen,
+            [
+                ("W#call".to_string(), "public"),
+                ("W#helper".to_string(), "private"),
+            ]
+        );
     }
 
     /// Two paths pointing at one blob: units are stored once and located

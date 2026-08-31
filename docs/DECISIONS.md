@@ -903,3 +903,78 @@ a predicate, where `how: both` said everything there was to say, and it is now
 graded. `both` on a name that matched one filler word and `both` on a name that
 answered the whole query are the same word for very different evidence, and a
 reader could not otherwise tell which one they were looking at.
+
+## DEC-028 — A unit knows who may call it
+
+**Approved by the owner at the M12b checkpoint**, on the argument that this
+completes the "what a caller sees" set `Unit` already carries rather than
+reopening DEC-014's deferral of containers.
+
+`core::Unit` gains `visibility`: `public | protected | private`. The Ruby
+extractor has always computed it — visibility stacks, `module_function`,
+`private_class_method` — and dropped it at the `ruby::units` seam; the Rust
+extractor now reads `visibility_modifier`, where `pub` is public, a bare `fn`
+is private, and `pub(crate)` / `pub(super)` / `pub(in path)` are **protected**,
+which is the honest bucket for "visible past here, not to everyone".
+
+**Three values, not a flag**, because two of them are not the same fact in
+either language and collapsing them would lose one a reader wants. That is also
+why this is `core::Visibility` and not `bool is_public`: the predicate the
+ranking wants is one question this answers, not the whole of what it says.
+
+### Carried because a question needs it
+
+DEC-014 says a record that carries a fact invites a query that depends on it,
+and that is the rule this obeys rather than an exception to it. The question
+arrived first, from the M12b census: mastodon's entry points are named for the
+*protocol* — `call`, `to_s`, `get`, `use`, `hydrate`, `refresh` — and their
+private helpers are named for the *behaviour*, so the container out-ranks its
+own entry point on 6 of 21 labeled queries. **A container whose only public
+method is that method is the one contour can nominate, and nothing but
+visibility can tell that method from its helpers.** Nine of twenty labeled
+answers are their container's sole public method, and those nine are the broken
+cases.
+
+`singleton` and `params` are here for exactly this reason already. Anything a
+caller sees is a fact about the callable; anything about the container is not,
+and stays out (Phase 3, DEC-013).
+
+### It must never enter the summarizer prompt
+
+**The constraint the owner asked to be written down.** `ctx_hash` covers exactly
+what the prompt renders (DEC-003), so rendering visibility would re-key every
+summary in the purchased half — the table DEC-016 says must never be dropped,
+and a bill DEC-026 has already paid once at 42 summaries. It would be a
+defensible thing to tell a model, and it is not worth that.
+
+The type system already enforces this: `summary::Context` is a separate struct
+holding exactly the fields `render` writes, so a `Unit` field is invisible to
+the prompt until somebody adds it there twice. A test pins it anyway
+(`a_fact_the_prompt_never_says_is_not_in_the_key`), because the cost of finding
+out later is measured in money.
+
+### Cost
+
+A derived-half schema bump, 11 → 12, which is a reindex and nothing else —
+DEC-025's per-version derived file means a v11 contour and a v12 contour do not
+even see each other's. No summary is re-keyed, no vector is re-embedded (the
+embedded text is unchanged), and no ranking moves: this commit carries the fact
+and reads it nowhere. Measured rather than asserted — nine labeled sets on a
+fresh v12 database, every top-1, top-5 and found figure identical.
+
+### Two things it fixed on the way
+
+- **`def initialize` extracted as public.** Ruby makes `initialize` private
+  whatever the source says, and contour modelled only the lexical
+  `private`/`public` stack. A Ruby fact rather than framework knowledge, and it
+  is load-bearing here: `StatusCacheHydrator` has one public method once
+  `initialize` is read correctly, and that method is the labeled answer.
+- **`--symbols` now says `[private]`** on anything that is not public, and only
+  then — an outline is mostly public methods, and a word that never varies is a
+  word nobody reads. The same rule the `class` tag follows on a search hit.
+  `visibility` is on every unit in JSON.
+
+**A trait method carries no modifier and is left as the extractor sees it.**
+Knowing it is as public as its trait needs the trait's own visibility, which the
+walk does not carry down. The nomination rule abstains on a container with no
+single public unit, so an honest silence costs less than a guess.

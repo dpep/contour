@@ -163,6 +163,9 @@ pub struct Context {
     pub singleton: bool,
     pub via: Option<String>,
     pub params: Vec<Param>,
+    // `Unit::visibility` is deliberately absent (DEC-028). It would be
+    // reasonable prompt material, and adding it would move every `ctx_hash`
+    // and orphan every summary anyone has bought. A test below pins that.
 }
 
 impl Context {
@@ -282,6 +285,35 @@ mod tests {
                 name: "force".into(),
             }],
         }
+    }
+
+    /// The other half of that property, and the one that costs money to get
+    /// wrong: a fact the model was NOT told must not move the key.
+    ///
+    /// `Unit::visibility` arrived at M12b and is exactly such a fact. Putting
+    /// it in the prompt would be defensible on its merits and would re-key
+    /// every summary in the purchased half — which DEC-016 says must never be
+    /// dropped and DEC-026 has already paid for once, at 42 summaries. This
+    /// fails if anyone renders it (DEC-028).
+    #[test]
+    fn a_fact_the_prompt_never_says_is_not_in_the_key() {
+        let mut unit = crate::core::Unit {
+            lang: crate::core::Lang::Ruby,
+            name: "save".into(),
+            owner: "Widget".into(),
+            singleton: false,
+            visibility: crate::core::Visibility::Public,
+            params: Vec::new(),
+            via: None,
+            line: 1,
+            end_line: 2,
+            norm_hash: None,
+            nodes: None,
+        };
+        let public = Context::of(&unit).hash();
+        unit.visibility = crate::core::Visibility::Private;
+        assert_eq!(Context::of(&unit).hash(), public);
+        assert!(!Context::of(&unit).render().contains("private"));
     }
 
     /// The property the whole cache rests on: anything the model was told is

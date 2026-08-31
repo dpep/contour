@@ -82,6 +82,51 @@ impl Lang {
     }
 }
 
+/// Who may call a unit.
+///
+/// A language-neutral three-way, because two of the three languages contour
+/// reads make the same three distinctions and collapsing them would lose a
+/// real fact: Ruby's `private` and `protected` differ, and Rust's `pub(crate)`
+/// is neither public nor invisible. `Protected` is the honest bucket for
+/// "visible past here, but not to everyone".
+///
+/// **Carried because a question needs it** (DEC-014's rule, not an exception
+/// to it): a container whose only public method is its entry point is the one
+/// contour can nominate, and nothing else can tell that method from its
+/// helpers. `singleton` and `params` are already here for the same reason —
+/// they are what a caller sees.
+///
+/// **Never rendered into the summarizer prompt.** `ctx_hash` covers exactly
+/// what the prompt says (DEC-003), so adding this there would re-key every
+/// summary anyone has bought. See DEC-028.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Visibility {
+    #[default]
+    Public,
+    Protected,
+    Private,
+}
+
+impl Visibility {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Visibility::Public => "public",
+            Visibility::Protected => "protected",
+            Visibility::Private => "private",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Visibility> {
+        match s {
+            "public" => Some(Visibility::Public),
+            "protected" => Some(Visibility::Protected),
+            "private" => Some(Visibility::Private),
+            _ => None,
+        }
+    }
+}
+
 /// One callable span of source.
 ///
 /// Deliberately *not* everything an extractor knows. Classes, constants,
@@ -100,6 +145,9 @@ pub struct Unit {
     /// A method on the singleton: `def self.x`, or any `def` inside
     /// `class << self`. Decides `.` vs `#` in this unit's [`Unit::id`].
     pub singleton: bool,
+    /// Who may call it. Ruby's `private`/`protected` stacks and Rust's `pub`
+    /// modifiers, mapped onto one vocabulary.
+    pub visibility: Visibility,
     /// Ruby's own `Method#parameters` vocabulary, one per parameter. Kept
     /// because arity and keyword shape are part of what a caller sees, and a
     /// summarizer reads them as structural context (DEC-007).
@@ -161,12 +209,13 @@ impl ConstRead {
 impl Serialize for Unit {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         use serde::ser::SerializeStruct;
-        let mut out = serializer.serialize_struct("Unit", 9)?;
+        let mut out = serializer.serialize_struct("Unit", 10)?;
         out.serialize_field("id", &self.id())?;
         out.serialize_field("lang", &self.lang)?;
         out.serialize_field("name", &self.name)?;
         out.serialize_field("owner", &self.owner)?;
         out.serialize_field("singleton", &self.singleton)?;
+        out.serialize_field("visibility", &self.visibility)?;
         out.serialize_field("params", &self.params)?;
         out.serialize_field("via", &self.via)?;
         out.serialize_field("line", &self.line)?;
@@ -314,6 +363,7 @@ mod tests {
             name: name.into(),
             owner: owner.into(),
             singleton,
+            visibility: Visibility::Public,
             params: Vec::new(),
             via: None,
             line: 1,

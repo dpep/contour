@@ -516,9 +516,13 @@ impl<'pr> Visit<'pr> for Extractor<'_> {
         def.sig_returns = self.pending_sig.take();
         def.sig_params = std::mem::take(&mut self.pending_sig_params);
         // Visibility modifiers never reach `def self.x` — it is public whatever
-        // the enclosing `private` says.
+        // the enclosing `private` says. And `initialize` is private however it
+        // is written: Ruby makes it so, and a reader looking for a class's
+        // entry points is not looking for its constructor.
         def.visibility = if singleton {
             Visibility::Public
+        } else if def.name == "initialize" {
+            Visibility::Private
         } else {
             self.visibility()
         };
