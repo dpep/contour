@@ -74,6 +74,25 @@ pub fn default_path() -> Result<PathBuf> {
     })
 }
 
+/// The checkouts a status question is about: every one, or just the one
+/// containing `path`.
+///
+/// Shared by `--status` and the MCP `status` tool so "which checkout does this
+/// path mean" has one answer rather than two that almost agree.
+///
+/// Deliberately not an index refresh (DEC-015): status is a flag, so it reports
+/// on the database rather than filling it, and a path nothing has indexed is an
+/// empty answer rather than a scan.
+pub fn checkouts(store: &Store, path: Option<&Path>) -> Result<Vec<Checkout>> {
+    let all = store.status()?;
+    let Some(path) = path else {
+        return Ok(all);
+    };
+    let root = crate::scan::repo_root(path)?;
+    let root = root.to_string_lossy();
+    Ok(all.into_iter().filter(|c| c.root == root).collect())
+}
+
 /// The database every command uses.
 pub fn open_default() -> Result<Store> {
     let path = default_path()?;

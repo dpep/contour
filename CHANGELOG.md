@@ -4,6 +4,10 @@
 
 Initial skeleton — nothing has been released, so everything below is new.
 
+- **`--status` takes a path, like every other command.** `contour --status .`
+  reports on the checkout you are standing in; bare `--status` still reports on
+  every checkout this machine has indexed, which is the only place that question
+  is answered. The MCP `status` tool takes the same optional `path`.
 - **contour knows what kind of file it is looking at.** Every duplicate group,
   search hit and neighbour carries a `class`: `app`, `test`, `fixture`,
   `migration`, `generated` or `vendored`, decided from the path alone.

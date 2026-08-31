@@ -131,6 +131,43 @@ fn indexing_a_checkout_then_asking_about_it() {
     );
 }
 
+/// `--status` reports on every checkout this machine has indexed; with a path
+/// it reports on one. The index is per-machine, so on a working laptop the
+/// unfiltered answer is mostly other people's repositories.
+#[test]
+fn status_narrows_to_the_checkout_you_name() {
+    let here = Repo::new("status-here", &[("a.rb", "class A\n  def run; end\nend\n")]);
+    let mut elsewhere = Repo::new(
+        "status-elsewhere",
+        &[("b.rb", "class B\n  def go; end\nend\n")],
+    );
+    // One database, two checkouts — the state `--status` exists to report on,
+    // and the only one in which filtering can be wrong.
+    elsewhere.db = here.db.clone();
+    here.run(&["index"]);
+    elsewhere.run(&["index"]);
+
+    let all = here.json(&["--status", "--json"]);
+    assert_eq!(all["checkouts"].as_array().map(Vec::len), Some(2));
+
+    let one = here.json(&["--status", ".", "--json"]);
+    assert_eq!(one["checkouts"].as_array().map(Vec::len), Some(1));
+    assert!(
+        one["checkouts"][0]["root"]
+            .as_str()
+            .is_some_and(|root| root.contains("status-here")),
+        "got {one}"
+    );
+
+    // A checkout nothing has indexed is an empty answer rather than a failure:
+    // the first query there will index it, and the line says so.
+    let mut fresh = Repo::new("status-fresh", &[("c.rb", "class C\n  def x; end\nend\n")]);
+    fresh.db = here.db.clone();
+    let (_, err, code) = fresh.run_in(&fresh.dir.clone(), &["--status", "."]);
+    assert_eq!(code, 1, "a miss, not an error");
+    assert!(err.contains("not indexed"), "got {err:?}");
+}
+
 /// Exit codes are the scriptable half of every answer: 0 found, 1 nothing to
 /// report, 2 could not answer.
 #[test]

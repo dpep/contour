@@ -229,8 +229,10 @@ fn tools() -> Vec<Value> {
         json!({
             "name": "status",
             "description": "What the index holds, whether a checkout looks stale, and how much of \
-                it is summarized. Check this first when `search` returns less than expected.",
-            "inputSchema": {"type": "object", "properties": {}},
+                it is summarized. Check this first when `search` returns less than expected. \
+                Reports every checkout on this machine, or with `path`, just the one containing \
+                it.",
+            "inputSchema": {"type": "object", "properties": {"path": path}},
             "annotations": {"readOnlyHint": true}
         }),
         json!({
@@ -299,7 +301,7 @@ fn call(params: &Value) -> Result<Value> {
         "similar" => similar(args)?,
         "dupes" => dupes(args)?,
         "symbols" => symbols(args)?,
-        "status" => status()?,
+        "status" => status(args)?,
         "index" => index(args)?,
         "pending" => pending(args)?,
         "store_summary" => store_summary(args)?,
@@ -478,9 +480,9 @@ fn symbols(args: &Value) -> Result<Value> {
     }))
 }
 
-fn status() -> Result<Value> {
+fn status(args: &Value) -> Result<Value> {
     let store = crate::store::open_default()?;
-    let checkouts = store.status()?;
+    let checkouts = crate::store::checkouts(&store, args["path"].as_str().map(Path::new))?;
     let sources = store.summary_sources()?;
     let mut rows = Vec::new();
     for checkout in &checkouts {

@@ -30,9 +30,16 @@ pub struct Cli {
     #[arg(long, value_name = "FILE")]
     symbols: Option<PathBuf>,
 
-    /// What the index holds, and whether it looks stale.
-    #[arg(long)]
-    status: bool,
+    /// What the index holds, and whether it looks stale. Every checkout, or
+    /// with a path, just the one containing it.
+    ///
+    /// Still a flag, not a verb (DEC-015): the path picks which checkout to
+    /// report on, and reporting never indexes one. The two nested options are
+    /// the three states clap has to tell apart — absent, bare, and given a
+    /// path — and the bare one stays machine-wide because "what has contour
+    /// indexed" is a question only this command answers.
+    #[arg(long, value_name = "PATH", num_args = 0..=1)]
+    status: Option<Option<PathBuf>>,
 
     /// Pretty JSON.
     #[arg(short = 'j', long, global = true)]
@@ -241,7 +248,7 @@ fn dispatch(cli: &Cli) -> Result<i32> {
         (false, false) => Format::Human,
     };
 
-    match (&cli.command, &cli.symbols, cli.status) {
+    match (&cli.command, &cli.symbols, &cli.status) {
         (Some(Command::Index { path }), _, _) => index(path.as_deref(), format),
         (
             Some(Command::Dupes {
@@ -314,8 +321,8 @@ fn dispatch(cli: &Cli) -> Result<i32> {
             Ok(HIT)
         }
         (None, Some(file), _) => symbols(file, format),
-        (None, None, true) => status(format),
-        (None, None, false) => {
+        (None, None, Some(scope)) => status(scope.as_deref(), format),
+        (None, None, None) => {
             Cli::command().print_help()?;
             Ok(MISS)
         }
@@ -934,10 +941,10 @@ fn symbols(file: &std::path::Path, format: Format) -> Result<i32> {
     Ok(if blob.units.is_empty() { MISS } else { HIT })
 }
 
-fn status(format: Format) -> Result<i32> {
+fn status(scope: Option<&std::path::Path>, format: Format) -> Result<i32> {
     let path = crate::store::default_path()?;
     let store = crate::store::open_default()?;
-    let checkouts = store.status()?;
+    let checkouts = crate::store::checkouts(&store, scope).map_err(known_checkouts)?;
     // Per `(model, via)`, not per model: DEC-005 lets indexes from different
     // models coexist and DEC-018 keeps contributions in their own keyspace.
     let sources = store.summary_sources()?;
@@ -983,8 +990,19 @@ fn status(format: Format) -> Result<i32> {
     match format {
         Format::Human => {
             println!("db  {}", crate::paths::pretty(&path.to_string_lossy()));
-            if checkouts.is_empty() {
-                println!("(nothing indexed)");
+            // Two different empty answers, named apart: the machine has nothing
+            // indexed at all, or it has plenty and none of it is this checkout.
+            // The second is not a failure — nothing here has been asked a
+            // question yet, and the first one will index it.
+            match (checkouts.is_empty(), scope) {
+                (false, _) => {}
+                (true, None) => println!("(nothing indexed)"),
+                (true, Some(path)) => eprintln!(
+                    "contour: {} is not indexed — the first query here will index it",
+                    crate::scan::repo_root(path)
+                        .map(|root| crate::paths::pretty(&root.to_string_lossy()))
+                        .unwrap_or_else(|_| path.display().to_string())
+                ),
             }
             for (checkout, row) in checkouts.iter().zip(&rows) {
                 println!(
