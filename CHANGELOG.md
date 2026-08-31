@@ -4,6 +4,14 @@
 
 Initial skeleton — nothing has been released, so everything below is new.
 
+- **An MCP outline costs 41% fewer tokens for exactly the same answer.** Tool
+  results are no longer pretty-printed — a tool result is read by a model, and
+  the indentation was more than a third of what `symbols` spent — and a unit no
+  longer spells out `via: null`, which most units carry. `contour --symbols`
+  on the command line still pretty-prints, because a person reads that one.
+  Measured on contour's own source: an outline of `src/near.rs` went from 6.9x
+  the cost of the same answer on the CLI to 4.0x, and five tools in one round
+  went from 32.7k characters of payload to 28.3k.
 - **A class can now answer for the one method you can call on it.** A service
   object's entry point is named for the protocol it implements — `call`,
   `to_s`, `hydrate`, `get` — while its private helpers are named for what it

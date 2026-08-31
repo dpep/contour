@@ -209,7 +209,11 @@ impl ConstRead {
 impl Serialize for Unit {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         use serde::ser::SerializeStruct;
-        let mut out = serializer.serialize_struct("Unit", 10)?;
+        // `via` is absent on most units, and every other record contour
+        // serializes skips its empty options rather than spelling out a null
+        // (see `search::Hit`). One rule, and it is the cheaper one to read.
+        let fields = 9 + usize::from(self.via.is_some());
+        let mut out = serializer.serialize_struct("Unit", fields)?;
         out.serialize_field("id", &self.id())?;
         out.serialize_field("lang", &self.lang)?;
         out.serialize_field("name", &self.name)?;
@@ -217,7 +221,9 @@ impl Serialize for Unit {
         out.serialize_field("singleton", &self.singleton)?;
         out.serialize_field("visibility", &self.visibility)?;
         out.serialize_field("params", &self.params)?;
-        out.serialize_field("via", &self.via)?;
+        if self.via.is_some() {
+            out.serialize_field("via", &self.via)?;
+        }
         out.serialize_field("line", &self.line)?;
         out.serialize_field("end_line", &self.end_line)?;
         out.end()

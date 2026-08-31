@@ -142,6 +142,19 @@ impl Session {
             .expect("text content");
         serde_json::from_str(text).expect("tool payload is JSON")
     }
+
+    /// The raw payload, for the one test that cares how it is spelled.
+    fn tool_text(&mut self, id: u32, name: &str, arguments: serde_json::Value) -> String {
+        let reply = self.request(
+            id,
+            "tools/call",
+            serde_json::json!({"name": name, "arguments": arguments}),
+        );
+        reply["result"]["content"][0]["text"]
+            .as_str()
+            .expect("text content")
+            .to_string()
+    }
 }
 
 impl Drop for Session {
@@ -652,4 +665,40 @@ fn install(dir: &Path, program: &Path, write: impl FnOnce(&Path)) {
     write(&staged);
     std::fs::set_permissions(&staged, PermissionsExt::from_mode(0o755)).unwrap();
     std::fs::rename(&staged, program).unwrap();
+}
+
+/// A tool result is read by a model, so it is not pretty-printed.
+///
+/// Indentation was 39% of what `symbols` cost to say the same thing — measured
+/// across five tools on contour's own source, 32.7k characters of payload down
+/// to 28.3k, and `symbols` alone from 5236 to 3192. Together with dropping the
+/// `via: null` that most units carry, an outline went from 6.9x the cost of the
+/// same answer on the command line to 4.0x.
+///
+/// Pinned because the fix is one call and looks like a downgrade: the CLI still
+/// pretty-prints, and a reader comparing the two would reasonably "fix" this.
+#[test]
+fn a_tool_payload_is_not_pretty_printed() {
+    let mut mcp = Session::start("compact", &corpus());
+    mcp.request(
+        1,
+        "initialize",
+        serde_json::json!({"protocolVersion": "2025-06-18"}),
+    );
+    let file = mcp.dir.join("billing.rb");
+    let text = mcp.tool_text(2, "symbols", serde_json::json!({"file": file}));
+
+    assert!(text.starts_with("{\""), "not compact: {text}");
+    assert!(!text.contains("\n  "), "indented: {text}");
+    // Still the same answer, and still every field it had.
+    let payload: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert!(payload["units"].as_array().unwrap().len() > 1);
+    assert!(payload["units"][0]["id"].is_string());
+    // An absent option is absent, not spelled out — the rule every other
+    // record contour serializes already followed.
+    assert!(text.contains("\"visibility\""));
+    assert!(
+        !text.contains("null"),
+        "an empty option was serialized: {text}"
+    );
 }

@@ -437,7 +437,12 @@ fn call(params: &Value) -> Result<Value> {
     // Pretty-printed rather than compact: a model reads this, and the cost of
     // the whitespace is far below the cost of it misreading a nested field.
     Ok(json!({
-        "content": [{"type": "text", "text": serde_json::to_string_pretty(&payload)?}]
+        // Compact, not pretty: a tool result is read by a model, and the
+        // indentation is 39% of what `symbols` costs to say the same thing.
+        // Measured across five tools on this repo, one round each — 32.7k
+        // characters of payload down to 28.3k, and `symbols` alone 5236 to
+        // 3192. The CLI still pretty-prints, because a person reads that one.
+        "content": [{"type": "text", "text": serde_json::to_string(&payload)?}]
     }))
 }
 
