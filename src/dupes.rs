@@ -192,7 +192,7 @@ fn member(root: &str, l: &Located, classes: &crate::paths::Classes) -> Member {
     Member {
         id: l.unit.id(),
         owner: l.unit.owner.clone(),
-        class: classes.of(&l.path),
+        class: classes.of_unit(&l.path, &l.unit),
         // Absolute from here on: a record leaving the process has to be
         // resolvable by a reader who is not standing in the checkout. Human
         // output shortens it back.

@@ -591,7 +591,7 @@ pub fn similar(
                 similarity: None,
                 lines: Some(other.unit.end_line + 1 - other.unit.line),
                 summary: summaries.text.get(&i).cloned(),
-                class: classes.of(&other.path),
+                class: classes.of_unit(&other.path, &other.unit),
             });
         }
     }
@@ -611,7 +611,15 @@ pub fn similar(
                 continue;
             }
             out.push(Neighbor {
-                class: classes.of(&near.path),
+                // The near tier reports a location rather than a unit, so
+                // the unit-aware class needs the index that located it.
+                // Falling back to the path is not a second rule: `index` is
+                // `None` only for a neighbour this checkout holds no unit for,
+                // which is also the only case with no unit to ask.
+                class: match index {
+                    Some(i) => classes.of_unit(&units[i].path, &units[i].unit),
+                    None => classes.of(&near.path),
+                },
                 path: crate::paths::absolute(root, &near.path),
                 id: near.id,
                 line: near.line,
@@ -645,7 +653,7 @@ pub fn similar(
         scored.sort_by(|a, b| b.1.total_cmp(&a.1).then(a.0.cmp(&b.0)));
         for (i, cosine) in scored.into_iter().take(limit) {
             out.push(Neighbor {
-                class: classes.of(&units[i].path),
+                class: classes.of_unit(&units[i].path, &units[i].unit),
                 path: crate::paths::absolute(root, &units[i].path),
                 id: units[i].unit.id(),
                 line: units[i].unit.line,

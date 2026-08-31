@@ -542,6 +542,16 @@ impl Classes {
     ///
     /// Ruby needs no such rule: its tests live in files of their own, which is
     /// why the path policy was enough for two milestones.
+    ///
+    /// **This is the one every surface that reports a `class` should call**, and
+    /// three were still calling [`Classes::of`] a milestone after it landed — so
+    /// `dupes` and `similar` tagged a Rust inline test as `app` while `search`
+    /// discounted the same unit as `test`. One rule, so a reader comparing two
+    /// reports is not comparing two policies.
+    ///
+    /// [`Classes::hides`] deliberately stays path-only, and that is not the same
+    /// inconsistency: this can only ever move a class *toward* `test`, which is
+    /// always reported, so asking it there could not change an answer.
     pub fn of_unit(&self, path: &str, unit: &crate::core::Unit) -> Class {
         let class = self.of(path);
         // Only ever *toward* test: an explicit rule saying this tree is app

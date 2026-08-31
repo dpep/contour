@@ -1339,6 +1339,44 @@ fn a_class_answers_for_its_one_public_method() {
     assert_eq!(hit["nominated"]["container"], "Archiver");
 }
 
+/// One rule for what kind of code a unit is, on every surface that says so.
+///
+/// A Rust `#[cfg(test)] mod tests` sits inside the file it tests, so the file
+/// is app code and the units in that module are not (DEC-022's standing
+/// example). `search` has discounted them per unit since M11c; `dupes` and
+/// `similar` were still asking the *path*, so the same unit came back tagged
+/// `app` from one command and `test` from another.
+#[test]
+fn every_surface_agrees_what_kind_of_code_a_unit_is() {
+    let body = "fn helper(n: u8) -> u8 {\n    n + 1\n}\n\n#[cfg(test)]\nmod tests {\n    \
+                fn helper(n: u8) -> u8 {\n        n + 1\n    }\n}\n";
+    let repo = Repo::new("of-unit", &[("src/lib.rs", body)]);
+    repo.run(&["index"]);
+
+    // The inline test's twin is a duplicate of the production function, and
+    // the group has to say that one copy is test code.
+    let groups = repo.json(&["dupes", "--json", "--min-lines", "1"]);
+    let members = &groups["groups"][0]["members"];
+    let classes: Vec<&str> = members
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|m| m["class"].as_str().unwrap())
+        .collect();
+    assert!(classes.contains(&"test"), "{groups}");
+    assert!(classes.contains(&"app"), "{groups}");
+
+    // `similar` reports the same unit and must reach the same verdict.
+    let neighbours = repo.json(&["similar", "helper", "--json"]);
+    let tagged: Vec<&str> = neighbours["neighbors"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|n| n["class"].as_str().unwrap())
+        .collect();
+    assert!(tagged.contains(&"test"), "{neighbours}");
+}
+
 /// Nothing in the corpus answers this, so nothing should come back.
 #[test]
 fn search_can_return_nothing() {

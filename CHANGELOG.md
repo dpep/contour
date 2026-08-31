@@ -4,6 +4,12 @@
 
 Initial skeleton — nothing has been released, so everything below is new.
 
+- **`dupes` and `similar` now agree with `search` about what is test code.** A
+  Rust `#[cfg(test)] mod tests` lives inside the file it tests, so the file is
+  app code and those units are not — `search` has known that since it started
+  discounting them, but the other two asked the path and tagged them `app`. On
+  rq, both duplicate groups move out of the app section, which is where they
+  were being offered as production duplication to consolidate.
 - **An MCP outline costs 41% fewer tokens for exactly the same answer.** Tool
   results are no longer pretty-printed — a tool result is read by a model, and
   the indentation was more than a third of what `symbols` spent — and a unit no
