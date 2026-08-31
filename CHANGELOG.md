@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.1.0 — 2026-08-31
 
 First release. contour indexes what code *means*: every callable in a checkout
 is compressed through a chain of layers — parse, normalize, structural hash,
