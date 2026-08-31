@@ -769,3 +769,69 @@ Not built, and not because it is wrong: it is an on-disk restructure (an
 `ATTACH`, every derived query qualified, a one-time split of existing
 databases), which is a structural change on top of a behavioural one. Left for
 the owner to rule on.
+
+## DEC-026 — A Rust unit's owner includes the module its file declares
+
+**Approved by the owner as a uniquely-cheap-moment argument**, the same shape as
+DEC-017's: the fix costs re-keying Rust summaries, Rust coverage was 42
+summaries, and that number only grows.
+
+DEC-021 named this as path classes' sibling and it had stood since Phase 1.5. A
+top-level Rust `fn` has no lexical owner, so rq's five language plugins each
+contributed an identically-named `tests::find`, and nothing downstream could
+tell them apart. By M12a it was costing three surfaces:
+
+| surface | what it cost |
+| ------- | ------------ |
+| `similar` | refused the name as ambiguous, listing locations instead of answering |
+| `search` | ranked five copies of one answer, and scored one lexical match five times |
+| `store_summary` | refused `contributed::accept` — the name a reader of the source would write — because contour knew that unit as bare `accept`. A wrong name here costs a session's tokens, not a query. |
+
+**As built.** `paths::rust_module` derives the module from the path string, and
+`paths::qualify` composes it onto the unit's owner at the two file-layer
+boundaries: reading a unit out of the store, and outlining a file live. Layer 1
+is untouched — the `unit` table still holds the bare lexical owner, so the same
+blob still yields the same rows wherever it sits, and **no reindex is needed**.
+That is DEC-021's rule applied rather than bent: the module prefix was never
+missing from the extractor by oversight, it was in the path all along.
+
+Three properties worth stating, because each was a decision:
+
+- **One rule, no special case.** Every Rust unit gets the prefix, not only the
+  ownerless ones. "Prefix unless it already has an owner" is a rule a reader
+  cannot predict from, and it leaves two `Registry::new` in different modules
+  colliding. `summary::anthropic::Anthropic::from_env` is long; it is also what
+  Rust itself would call that function, minus the crate name.
+- **A module path is made of module names.** Only the trailing run of
+  directories that could *be* a module name is used, so a fixture tree at
+  `tests/testbed/006-rust-names/app.rs` yields `app` and not
+  `testbed::006-rust-names::app`. Without that the answer depended on how far up
+  the caller was standing when they named the file — `--symbols` from a repo
+  root and `--symbols` from inside it would disagree, and the id a session looks
+  up is the id it must contribute under.
+- **`mod.rs`, `lib.rs` and `main.rs` name no module of their own**, so
+  `src/store/mod.rs` is `store` and a free function in `src/lib.rs` keeps its
+  bare name.
+
+### What it cost, measured
+
+**42 contributed Rust summaries became unreachable** — contour's own 24 and rq's
+18 — because `ctx_hash` covers the context the prompt renders and the owner is
+part of it (DEC-003). Nothing was deleted: the rows are still in the purchased
+half, keyed under the owner they were bought with, and `pending` now re-offers
+those units so the flywheel refills them as a by-product of the next session's
+reading. Ruby was unaffected, having never had this gap.
+
+A rekey migration is possible and was **not** written. It would have to
+recompute both the old and new `ctx_hash` for every unit in every checkout this
+machine happens to have indexed, which makes the contents of the purchased half
+depend on which repositories are checked out — a machine-dependent result in the
+one table DEC-016 says must never be guessed at. Re-grazing is minutes of work
+and cannot be wrong.
+
+**The eval numbers** (seven Rust sets, scratch database, same binary on both
+sides): top1 unchanged at 2/21, top5 7/21 → 8/21, every duplicate-tier number
+identical, no set worse. Fifty-seven labels were relabelled by measuring each id
+against its checkout; two rows turned out to have been **ambiguous all along**,
+which is written up in `tests/eval/README.md` because it is a finding about the
+eval and not only about this change.

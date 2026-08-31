@@ -1070,7 +1070,7 @@ fn symbols(file: &std::path::Path, format: Format) -> Result<i32> {
     let src = std::fs::read(file)
         .map_err(|err| anyhow::anyhow!("cannot read {}: {err}", file.display()))?;
     let path = file.to_string_lossy();
-    let Some(blob) = crate::index::units_at(&path, &src) else {
+    let Some(blob) = crate::index::outline(&path, &src) else {
         anyhow::bail!("no extractor for {}", file.display());
     };
     if blob.parse_errors > 0 {

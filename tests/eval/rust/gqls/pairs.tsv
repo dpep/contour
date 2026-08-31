@@ -9,4 +9,4 @@
 # for local names (chars/first vs chars/f). The gold case for anything
 # rename-blind — `distinct` records the tier's contract, and flips if
 # normalization ever reaches Prism-grade parity (DEC-012).
-pascal_case	to_pascal	distinct
+example::pascal_case	resolve::to_pascal	distinct

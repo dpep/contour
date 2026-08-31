@@ -14,4 +14,4 @@
 #
 # `Delta::total` subtracts where the others add: a real difference, and the
 # control that proves the collisions above are not everything colliding.
-dupes  Alpha::total+Beta::accumulate
+dupes  app::Alpha::total+app::Beta::accumulate

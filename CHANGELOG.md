@@ -4,6 +4,20 @@
 
 Initial skeleton — nothing has been released, so everything below is new.
 
+- **A Rust unit is named by its module now**: `summary::contributed::accept`
+  rather than a bare `accept`, and `lang::go::tests::find` rather than a
+  `tests::find` that five of rq's language plugins all answered to. The gap had
+  stood since Phase 1.5 — a top-level `fn` has no lexical owner, and the module
+  that disambiguates it is in the file path, which the extractor is forbidden to
+  see. It is composed at the file layer instead, so **no reindex is needed**.
+  - **What you must do:** any Rust summary you contributed before this is keyed
+    under the old name and no longer answers. Nothing was deleted, and
+    `pending` re-offers those units, so grazing refills them. 42 were affected
+    across the author's machine; Ruby is untouched.
+  - Rust identifiers are re-embedded on the next query, since what gets embedded
+    is the id — a few seconds on a normal repo.
+  - Measured across the seven Rust eval sets: search top1 unchanged, top5
+    **7/21 → 8/21**, every duplicate-tier number identical, no set worse.
 - **`contour --version` says which embedder it was built with**, and so does
   `contour --status`. A default build and a `--features semantic` build are
   indistinguishable on disk and answer English completely differently — the

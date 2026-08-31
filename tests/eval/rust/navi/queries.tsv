@@ -6,7 +6,7 @@
 # reading the bodies.
 
 # --- easy on purpose ---------------------------------------------------------
-show the history of recent file operations	history
+show the history of recent file operations	journal::history
 
 # --- no token shared with the answer's identifier ----------------------------
-put a deleted file somewhere it can be recovered from	send
+put a deleted file somewhere it can be recovered from	trashbin::send

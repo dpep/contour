@@ -31,6 +31,21 @@ pub fn units_at(path: &str, src: &[u8]) -> Option<Blob> {
     })
 }
 
+/// [`units_at`], with each unit given the owner its file implies.
+///
+/// What a *surface* wants, where `units_at` is what the *index* wants: the
+/// store holds bare owners and qualifies them on read (DEC-021), so anything
+/// that parses a file live has to qualify them too or `--symbols` would print
+/// ids that `search` and `store_summary` do not answer to — which is the one
+/// place a reader looks them up.
+pub fn outline(path: &str, src: &[u8]) -> Option<Blob> {
+    let mut blob = units_at(path, src)?;
+    for unit in &mut blob.units {
+        crate::paths::qualify(path, unit);
+    }
+    Some(blob)
+}
+
 /// The store, ready to answer about the checkout containing `path`.
 pub struct Opened {
     pub store: Store,

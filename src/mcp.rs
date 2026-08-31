@@ -597,7 +597,7 @@ fn symbols(args: &Value) -> Result<Value> {
     );
     anyhow::ensure!(path.exists(), "{file} does not exist");
     let src = std::fs::read(path)?;
-    let blob = crate::index::units_at(file, &src)
+    let blob = crate::index::outline(file, &src)
         .ok_or_else(|| anyhow::anyhow!("no extractor for {file}"))?;
     Ok(json!({
         "file": path.canonicalize().unwrap_or_else(|_| path.to_path_buf()),

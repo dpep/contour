@@ -6,14 +6,14 @@
 # reading the bodies.
 
 # --- easy on purpose ---------------------------------------------------------
-list the metavariables a pattern declares	scan
+list the metavariables a pattern declares	pattern::metavar::scan
 
 # --- no token shared with the answer's identifier ----------------------------
-decide whether a source node has the pattern's shape	match_node
+decide whether a source node has the pattern's shape	pattern::matcher::match_node
 # TEST-TRAP: suppress.rs tests are named a_trailing_directive_covers_its_own_line
 # / a_leading_directive_covers_the_next_code_line; the production predicate is
 # what they exercise.
-does a suppression comment apply to this finding	Directive::covers
+does a suppression comment apply to this finding	suppress::Directive::covers
 # TEST-TRAP: erb.rs's test is named a_tag_body_maps_back_to_the_template; the
 # production mapper is what it exercises.
-map a span of generated ruby back to its erb template	Translated::to_template
+map a span of generated ruby back to its erb template	erb::Translated::to_template

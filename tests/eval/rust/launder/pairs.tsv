@@ -8,7 +8,7 @@
 # never a consolidation (DEC-020). They collide below --min-lines 4 (3 lines),
 # so the default floor is exactly what stands between this pair and a false
 # positive — the Rust datum for where the floor belongs.
-Registry::new	Report::new	distinct
+registry::Registry::new	report::Report::new	distinct
 # Same detector scaffold; the regex static and the Kind/PType tokens differ,
 # which is the entire behaviour.
-email	mac	distinct
+detect::net::email	detect::net::mac	distinct

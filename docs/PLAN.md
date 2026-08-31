@@ -343,13 +343,10 @@ also retire the "two contours take turns wiping each other's index" hazard
 `Store::init` guards against. It is an on-disk restructure, so it is the owner's
 call rather than an implementer's.
 
-**2. The Rust free-function owner gap now costs contributions, not just search.**
-DEC-021 records it as path-class work's sibling and it has stood since Phase 1.5.
-The new evidence: writing a summary for `contributed::accept` — the name a reader
-of the source would use — is refused, because contour knows that unit as bare
-`accept`. `pending` returns the right id and the skill says to use it, so the
-grazing path works; but the natural name is wrong, on a surface where being
-wrong costs a session's tokens. Same fix, one more reason.
+**2. ~~The Rust free-function owner gap.~~ RULED AND BUILT** — see DEC-026. The
+owner took it as a uniquely-cheap-moment argument: it cost three surfaces, and
+the price was re-keying 42 Rust summaries, a number that only grows. Composed at
+the file layer per DEC-021, so layer 1 stays byte-pure and no reindex is needed.
 
 ## The recurring shape: identical bodies that mean different things
 

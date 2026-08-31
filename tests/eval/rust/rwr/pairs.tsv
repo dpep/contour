@@ -6,20 +6,20 @@
 
 # The corpus harness was copied wholesale between corpus.rs and
 # corpus_apply.rs; all three helpers are byte-identical.
-entries	entries	duplicate
-ruby_files	ruby_files	duplicate
+corpus::entries	corpus_apply::entries	duplicate
+corpus::ruby_files	corpus_apply::ruby_files	duplicate
 # 3 lines, so the default --min-lines 4 hides the collision: this label
 # measures the floor's cost on Rust, not the tier's.
-corpus_dir	corpus_dir	duplicate
+corpus::corpus_dir	corpus_apply::corpus_dir	duplicate
 # Byte-identical binary-under-test helper in two test files.
-rwr	rwr	duplicate
+cli_e2e::rwr	rules::rwr	duplicate
 
 # Same shape, one call differs (placeholder vs splat_placeholder): one token,
 # so the tier must keep them apart.
-placeholder_name	splat_placeholder_name	distinct
+pattern::matcher::placeholder_name	pattern::matcher::splat_placeholder_name	distinct
 # A REAL duplicate the tier misses correct-by-design: byte-identical but for a
 # renamed parameter (offset -> at) and closure var (n -> i). `distinct` here
 # records the tier's contract, not a product judgment — a normalizer that
 # renamed locals (Prism-grade parity, DEC-012) would catch it, and this label
 # would then need to flip.
-line_start	line_start	distinct
+rewrite::sequence::line_start	suppress::line_start	distinct

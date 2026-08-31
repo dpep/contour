@@ -14,14 +14,14 @@
 
 # --- easy on purpose ---------------------------------------------------------
 # Shares "receiver" with the answer's name; the contrast row for the traps.
-infer the receiver of a ruby call	receiver_of
+infer the receiver of a ruby call	resolve::receiver_of
 
 # --- no token shared with the answer's identifier ----------------------------
 # TEST-TRAP: resolve/mod.rs's own tests are named
 # a_bare_call_in_a_class_body_dispatches_on_the_class,
 # new_on_a_constant_receiver_resolves_to_class, ... — this wording is theirs,
 # the answer is the production resolver they exercise.
-where does a bare call inside a class body dispatch	method_at
+where does a bare call inside a class body dispatch	resolve::method_at
 # TEST-TRAP: refs.rs's test is named reads_both_of_rubys_method_notations;
 # the production parser is what it exercises.
-read both ruby method notations for naming a method	Query::parse
+read both ruby method notations for naming a method	resolve::refs::Query::parse

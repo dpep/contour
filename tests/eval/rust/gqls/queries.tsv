@@ -6,14 +6,14 @@
 # reading the bodies.
 
 # --- easy on purpose ---------------------------------------------------------
-build an example operation for a schema field	build
+build an example operation for a schema field	example::build
 
 # --- no token shared with the answer's identifier ----------------------------
 # The cross-language twin: rails spells this idea Inflector#camelize. See the
 # README ("Cross-language queries") for the proposed extension this motivates.
-make a class-style name from a camelCase field name	to_pascal
+make a class-style name from a camelCase field name	resolve::to_pascal
 
 # --- behaviour that appears in NO identifier ---------------------------------
 # The name says the algorithm (OSA), not the behaviour; only the body says
 # "typo tolerance".
-tolerate a small typo when comparing two names	osa_within
+tolerate a small typo when comparing two names	search::score::osa_within

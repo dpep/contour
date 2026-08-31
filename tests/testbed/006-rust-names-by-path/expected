@@ -7,7 +7,9 @@
 #   - a trait impl is named by the TYPE (`Widget::fmt`), because that is where
 #     a reader looks for the body, not by the trait
 #   - a bodyless trait signature is still a unit; it just has no hash
-#   - a free function at file scope has no owner. Rust derives module paths
-#     from FILE paths, which layer 1 cannot see (DEC-003 forbids it a path),
-#     so `main` is bare rather than `app::main`. Known limit, not an accident.
-symbols app.rs  outer::inner::Widget::new,outer::inner::Widget::run,outer::inner::Widget::fmt,Loud::shout,Loud::whisper,main
+#   - the module a FILE declares is part of every unit's owner, which is why
+#     `main` here is `app::main`. Rust derives module paths from file paths,
+#     and layer 1 is forbidden one (DEC-003) — so the file layer composes it on
+#     the way out instead (DEC-021). This line read `main` until M12b, and the
+#     bare name is what made rq's five `tests::find` indistinguishable.
+symbols app.rs  app::outer::inner::Widget::new,app::outer::inner::Widget::run,app::outer::inner::Widget::fmt,app::Loud::shout,app::Loud::whisper,app::main

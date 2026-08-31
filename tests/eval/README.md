@@ -264,11 +264,24 @@ Two conventions specific to these sets:
   (rwr's `line_start`, gqls's `pascal_case`/`to_pascal`) is labeled
   `distinct` because the tier not catching it is correct-by-design — those
   labels flip if normalization ever reaches Prism-grade parity.
-- **A pair may name the same id twice.** Rust free functions have no owner
-  (DEC-012), so a helper copied between two files is two units with one
-  name, and `git<TAB>git<TAB>duplicate` asserts "the two same-named units
-  collide". Sound while exactly two units carry the name; a third would
-  make the label ambiguous, which is the known cost of DEC-012's owner rule.
+- **~~A pair may name the same id twice.~~ Retired at M12b**, and the way it
+  went is worth keeping. Rust free functions had no owner, so a helper copied
+  between two files was two units with one name and
+  `git<TAB>git<TAB>duplicate` asserted "the two same-named units collide" —
+  sound while exactly two units carried the name, ambiguous the moment a third
+  did. Both of those rows *were* ambiguous: trekr held four `git` and rwr three
+  `rwr`, and only two of each are byte-identical. Every Rust unit now carries
+  the module its file declares, so each row names its two units outright
+  (`cli_e2e::git` and `testbed::git`), and the pair a row asserts is a fact
+  about the labels rather than about what the harness happened to resolve
+  first. Resolved by **reading the bodies**, not by consulting `dupes` — the
+  rule at the top of this file applies to a relabel as much as to a label.
+
+  It found a second, quieter one: rwr's search query "list the metavariables a
+  pattern declares" was labeled `scan`, and rwr has two — `Engine::scan` and
+  `pattern::metavar::scan`. Whichever the harness reached first was the answer
+  it scored against. A one-checkout eval cannot see an ambiguous label; a
+  qualified id cannot be one.
 
 Two limits, noted rather than worked around: the harness runs one checkout,
 so the cross-repo copy (ae's `HashEmbedder::embed` is a paste of gqls's,
@@ -304,6 +317,17 @@ convention of its own:
   below the fold. Fixing that requires unit-level test classification — and
   the `tests::` owner prefix already visible in those units' ids is the
   signal to build it from.
+
+  **Built at M11c** from exactly that signal, and the prefix it reads got
+  longer at M12b: a unit in `src/lang/go/mod.rs`'s test module is now
+  `lang::go::tests::find` rather than `tests::find`, and
+  `Classes::of_unit` looks at every `::` segment, so it still classifies.
+
+**Measured across the seven sets when the module prefix landed** (scratch
+database, hash embedder, same binary on both sides): top1 unchanged at 2/21,
+top5 **7/21 → 8/21**, and every duplicate-tier number identical. No set is
+worse. The gain is rwr's, where a qualified id stopped a query matching three
+same-named helpers at once.
 
 ### Cross-language queries: a proposed extension
 

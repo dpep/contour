@@ -6,15 +6,15 @@
 # reading the bodies.
 
 # --- easy on purpose ---------------------------------------------------------
-merge hits from two indexes under one limit	merge
+merge hits from two indexes under one limit	search::merge
 
 # --- no token shared with the answer's identifier ----------------------------
 # TEST-TRAP: search/mod.rs's own test is named
 # identical_names_rank_in_a_stable_order; the ranked search it exercises is
 # the production answer.
-rank the definition the user meant above other symbols	search
+rank the definition the user meant above other symbols	search::search
 
 # --- behaviour that appears in NO identifier ---------------------------------
 # Damerau's insight in the body: an adjacent-character swap counts as ONE
 # edit, because that is what a typo is.
-count a swap of two adjacent letters as a single edit	near_miss_distance
+count a swap of two adjacent letters as a single edit	search::score::near_miss_distance

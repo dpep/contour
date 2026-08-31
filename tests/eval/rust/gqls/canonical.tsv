@@ -14,4 +14,4 @@
 
 # resolve.rs's to_pascal (c10d954, 2026-07-27) predates example.rs's renamed
 # copy pascal_case (a9707dc, 2026-07-30); bodies identical modulo local names.
-to_pascal	pascal_case	older
+resolve::to_pascal	example::pascal_case	older

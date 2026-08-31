@@ -381,24 +381,28 @@ impl Store {
               ORDER BY f.path, u.line",
         )?;
         let rows = stmt.query_map(params![root], |r| {
-            Ok(Located {
-                path: r.get(0)?,
-                unit: Unit {
-                    // An unknown language means the row was written by a
-                    // newer contour; treat it as Ruby rather than dropping a
-                    // unit, since every field but rendering is neutral.
-                    lang: Lang::parse(&r.get::<_, String>(1)?).unwrap_or(Lang::Ruby),
-                    name: r.get(2)?,
-                    owner: r.get(3)?,
-                    singleton: r.get::<_, i64>(4)? != 0,
-                    params: decode_params(&r.get::<_, String>(5)?),
-                    via: r.get(6)?,
-                    line: r.get(7)?,
-                    end_line: r.get(8)?,
-                    norm_hash: r.get::<_, Option<i64>>(9)?.map(|h| h as u64),
-                    nodes: r.get::<_, Option<i64>>(10)?.map(|n| n as u32),
-                },
-            })
+            let path: String = r.get(0)?;
+            let mut unit = Unit {
+                // An unknown language means the row was written by a
+                // newer contour; treat it as Ruby rather than dropping a
+                // unit, since every field but rendering is neutral.
+                lang: Lang::parse(&r.get::<_, String>(1)?).unwrap_or(Lang::Ruby),
+                name: r.get(2)?,
+                owner: r.get(3)?,
+                singleton: r.get::<_, i64>(4)? != 0,
+                params: decode_params(&r.get::<_, String>(5)?),
+                via: r.get(6)?,
+                line: r.get(7)?,
+                end_line: r.get(8)?,
+                norm_hash: r.get::<_, Option<i64>>(9)?.map(|h| h as u64),
+                nodes: r.get::<_, Option<i64>>(10)?.map(|n| n as u32),
+            };
+            // The file layer, doing the one job DEC-021 reserves for it: the
+            // row holds the bare lexical owner, and the path says which module
+            // it is in. Written back is not an option — that would make layer 1
+            // depend on where a blob happens to sit.
+            crate::paths::qualify(&path, &mut unit);
+            Ok(Located { path, unit })
         })?;
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
     }

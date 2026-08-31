@@ -6,11 +6,11 @@
 # reading the bodies.
 
 # --- easy on purpose ---------------------------------------------------------
-find email addresses in a log line	email
+find email addresses in a log line	detect::net::email
 
 # --- no token shared with the answer's identifier ----------------------------
-give the same person the same masked name every time	Registry::placeholder
+give the same person the same masked name every time	registry::Registry::placeholder
 
 # --- behaviour that appears in NO identifier ---------------------------------
 # The keep_private branch lives in the body; the name is two letters.
-mask public network addresses but leave private ones readable	ip
+mask public network addresses but leave private ones readable	detect::net::ip

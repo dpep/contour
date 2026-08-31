@@ -151,6 +151,214 @@ pub const CLASSES: [Class; 6] = [
     Class::Vendored,
 ];
 
+/// The Rust module a file declares, from its path alone.
+///
+/// **The gap this closes has stood since Phase 1.5** (DEC-021's sibling): a
+/// top-level `fn` has no lexical owner, so rq's five language plugins each
+/// contributed an identically-named `tests::find` and nothing could tell them
+/// apart — not `similar`, which refused as ambiguous; not `search`, which ranked
+/// five copies of one answer; and not `store_summary`, where guessing the wrong
+/// one costs a session's tokens. The module prefix that disambiguates them is
+/// **in the path**, which is exactly why the extractor could never reach it and
+/// why this lives here.
+///
+/// A pure function of the path string, like [`Class`] and for the same reason:
+/// no reindex, and the same answer from `--symbols` on a file contour has never
+/// seen as from the index.
+///
+/// The crate root and a `mod.rs` name no module of their own, so
+/// `src/lib.rs` has none and `src/store/mod.rs` is `store`. Everything after the
+/// last `src`, `tests`, `benches` or `examples` segment is the path; a file with
+/// none of those keeps its stem, which is the honest answer for a layout this
+/// rule does not recognise.
+pub fn rust_module(path: &str) -> Option<String> {
+    let segments: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
+    let after = match segments
+        .iter()
+        .rposition(|s| matches!(*s, "src" | "tests" | "benches" | "examples"))
+    {
+        Some(root) => &segments[root + 1..],
+        // No recognised root: the file names itself and nothing more. Taking
+        // the whole path would put a person's home directory in a unit's id.
+        None => &segments[segments.len().checked_sub(1)?..],
+    };
+    let (last, parents) = after.split_last()?;
+    let last = last.strip_suffix(".rs").unwrap_or(last);
+    // Only the trailing run of directories that could *be* module names. A
+    // module path is made of module names, and `tests/testbed/006-rust-names/`
+    // is a directory of fixtures — taking it would put `006-rust-names` in a
+    // unit's id, and make the answer depend on how far up the caller happened
+    // to be standing when they named the file.
+    let named = parents.len()
+        - parents
+            .iter()
+            .rev()
+            .take_while(|s| is_module_name(s))
+            .count();
+    let mut module: Vec<&str> = parents[named..].to_vec();
+    if !matches!(last, "mod" | "lib" | "main") && is_module_name(last) {
+        module.push(last);
+    } else if !matches!(last, "mod" | "lib" | "main") {
+        // A file whose own stem is not a module name names nothing; whatever
+        // its directories say is about somewhere else.
+        return None;
+    }
+    match module.is_empty() {
+        true => None,
+        false => Some(module.join("::")),
+    }
+}
+
+/// Could this path segment be a Rust module name?
+fn is_module_name(segment: &str) -> bool {
+    let mut chars = segment.chars();
+    chars.next().is_some_and(|c| c.is_alphabetic() || c == '_')
+        && chars.all(|c| c.is_alphanumeric() || c == '_')
+}
+
+/// Give a unit the owner its file implies.
+///
+/// Called at the two file-layer boundaries — reading a unit out of the store,
+/// and outlining a file live — and nowhere else. Layer 1 stays a pure function
+/// of bytes (DEC-021): the `unit` table holds the bare lexical owner, so the
+/// same blob still yields the same rows wherever it sits, and this composes the
+/// rest on the way out.
+///
+/// Ruby is untouched. Its files do not declare namespaces; its `class` and
+/// `module` keywords do, and the extractor already reads them.
+pub fn qualify(path: &str, unit: &mut crate::core::Unit) {
+    if unit.lang != crate::core::Lang::Rust {
+        return;
+    }
+    let Some(module) = rust_module(path) else {
+        return;
+    };
+    unit.owner = match unit.owner.is_empty() {
+        true => module,
+        false => format!("{module}::{}", unit.owner),
+    };
+}
+
+#[cfg(test)]
+mod module_tests {
+    use super::*;
+
+    /// The rule, at every shape a real checkout produces. An absolute path and
+    /// a repo-relative one must agree, because `--symbols` takes whichever the
+    /// caller typed and its answer has to be the id `search` knows.
+    #[test]
+    fn a_file_names_the_module_it_declares() {
+        for (path, expected) in [
+            ("src/hash.rs", Some("hash")),
+            ("/Users/x/code/contour/src/hash.rs", Some("hash")),
+            ("src/summary/contributed.rs", Some("summary::contributed")),
+            // A crate root and a `mod.rs` name no module of their own.
+            ("src/lib.rs", None),
+            ("src/main.rs", None),
+            ("src/store/mod.rs", Some("store")),
+            ("src/lang/go/mod.rs", Some("lang::go")),
+            // An integration test is its own crate root, so `tests/` is the
+            // root and not a module named `tests`.
+            ("tests/cli_e2e.rs", Some("cli_e2e")),
+            ("benches/speed.rs", Some("speed")),
+            // A layout with no recognised root keeps the stem. Taking the whole
+            // path would put somebody's home directory in a unit's id.
+            ("odd/place/thing.rs", Some("thing")),
+            ("thing.rs", Some("thing")),
+            // A directory that could not be a module name is not one. Without
+            // this the answer would depend on how far up the caller stood when
+            // they named the file, and fixture directories would land in ids.
+            ("tests/testbed/006-rust-names/app.rs", Some("app")),
+            ("src/some-crate/lang/go/mod.rs", Some("lang::go")),
+        ] {
+            assert_eq!(rust_module(path).as_deref(), expected, "{path}");
+        }
+    }
+
+    /// Ruby files declare no namespace — `class` and `module` do, and the
+    /// extractor already reads them. Qualifying one would invent an owner.
+    #[test]
+    fn only_rust_takes_its_owner_from_its_path() {
+        let unit = |lang, owner: &str| crate::core::Unit {
+            lang,
+            name: "run".into(),
+            owner: owner.into(),
+            singleton: false,
+            params: Vec::new(),
+            via: None,
+            line: 1,
+            end_line: 2,
+            norm_hash: None,
+            nodes: None,
+        };
+        let qualified = |lang, owner: &str, path: &str| {
+            let mut u = unit(lang, owner);
+            qualify(path, &mut u);
+            u.id()
+        };
+        use crate::core::Lang::{Ruby, Rust};
+        assert_eq!(qualified(Rust, "", "src/near.rs"), "near::run");
+        assert_eq!(
+            qualified(Rust, "Widget", "src/near.rs"),
+            "near::Widget::run"
+        );
+        // The crate root adds nothing, so a top-level fn keeps its bare name.
+        assert_eq!(qualified(Rust, "", "src/lib.rs"), "run");
+        assert_eq!(
+            qualified(Ruby, "Widget", "app/models/widget.rb"),
+            "Widget#run"
+        );
+    }
+
+    /// The gap this exists to close: five language plugins, one `tests::find`
+    /// each, and nothing able to tell them apart.
+    #[test]
+    fn identically_named_units_in_different_modules_get_different_ids() {
+        let mut ids: Vec<String> = ["src/lang/go/mod.rs", "src/lang/rust/mod.rs"]
+            .iter()
+            .map(|path| {
+                let mut unit = crate::core::Unit {
+                    lang: crate::core::Lang::Rust,
+                    name: "find".into(),
+                    owner: "tests".into(),
+                    singleton: false,
+                    params: Vec::new(),
+                    via: None,
+                    line: 1,
+                    end_line: 2,
+                    norm_hash: None,
+                    nodes: None,
+                };
+                qualify(path, &mut unit);
+                unit.id()
+            })
+            .collect();
+        ids.sort();
+        assert_eq!(ids, ["lang::go::tests::find", "lang::rust::tests::find"]);
+    }
+
+    /// A qualified owner must still classify: 11c ranks a Rust `mod tests`
+    /// apart from the code it tests, and it reads the owner to do it.
+    #[test]
+    fn a_qualified_test_module_is_still_test_code() {
+        let mut unit = crate::core::Unit {
+            lang: crate::core::Lang::Rust,
+            name: "it_works".into(),
+            owner: "tests".into(),
+            singleton: false,
+            params: Vec::new(),
+            via: None,
+            line: 1,
+            end_line: 2,
+            norm_hash: None,
+            nodes: None,
+        };
+        qualify("src/summary/contributed.rs", &mut unit);
+        assert_eq!(unit.owner, "summary::contributed::tests");
+        assert!(in_test_module(&unit));
+    }
+}
+
 /// Whether a Rust unit sits in a test module, by the name of any enclosing
 /// module.
 ///

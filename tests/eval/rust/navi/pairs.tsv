@@ -7,4 +7,4 @@
 # Adjacent builder setters, identical but for which field they set: one
 # identifier apart, and consolidating builder boilerplate is never a
 # reduction (DEC-020).
-Outcome::backend	Outcome::fallback	distinct
+output::Outcome::backend	output::Outcome::fallback	distinct

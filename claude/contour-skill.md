@@ -254,6 +254,11 @@ Queries after that are served from the cache: ~0.2 s on a normal repo, **~5 s
 on rails**, where loading and scoring 54k vectors is most of the cost. "Instant"
 is true of a small repo and an overstatement of a large one.
 
+**Rust ids carry the module the file declares** — `summary::contributed::accept`,
+not `accept`, and `lang::go::tests::find` rather than a `tests::find` that five
+language plugins all answer to. Use the id `pending`, `--symbols` or a search hit
+gives you, verbatim: it is the one `store_summary` and `similar` answer to.
+
 Ruby gets full AST-grade normalization. Rust gets a token-stream tier that
 catches copy-paste and reformatting but not renames, and says so
 (`how: token_hash`). The near-duplicate tier is Ruby-only and reports how many

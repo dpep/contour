@@ -22,10 +22,10 @@
 
 # Per-plugin extract calls its own module's grammar and walker: one differing
 # token (tree_sitter_go vs tree_sitter_rust) that is the entire behaviour.
-Rust::extract	Go::extract	distinct
+lang::rust::Rust::extract	lang::go::Go::extract	distinct
 # Byte-identical `LANGUAGE` bodies that each resolve to their OWN module's
 # constant — Rust's version of rails' constant-scope pair, and DEC-020 calls
 # it distinct: the trait method IS the per-plugin datum. The tier currently
 # groups them below --min-lines 4 (3 lines), so the default floor is what
 # hides the false positive.
-Go::language	Python::language	distinct	provisional
+lang::go::Go::language	lang::python::Python::language	distinct	provisional

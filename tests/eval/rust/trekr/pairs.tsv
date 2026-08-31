@@ -12,12 +12,12 @@
 # carries.
 
 # Byte-identical test helper in two integration-test files.
-git	git	duplicate
+cli_e2e::git	testbed::git	duplicate
 # The one src-tree duplicate in these seven repos: the same namespace check in
 # resolve/mod.rs and resolve/refs.rs.
-shares_namespace	shares_namespace	duplicate
+resolve::shares_namespace	resolve::refs::shares_namespace	duplicate
 
 # Three constructors, identical but for which bool field is true. One literal
 # is one token, so they must not collide — the tier's sharpest negative.
-Generated::reader	Generated::writer	distinct
-Generated::writer	Generated::class_method	distinct
+extract::macros::Generated::reader	extract::macros::Generated::writer	distinct
+extract::macros::Generated::writer	extract::macros::Generated::class_method	distinct

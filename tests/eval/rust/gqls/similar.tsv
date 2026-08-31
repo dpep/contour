@@ -7,4 +7,4 @@
 # identifier tier is the only one that can surface it today, and does — at
 # cos 0.58, a thin margin over unrelated case helpers. Real normalization
 # would upgrade the tier to structural.
-pascal_case	must	to_pascal	semantic
+example::pascal_case	must	resolve::to_pascal	semantic
