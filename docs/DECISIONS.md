@@ -1051,11 +1051,25 @@ speaks. `FeedManager` has twenty and stays silent.
 
 ### What was measured, including what was dropped
 
-| | 7 Rust | fixture | mastodon | total t1/t5 |
-| --- | --- | --- | --- | --- |
-| before nomination | 6/8 | 10/21 | 3/4 | 19/33 |
-| flat `IDENTIFIER_WEIGHT` | 3/6 | 10/21 | 3/6 | 16/34 |
-| **shipped (`cosine * IDENTIFIER_WEIGHT`)** | 6/9 | 10/21 | **4/6** | **19/36** |
+| | 7 Rust | fixture | mastodon | discourse | rails | total t1/t5 |
+| --- | --- | --- | --- | --- | --- | --- |
+| before nomination | 6/8 | 10/21 | 3/4 | 0/3 | 11/21 | 30/57 |
+| flat `IDENTIFIER_WEIGHT` | 3/6 | 10/21 | 3/6 | — | — | — |
+| **shipped (`cosine * IDENTIFIER_WEIGHT`)** | 6/9 | 10/21 | **4/6** | 0/2 | 11/21 | **30/59** |
+
+**Read the whole table, not the first three columns.** On the nine sets that
+run in minutes this looked like top-5 33 → 36 with top-1 level; across all
+eleven, 195 queries, it is **top-5 57 → 59 and top-1 unchanged at 30**. rails —
+the largest set — does not move at all, and discourse loses one. The gain is
+mastodon's two plus gqls's one, against discourse's one.
+
+So this is a **targeted fix that pays on the population it was built for and is
+about neutral elsewhere**, not a general ranking improvement, and the honest
+argument for keeping it is that the failure it addresses is a product failure a
+number does not capture: an entry point nobody can reach is worse than a rank.
+Every nomination is disclosed, so the day it looks wrong it will look wrong out
+loud. If the natural-phrasing band (M12b item 5) does not improve on this, the
+weight is one line and this entry says which.
 
 **A container-lexical half was built and dropped**, and the reason generalizes:
 `lexical_score` over a container's text (owner plus every member's name) is not

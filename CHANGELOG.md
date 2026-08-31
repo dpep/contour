@@ -24,9 +24,11 @@ Initial skeleton — nothing has been released, so everything below is new.
     unit`, with the class's own match in `nominated` in JSON.
   - A class with two public methods nominates nobody rather than guessing, and
     an `attr_reader` does not count as one — it is declared, not written.
-  - Measured across nine sets: top-5 33 → 36 with top-1 level. It is a bias,
-    not a shortcut: on Rust it can put a module's `run` above the specific
-    function you asked for, which costs one answer across the Rust sets.
+  - Measured across all eleven labeled sets, 195 queries: top-5 57 → 59, top-1
+    unchanged. It is a targeted fix rather than a general one — the gain is on
+    the service-object corpus it was built for, and rails does not move. It is
+    also a bias, not a shortcut: on Rust it can put a module's `run` above the
+    specific function you asked for.
 - **Every unit records who may call it**, and `contour --symbols` marks anything
   that is not public: `StatusCacheHydrator#hydrate` stands out from its
   fourteen private helpers at a glance. `visibility` (`public` / `protected` /
