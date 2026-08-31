@@ -24,9 +24,10 @@ Initial skeleton — nothing has been released, so everything below is new.
   moved the shared index to a newer schema, every tool that reads it failed for
   the rest of the session — twice, in field trials, with no way to recover short
   of restarting the session. The server now restats its own binary after each
-  answer and restarts into a new one in place, keeping the client's pipes. **You
-  no longer need to restart a session after installing contour**; the next tool
-  call may report the old schema error once, and it now says so.
+  answer and restarts into a new one in place, keeping the client's pipes, then
+  tells the client to re-read its tool list. **You no longer need to restart a
+  session after installing contour**; the next tool call may report the old
+  schema error once, and it now says so.
 - **`--status` takes a path, like every other command.** `contour --status .`
   reports on the checkout you are standing in; bare `--status` still reports on
   every checkout this machine has indexed, which is the only place that question

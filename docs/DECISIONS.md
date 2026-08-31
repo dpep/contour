@@ -699,11 +699,24 @@ on the other end was replaced.
 
 Three things make this small enough to be worth it:
 
-- **Nothing needs carrying across.** `handle_line` holds no session state — a
-  `tools/call` is answered the same way with or without a preceding
-  `initialize` — so there is no handshake to replay and no environment variable
-  to smuggle it in. That property is now pinned by a test, because the restart
-  depends on it rather than merely benefiting from it.
+- **Almost nothing needs carrying across.** `handle_line` holds no session state
+  — a `tools/call` is answered the same way with or without a preceding
+  `initialize` — so there is no handshake to replay. That property is now pinned
+  by a test, because the restart depends on it rather than merely benefiting
+  from it. The one exception is the client's *tool list*, which it fetched from
+  the build that has just been replaced and has no way to know to re-fetch:
+  nothing happened, as far as it can see. So one environment variable crosses
+  the exec, and the new process opens by sending
+  `notifications/tools/list_changed`. Answering calls correctly while describing
+  them wrongly would be a half-heal, and `initialize` now declares
+  `listChanged` because it is true.
+- **The inode is what says the binary moved.** An installer stages a new file
+  and renames it over the path, which always changes the inode but *not*
+  necessarily the mtime — a clone on APFS carries the original's timestamps
+  across, which is how the first version of this, watching size and mtime, sat
+  through an upgrade in a test and noticed nothing. Size and mtime are kept
+  beside the inode for a rewrite in place, which is not how anything installs
+  but is how a build script might.
 - **The trigger is the binary, not the failure.** Skew is the *symptom*; the
   upgrade is the cause, and statting a path is free where opening a database is
   not. Restarting on the skew instead would loop forever in the one case exec

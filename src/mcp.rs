@@ -57,6 +57,18 @@ pub fn serve() -> Result<()> {
     let launched_from = stamp();
     let stdin = std::io::stdin();
     let mut stdout = std::io::stdout();
+    // The one thing worth carrying across the exec, and the reason [`RESTARTED`]
+    // exists: the client is still holding the tool list of the build that was
+    // replaced, and it cannot know to re-ask, because from where it sits nothing
+    // happened. Answering calls correctly while describing them wrongly is a
+    // half-heal.
+    if std::env::var_os(RESTARTED).is_some() {
+        writeln!(
+            stdout,
+            r#"{{"jsonrpc":"2.0","method":"notifications/tools/list_changed"}}"#
+        )?;
+        stdout.flush()?;
+    }
     for line in stdin.lock().lines() {
         let line = line?;
         if line.trim().is_empty() {
@@ -85,18 +97,37 @@ pub fn serve() -> Result<()> {
     Ok(())
 }
 
-/// A binary's identity on disk: where it is, how big it is, when it changed.
-type Stamp = (PathBuf, u64, SystemTime);
-
-/// What the binary this process was launched from looks like on disk.
+/// A binary's identity on disk.
 ///
-/// Size and mtime rather than a hash: this is taken after every answer, and a
-/// 26 MB digest per request would be a real cost to detect something an
-/// installer always changes. `None` when the path cannot be read at all.
+/// **The inode is the load-bearing field.** An installer stages a new file and
+/// renames it over the path, which always gives a new inode — but not always a
+/// new mtime, because a clone on APFS carries the original's timestamps across.
+/// Size and mtime are kept beside it for the case the inode cannot move: a
+/// rewrite in place, which is not how anything installs but is how a build
+/// script might.
+///
+/// Read rather than hashed: this is taken after every answer, and a 26 MB digest
+/// per request would be real cost to detect something a rename states outright.
+#[derive(PartialEq)]
+struct Stamp {
+    path: PathBuf,
+    inode: u64,
+    len: u64,
+    modified: SystemTime,
+}
+
+/// What the binary this process was launched from looks like on disk. `None`
+/// when the path cannot be read at all.
 fn stamp() -> Option<Stamp> {
+    use std::os::unix::fs::MetadataExt;
     let path = std::env::current_exe().ok()?;
     let meta = std::fs::metadata(&path).ok()?;
-    Some((path, meta.len(), meta.modified().ok()?))
+    Some(Stamp {
+        path,
+        inode: meta.ino(),
+        len: meta.len(),
+        modified: meta.modified().ok()?,
+    })
 }
 
 /// The binary to become, if the one on disk is no longer the one running.
@@ -108,9 +139,14 @@ fn superseded(launched_from: &Option<Stamp>) -> Option<PathBuf> {
     let (was, now) = (launched_from.as_ref()?, stamp()?);
     match *was == now {
         true => None,
-        false => Some(now.0),
+        false => Some(now.path),
     }
 }
+
+/// Set across the `exec` so the new process knows it replaced one, which it has
+/// no other way to tell — everything else about the two invocations is
+/// identical. See [`serve`] for the one thing it does with that.
+const RESTARTED: &str = "CONTOUR_MCP_RESTARTED";
 
 /// Become the binary at `path`, keeping this process's pid and open files.
 ///
@@ -120,6 +156,7 @@ fn restart(path: &Path) -> std::io::Error {
     use std::os::unix::process::CommandExt;
     std::process::Command::new(path)
         .args(std::env::args_os().skip(1))
+        .env(RESTARTED, "1")
         .exec()
 }
 
@@ -207,7 +244,10 @@ fn initialize(params: &Value) -> Value {
     };
     json!({
         "protocolVersion": version,
-        "capabilities": {"tools": {}},
+        // `listChanged` is not decoration: this server can restart into a
+        // different build mid-session, and the notification it then sends is
+        // only one a client is entitled to act on if we said so here.
+        "capabilities": {"tools": {"listChanged": true}},
         "serverInfo": {"name": "contour", "version": env!("CARGO_PKG_VERSION")},
     })
 }
