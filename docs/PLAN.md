@@ -348,6 +348,64 @@ owner took it as a uniquely-cheap-moment argument: it cost three surfaces, and
 the price was re-keying 42 Rust summaries, a number that only grows. Composed at
 the file layer per DEC-021, so layer 1 stays byte-pure and no reindex is needed.
 
+## Milestone 12b — DELIVERED
+
+The ranking milestone. Six items, all landed; two of them did not land as
+briefed and the difference is the interesting part.
+
+| shipped | where |
+| ------- | ----- |
+| the fusion hears both halves' measurements (**IDF built, measured, not shipped**) | DEC-027 — `src/search.rs` |
+| a unit knows who may call it | DEC-028 — `core::Visibility`, both extractors, schema 11→12 |
+| a container answers for its one public unit | DEC-029 — `src/search.rs` |
+| one rule for what kind of code a unit is | `Classes::of_unit` at all four sites |
+| MCP results are compact | `src/mcp.rs`, one line, every tool |
+| the eval asks questions the way a person types them | `queries_natural.tsv`, `contour:natural` |
+| read/write axis | designed and recorded below, nothing built |
+
+Verified against the installed binary and a live MCP round, not only the suite:
+the repro ranks correctly through `~/.cargo/bin/contour` against the real index,
+and one stdio session returned the new `lexical` and `nominated` fields, a
+compact `symbols` payload with no nulls, and a correctly-refused contribution.
+
+### The two things a successor should know before touching ranking
+
+**1. The measurement is the weight, twice over.** DEC-023 gave the semantic half
+a weight because RRF discards the cosine; M12b found the lexical half had the
+same problem and no voice at all, and then found that *containers* had it too.
+In all three cases the fix was to multiply the RRF term by something already
+measured rather than to add a constant. When a new evidence source joins the
+fusion, this is the first question to ask about it — and the second is whether
+its measurement means the same thing as the others', because a
+container-lexical half was built on the assumption that it did and swept the top
+of every ranking (`lexical_score` over a thirty-word container text is not
+`lexical_score` over a three-word name).
+
+**2. Do not read the fast sets as the result.** The seven Rust sets, `fixture`
+and `mastodon` run in minutes; `rails` and `discourse` take hours, and they are
+where a change stops flattering itself. Nomination looked like +3 top-5 on the
+nine fast sets and is +2 across all eleven, because rails does not move at all.
+DEC-027 looked good on the fast sets and was *better* on rails. Run all eleven
+before writing a number down.
+
+### What this milestone learned that was not on its list
+
+- **A census that approximates the tool's own rule is not a census.** The
+  nomination rule was validated by a Python scan of Ruby source that counted
+  only `def`, and it said 9 of 20 labeled answers were their container's sole
+  public method. contour disagreed, because Rails classes carry `attr_reader`
+  and macro-generated units are public: the first build of nomination did
+  nothing at all for `BackupService`, the exact case it was written for, and
+  did it silently.
+- **Natural phrasing is not uniformly harder — it is coverage-dependent.**
+  Against summaries a full sentence beats a keyword query; against a cold corpus
+  it loses, because the filler is tokens no identifier can match. That is
+  DEC-018's flywheel argued from the eval instead of from first principles, and
+  it is now in the skill as advice a session can act on.
+- **`script/check.sh` piped into `tail` reports success when it failed.** Its own
+  header warns about this and it still landed a red commit. Redirect and check
+  `$?`.
+
 ## M12b material: the lexical half scores on words that carry no signal
 
 **A fresh repro, on a corpus that is actually summarized** — which the DEC-023
