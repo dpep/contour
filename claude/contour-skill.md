@@ -60,6 +60,19 @@ same job once you have a candidate.
   `identifier` (matched on the name). An `identifier` hit is blind to anything
   that never appears in a name, which is exactly where a summary would have
   earned its cost.
+- **`name`** (`lexical` in JSON) and **`cos`** (`cosine`) — the two halves'
+  measurements, each 0 to 1. `name 0.10` means the unit's name accounted for a
+  tenth of your question; `[both]` on such a hit is one strong signal and one
+  whisper, not two votes. A high `cos` with a low `name` is the good case: it
+  matched what the code *does*.
+- **`via <Container> — its container's only public unit`** — a class answered
+  for one of its methods. Entry points are named for the protocol they
+  implement (`call`, `to_s`, `get`, `hydrate`), so the behaviour you searched
+  for lives in the class's private helpers and the method you can actually call
+  says nothing about it. Where a class has one public method, contour lets the
+  class speak for it. **Treat it as a pointer to the right neighbourhood**: the
+  class is what matched, so read it, and expect the specific helper you wanted
+  to be inside.
 
 `similar` discloses a tier per neighbour: `structural` (identical normalized
 body), `near_structural` (mostly the same shape, with a measured Jaccard), or
@@ -73,6 +86,29 @@ concluding the code is not there.
 answering — a file you just edited or deleted is accounted for, and the answer
 says `refreshed` (a tool result) or `index refreshed` (on stderr) when that took
 work. You do not need to run `index` after editing.
+
+**Phrase the question the way you would ask a colleague, but know what it
+costs.** Measured on the eval: against a *summarized* corpus a full sentence
+beats a keyword-shaped query (14/22 top-1 against 10/22), because the filler
+words are signal to the meaning half. Against an *unsummarized* one it is worse
+(1/21 against 4/21), because those same words are tokens no identifier can
+match. Check `coverage` first: at `none`, ask in keywords; at `warming` or
+better, ask in sentences.
+
+## Outlining a file
+
+`contour --symbols FILE` parses the file in front of it — no index needed — and
+marks anything that is not public:
+
+```text
+    4  StatusCacheHydrator#initialize(status)  [private]
+    8  StatusCacheHydrator#hydrate(account_or_id, nested: …)
+   29  StatusCacheHydrator#hydrate_non_reblog_payload(...)  [private]
+```
+
+The unmarked lines are the file's interface, which is usually what you came for.
+Ruby's `initialize` is private however it is written, and Rust's `pub(crate)`
+shows as `protected`.
 
 ## What kind of file each answer is in
 
