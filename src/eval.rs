@@ -136,14 +136,15 @@ pub struct Labels {
 /// hand. Blank lines and `#` comments are skipped; an unparseable row fails
 /// loudly, since a silently dropped label is an eval that overstates itself.
 pub fn load(dir: &Path) -> Result<Labels> {
-    let mut labels = Labels::default();
-
-    labels.queries = query_labels("queries.tsv", rows(&dir.join("queries.tsv"))?)?;
     // Optional, and its own population for `pairs_short.tsv`'s reason: the
     // band asks a different question, and averaging it into the headline is
     // exactly how the phrasing gap stayed invisible.
     let natural = dir.join("queries_natural.tsv");
-    labels.natural = query_labels("queries_natural.tsv", optional_rows(&natural)?)?;
+    let mut labels = Labels {
+        queries: query_labels("queries.tsv", rows(&dir.join("queries.tsv"))?)?,
+        natural: query_labels("queries_natural.tsv", optional_rows(&natural)?)?,
+        ..Labels::default()
+    };
 
     labels.pairs = pair_labels(&dir.join("pairs.tsv"), rows(&dir.join("pairs.tsv"))?)?;
     // Optional, and read into its own bucket: the band is a *population*, not
