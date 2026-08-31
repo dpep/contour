@@ -119,8 +119,21 @@ struct Stamp {
 /// What the binary this process was launched from looks like on disk. `None`
 /// when the path cannot be read at all.
 fn stamp() -> Option<Stamp> {
+    stamp_of(std::env::current_exe().ok()?)
+}
+
+/// The same, for the path this process launched from — asked once, then
+/// restatted.
+///
+/// Restatting must reuse that path rather than ask `current_exe()` again. On
+/// Linux that reads `/proc/self/exe`, which follows the *inode*: once an
+/// install has renamed a new file over the running one, it resolves to the
+/// deleted original and comes back as `…/contour (deleted)`, which stats as
+/// unreadable — so the upgrade this exists to catch would read as "nothing
+/// changed". macOS keeps returning the plain path, which is why this only ever
+/// failed on Linux.
+fn stamp_of(path: PathBuf) -> Option<Stamp> {
     use std::os::unix::fs::MetadataExt;
-    let path = std::env::current_exe().ok()?;
     let meta = std::fs::metadata(&path).ok()?;
     Some(Stamp {
         path,
@@ -136,7 +149,8 @@ fn stamp() -> Option<Stamp> {
 /// upgrade — exec'ing it would fail on every request from then on — and a path
 /// that was never readable cannot tell us anything changed.
 fn superseded(launched_from: &Option<Stamp>) -> Option<PathBuf> {
-    let (was, now) = (launched_from.as_ref()?, stamp()?);
+    let was = launched_from.as_ref()?;
+    let now = stamp_of(was.path.clone())?;
     match *was == now {
         true => None,
         false => Some(now.path),
