@@ -978,3 +978,115 @@ fresh v12 database, every top-1, top-5 and found figure identical.
 Knowing it is as public as its trait needs the trait's own visibility, which the
 walk does not carry down. The nomination rule abstains on a container with no
 single public unit, so an honest silence costs less than a guess.
+
+## DEC-029 — A container answers for its one public unit
+
+**Approved by the owner at the M12b checkpoint**, over the alternative of
+grouping results by container, on the argument that a nomination resolves to a
+*unit* and can therefore be scored by the eval where a presentation change
+cannot. That argument then did its job: the mechanism was measured twice and
+changed shape both times.
+
+### The finding
+
+An entry point is named for the **protocol** it implements — `call`, `to_s`,
+`get`, `use`, `hydrate`, `refresh` — and its private helpers are named for the
+**behaviour**. So on mastodon the container out-ranks its own entry point on 6
+of 21 labeled queries: `BackupService#call` sat at rank 40 while
+`#build_archive!` was first, and `StatusCacheHydrator#hydrate` did not rank at
+all while `#fill_status_payload` was first. Some unit of the right container
+was in the top five for 7 of 21 queries where the answer itself made 4.
+
+The meaning is in the container; the thing a caller wants is the one part of it
+that carries none of the meaning.
+
+### As built
+
+A **query-time view**, and that is the load-bearing half. DEC-013's thesis
+(coarser units, not blurrier ones) arrives early; its record model does not. A
+container here is the units already in hand, grouped by lexical owner — nothing
+stored, no cache key, no schema, no reindex — and the answer is still a list of
+units, which is the one noun contour has. Phase 3 can still build the real
+thing.
+
+The container is ranked by the cosine of the query against its **centroid**, the
+running mean of its members' vectors (ae's incremental-mean trick, which Phase 2
+lists), and that rank goes to the unit it nominates:
+
+```
+container:  cosine * IDENTIFIER_WEIGHT / (K + rank)
+```
+
+`IDENTIFIER_WEIGHT` is DEC-023's existing floor, taken even where every member
+is summarized, because a centroid is a mean of vectors none of which belongs to
+the unit being nominated. The `cosine` is there for DEC-027's reason, and it is
+what made this shippable: at the unit level a tier says what *kind* of evidence
+answered and the rank carries the rest, but every centroid is the same kind of
+evidence, so the cosine is the only thing separating one container's claim from
+another's.
+
+### The rule: a container's sole public unit, and it abstains
+
+One rule, no framework knowledge. A container with exactly one public unit *is*
+that unit as far as a caller is concerned — the service-object shape stated
+structurally rather than by knowing what Rails calls a service. Anything else
+nominates nobody, which is DEC-010's ambiguity-has-its-own-status rather than a
+pick between candidates.
+
+Three qualifications, each of which cost a measurement to find:
+
+- **A macro-generated accessor is not a front door.** `via.is_some()` means
+  declared rather than written, with no body to be an entry point of. Rails
+  classes carry `attr_reader` routinely, and without this `BackupService` had
+  three public units and nominated nobody — the first build silently did nothing
+  for the exact case it was written for.
+- **Two units minimum**, or a container is a second vote for a unit already
+  being ranked on its own name and its own vector.
+- **`initialize` is private** (DEC-028), which is what leaves
+  `StatusCacheHydrator` with one public method at all.
+
+The rule bounds its own blast radius, which is why it needs no threshold: a
+large class matches many queries *and* has many public methods, so it never
+speaks. `FeedManager` has twenty and stays silent.
+
+### What was measured, including what was dropped
+
+| | 7 Rust | fixture | mastodon | total t1/t5 |
+| --- | --- | --- | --- | --- |
+| before nomination | 6/8 | 10/21 | 3/4 | 19/33 |
+| flat `IDENTIFIER_WEIGHT` | 3/6 | 10/21 | 3/6 | 16/34 |
+| **shipped (`cosine * IDENTIFIER_WEIGHT`)** | 6/9 | 10/21 | **4/6** | **19/36** |
+
+**A container-lexical half was built and dropped**, and the reason generalizes:
+`lexical_score` over a container's text (owner plus every member's name) is not
+the same measurement as `lexical_score` over a unit's id. Matching one query
+word in a thirty-word document is easy where matching one in a three-word name
+is not, so the same number meant something weaker and swept the top of every
+ranking. And once the container's text is cut back to its name, it says nothing
+the nominee's own id does not already contain — every member's id begins with
+it. The centroid is where a container's value actually is.
+
+### The known cost, named rather than fenced
+
+The rule generalizes to Rust modules, where it is a coarser claim than in Ruby:
+`commands::locate` has one `pub fn run`, so it nominates the command's entry
+point for any query its module matches. On navi, "remember where a file was
+moved to" now returns `commands::locate::run` above `commands::locate_file` —
+the module really is what the query is about, and the specific function is still
+the better answer. It costs one top-1 across the twenty-one Rust queries and the
+aggregate is still positive, so it is recorded rather than special-cased: a
+language test here would be the first of a kind this codebase has managed to
+avoid.
+
+The deeper version of the same tension: a container's centroid includes its
+nominee's competitors, so a container can ride on the vector of the very member
+it then displaces. Worth revisiting if the natural-phrasing band (M12b item 5)
+makes it look worse than it does here.
+
+### Grouping is not dead, it is the other half
+
+The owner ruled nomination over grouping because only one of them is scoreable,
+not because grouping is wrong — the census says the information is *already* in
+the result list, in a member of the right container. A grouped rendering of
+nominated results is the likely eventual UI, and it is a human-output change
+that can land whenever somebody wants it.

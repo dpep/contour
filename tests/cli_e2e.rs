@@ -1283,6 +1283,62 @@ fn a_name_that_shares_one_filler_word_does_not_outrank_the_answer() {
     assert_eq!(filler["lexical"], 0.1);
 }
 
+/// A class answers for the one method a caller can reach.
+///
+/// M12b's census, in miniature. `Archiver#call` is named for the protocol it
+/// implements and says nothing about backups; its private helpers are where
+/// the behaviour is written down. The container's centroid is the mean of
+/// them, so the class matches a query none of its entry point's own words do,
+/// and nominates the one unit a caller could actually call.
+///
+/// The negatives are the same fixture with the rule denied: give the class a
+/// second public method and it must go silent rather than guess.
+#[test]
+fn a_class_answers_for_its_one_public_method() {
+    let sole = "class Archiver\n  def call\n    build_zip_of_media\n  end\n  private\n  \
+                def build_zip_of_media; end\n  def dump_outbox_json; end\nend\n";
+    let repo = Repo::new("nominate", &[("lib/archiver.rb", sole)]);
+    repo.run(&["index"]);
+    let answer = repo.json(&["search", "build a zip archive of media", "--json"]);
+
+    let hit = answer["hits"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|h| h["id"] == "Archiver#call")
+        .unwrap_or_else(|| panic!("{answer}"));
+    let nomination = &hit["nominated"];
+    assert_eq!(nomination["container"], "Archiver");
+    assert_eq!(nomination["rule"], "its container's only public unit");
+    // The measurement that earned it, disclosed like every other (DEC-010).
+    assert!(nomination["cosine"].as_f64().unwrap() > 0.0, "{answer}");
+
+    // Two public methods: no single front door, so no nomination. Abstaining
+    // is the answer, not a pick between them.
+    let two = sole.replace("  private\n", "");
+    let repo = Repo::new("nominate-two", &[("lib/archiver.rb", &two)]);
+    repo.run(&["index"]);
+    let answer = repo.json(&["search", "build a zip archive of media", "--json"]);
+    for hit in answer["hits"].as_array().unwrap() {
+        assert!(hit["nominated"].is_null(), "{hit}");
+    }
+
+    // An `attr_reader` is declared, not written, and must not count as a
+    // second public method — Rails classes carry them routinely, and counting
+    // them silenced every service object contour was built to find.
+    let accessor = sole.replace("class Archiver\n", "class Archiver\n  attr_reader :log\n");
+    let repo = Repo::new("nominate-attr", &[("lib/archiver.rb", &accessor)]);
+    repo.run(&["index"]);
+    let answer = repo.json(&["search", "build a zip archive of media", "--json"]);
+    let hit = answer["hits"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|h| h["id"] == "Archiver#call")
+        .unwrap_or_else(|| panic!("{answer}"));
+    assert_eq!(hit["nominated"]["container"], "Archiver");
+}
+
 /// Nothing in the corpus answers this, so nothing should come back.
 #[test]
 fn search_can_return_nothing() {

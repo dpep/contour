@@ -890,8 +890,15 @@ fn search(
                     true => String::new(),
                     false => format!(", {}", hit.class.as_str()),
                 };
+                // Why a class answered for a method whose own name says
+                // nothing about the query. Without this the answer looks like
+                // a mistake (DEC-028).
+                let nominated = match &hit.nominated {
+                    Some(n) => format!("\n    via {} — {}", n.container, n.rule),
+                    None => String::new(),
+                };
                 println!(
-                    "{}:{}  {}  [{}{class}]{name}{cosine}",
+                    "{}:{}  {}  [{}{class}]{name}{cosine}{nominated}",
                     crate::paths::within(&answer.root, &hit.path),
                     hit.line,
                     hit.id,

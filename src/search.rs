@@ -143,6 +143,15 @@ pub struct Hit {
     /// different from `both` on a name that answered the whole query.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub lexical: Option<f64>,
+    /// Why a container answered for this unit, when one did.
+    ///
+    /// Nomination is a third source of evidence and it does not belong in
+    /// `how`, which says which *half* found a unit and would need five values
+    /// to also say this. A reader shown `BackupService#call` for a query none
+    /// of whose words are in it deserves to be told that its class was what
+    /// matched, and which rule let the class speak for it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub nominated: Option<Nomination>,
     /// The fused rank score, after any path-class discount. Deliberately
     /// **not** called confidence: RRF is scale-free and its value means nothing
     /// outside this result set (DEC-010). `cosine` above is the measurement a
@@ -154,6 +163,32 @@ pub struct Hit {
     /// is also the reason `score` carries the [`NON_APP_DISCOUNT`] the answer
     /// discloses — the tag and the ranking treatment are the same fact.
     pub class: crate::paths::Class,
+}
+
+/// A container that answered for one of its units, and how well it matched.
+///
+/// `rule` is a sentence rather than a code because there is exactly one rule
+/// and a reader should not have to look it up (DEC-028). If a second one is
+/// ever earned, this is where it says which fired.
+#[derive(Debug, serde::Serialize)]
+pub struct Nomination {
+    /// The container's lexical owner, as a reader would write it.
+    pub container: String,
+    pub rule: &'static str,
+    /// The query against the container's centroid — the running mean of its
+    /// members' vectors.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cosine: Option<f64>,
+}
+
+impl Nomination {
+    fn of(container: &Container) -> Nomination {
+        Nomination {
+            container: container.owner.clone(),
+            rule: "its container's only public unit",
+            cosine: None,
+        }
+    }
 }
 
 /// A search answer plus everything needed to judge it.
@@ -301,6 +336,21 @@ pub fn search(
     // already claims to guarantee.
     semantic.sort_by(|a, b| b.1.total_cmp(&a.1).then(a.0.cmp(&b.0)));
 
+    // Containers: the same two halves over a coarser candidate, each answered
+    // for by the container's nominee. Ranked separately rather than mixed into
+    // the lists above, so a unit index never has to mean two things.
+    let containers = containers(&units, &summaries.vectors);
+    let mut container_semantic: Vec<(usize, f32)> = containers
+        .iter()
+        .enumerate()
+        .filter_map(|(c, container)| {
+            let centroid = container.centroid.as_ref()?;
+            Some((c, mrl::cosine_similarity(&query_vec, centroid)))
+        })
+        .filter(|(_, cosine)| *cosine >= floor.max(f32::MIN_POSITIVE))
+        .collect();
+    container_semantic.sort_by(|a, b| b.1.total_cmp(&a.1).then(a.0.cmp(&b.0)));
+
     let cosines: HashMap<usize, f32> = semantic.iter().copied().collect();
     let scores: HashMap<usize, f64> = lexical.iter().copied().collect();
     let mut fused: HashMap<usize, (f64, bool, bool)> = HashMap::new();
@@ -329,6 +379,35 @@ pub fn search(
         let entry = fused.entry(*i).or_insert((0.0, false, false));
         entry.0 += weight / (RRF_K + rank as f64 + 1.0);
         entry.2 = true;
+    }
+
+    // A container's rank goes to the unit it nominates, weighted by
+    // `cosine * IDENTIFIER_WEIGHT` — two multiplications for two facts, and
+    // neither is a new constant.
+    //
+    // `IDENTIFIER_WEIGHT` is the floor DEC-023 already defines, taken even
+    // where every member is summarized: a centroid is the mean of vectors none
+    // of which is the unit being nominated, and DEC-013 says routing is a
+    // ranking bias, never a prune.
+    //
+    // The **cosine** is there for DEC-027's reason. At the unit level a tier
+    // says what kind of evidence answered and the rank carries the rest; here
+    // every centroid is the same kind of evidence, so the cosine is the only
+    // thing distinguishing one container's claim from another's, and the rank
+    // alone conveys almost nothing. Measured: at a flat weight this cost three
+    // top-1s across the Rust sets, because a module whose one `pub fn` is
+    // unrelated was lifted as hard as a service class that answered. With the
+    // measurement in the weight, top-1 holds and top-5 gains.
+    let mut nominated: HashMap<usize, Nomination> = HashMap::new();
+    for (rank, (c, cosine)) in container_semantic.iter().enumerate() {
+        let entry = fused
+            .entry(containers[*c].nominee)
+            .or_insert((0.0, false, false));
+        entry.0 += (*cosine as f64) * IDENTIFIER_WEIGHT / (RRF_K + rank as f64 + 1.0);
+        nominated
+            .entry(containers[*c].nominee)
+            .or_insert_with(|| Nomination::of(&containers[*c]))
+            .cosine = Some(round2(*cosine));
     }
 
     // The path policy, applied where ranking is decided: an ignored class is
@@ -371,6 +450,7 @@ pub fn search(
             },
             cosine: cosines.get(&i).copied().map(round2),
             lexical: scores.get(&i).copied().map(|score| round2(score as f32)),
+            nominated: nominated.remove(&i),
             semantic_via: match cosines.contains_key(&i) {
                 true => summaries.vectors.get(&i).map(|(_, via)| *via),
                 false => None,
@@ -752,6 +832,121 @@ fn lexical_score(query: &str, id: &str) -> f64 {
         }
     }
     score / query.len() as f64
+}
+
+/// A container, ranked as a candidate and answered for by one of its units.
+///
+/// **The finding this exists for** (M12b's mastodon census): an entry point is
+/// named for the *protocol* it implements — `call`, `to_s`, `get`, `use`,
+/// `hydrate`, `refresh` — and its private helpers are named for the
+/// *behaviour*. So the class out-ranks its own entry point on 6 of 21 labeled
+/// queries: `BackupService#call` sits at rank 40 while `#build_archive!` is
+/// first, and `StatusCacheHydrator#hydrate` does not rank at all while
+/// `#fill_status_payload` is first. The meaning is in the container; the thing
+/// a caller wants is the one part of it that carries none.
+///
+/// So the container is ranked, and when it ranks it **nominates**. DEC-013's
+/// thesis (coarser units, not blurrier ones) arriving early, and deliberately
+/// **not** its record model: a container here is a query-time view over the
+/// units already in hand — nothing stored, no cache key, no reindex, and the
+/// answer is still a list of units, which is the one noun contour has.
+///
+/// ### The nomination rule: a container's sole public unit
+///
+/// One rule, no framework knowledge, and it abstains rather than guessing. A
+/// container with exactly one public unit *is* that unit as far as a caller is
+/// concerned — which is the service-object shape stated structurally instead of
+/// by knowing what Rails calls a service. Nine of twenty labeled mastodon
+/// answers are their container's sole public method, and they are the nine
+/// broken cases.
+///
+/// The rule also bounds its own blast radius, which is why it needs no
+/// threshold: a large class matches many queries and has many public methods,
+/// so it never nominates. `FeedManager` has twenty and stays silent.
+///
+/// Two units minimum, or a container would be a second vote for a unit that is
+/// already being ranked on its own name and its own vector.
+struct Container {
+    /// Unit index of the sole public unit — what this answers for.
+    nominee: usize,
+    /// Running mean of the members' vectors (ae's trick, DEC-013's cheap
+    /// tier). `None` where no member has one.
+    centroid: Option<Vec<f32>>,
+    owner: String,
+}
+
+/// The containers in a set of units, keyed by lexical owner.
+fn containers(
+    units: &[Located],
+    vectors: &HashMap<usize, (Vec<f32>, &'static str)>,
+) -> Vec<Container> {
+    let mut by_owner: HashMap<&str, Vec<usize>> = HashMap::new();
+    for (i, located) in units.iter().enumerate() {
+        if !located.unit.owner.is_empty() {
+            by_owner.entry(&located.unit.owner).or_default().push(i);
+        }
+    }
+    let mut out: Vec<Container> = by_owner
+        .into_iter()
+        .filter(|(_, members)| members.len() > 1)
+        .filter_map(|(owner, members)| {
+            let mut public = members.iter().filter(|i| {
+                let unit = &units[**i].unit;
+                // `via.is_some()` is a macro-generated accessor — declared,
+                // not written, and with no body to be an entry point of.
+                // Rails classes carry `attr_reader` routinely, and without this
+                // `BackupService` had three public units and nominated nobody.
+                unit.visibility == crate::core::Visibility::Public && unit.via.is_none()
+            });
+            let nominee = *public.next()?;
+            // Exactly one, or this container has no single front door and says
+            // so by not answering (DEC-010's ambiguity-is-its-own-status).
+            if public.next().is_some() {
+                return None;
+            }
+            Some(Container {
+                nominee,
+                centroid: centroid(&members, vectors),
+                owner: owner.to_string(),
+            })
+        })
+        .collect();
+    // Walked out of a HashMap, so ordered here: RRF consumes a rank, and a
+    // tie handed out in map order makes one query's answer depend on hashing.
+    out.sort_by_key(|c| c.nominee);
+    out
+}
+
+/// The mean of whatever vectors a container's members have.
+///
+/// Not weighted by anything: a container's meaning is its parts, and a part
+/// with a summary is already worth more because its vector is a better one.
+fn centroid(
+    members: &[usize],
+    vectors: &HashMap<usize, (Vec<f32>, &'static str)>,
+) -> Option<Vec<f32>> {
+    let mut sum: Vec<f32> = Vec::new();
+    let mut n = 0.0f32;
+    for i in members {
+        let Some((vec, _)) = vectors.get(i) else {
+            continue;
+        };
+        if sum.is_empty() {
+            sum = vec.clone();
+        } else {
+            for (acc, x) in sum.iter_mut().zip(vec) {
+                *acc += x;
+            }
+        }
+        n += 1.0;
+    }
+    if sum.is_empty() {
+        return None;
+    }
+    for x in sum.iter_mut() {
+        *x /= n;
+    }
+    Some(sum)
 }
 
 fn in_scope(store: &Store, root: &str, scope: Option<&str>) -> Result<Vec<Located>> {

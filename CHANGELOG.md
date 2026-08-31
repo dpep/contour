@@ -4,6 +4,21 @@
 
 Initial skeleton — nothing has been released, so everything below is new.
 
+- **A class can now answer for the one method you can call on it.** A service
+  object's entry point is named for the protocol it implements — `call`,
+  `to_s`, `hydrate`, `get` — while its private helpers are named for what it
+  actually does, so searching for the behaviour found the helpers and not the
+  door. contour now ranks the class itself, by the average of its members'
+  meanings, and lets a class with exactly one public method answer for it.
+  `BackupService#call` moves from rank 40 to the top few on "generate a backup
+  archive of an account's data".
+  - Every nomination says so: `via BackupService — its container's only public
+    unit`, with the class's own match in `nominated` in JSON.
+  - A class with two public methods nominates nobody rather than guessing, and
+    an `attr_reader` does not count as one — it is declared, not written.
+  - Measured across nine sets: top-5 33 → 36 with top-1 level. It is a bias,
+    not a shortcut: on Rust it can put a module's `run` above the specific
+    function you asked for, which costs one answer across the Rust sets.
 - **Every unit records who may call it**, and `contour --symbols` marks anything
   that is not public: `StatusCacheHydrator#hydrate` stands out from its
   fourteen private helpers at a glance. `visibility` (`public` / `protected` /

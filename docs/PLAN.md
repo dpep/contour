@@ -445,6 +445,32 @@ which is exactly the gap `queries_natural.tsv` exists to close. **Re-ask this
 question against that band before deciding IDF is dead**; the four binaries and
 the harness are in the milestone's scratch directory.
 
+## M12b: entry-point ranking, and what the census actually said
+
+**The brief's "11 of 21 mastodon answers are `ServiceObject#call`" was the
+navigation trial agent's self-count**, not the label set; the owner ruled the
+census below supersedes both numbers. The labels hold 21 queries of which four
+are answered by a `#call`.
+
+Two censuses, both against a real mastodon checkout, and the second corrected
+the first:
+
+1. **Rank of the labeled answer against the best-ranked unit of its container.**
+   Answer in top-5 4/21; some unit of the right container in top-5 7/21; the
+   container out-ranks its own entry point on 6/21. Four labels have no unit of
+   the right container ranking at all — nomination cannot help those, and they
+   are what summaries are for.
+2. **Is the labeled answer its container's sole public method?** A first pass
+   scanning Ruby source said 9 of 20 — and it was **wrong in the optimistic
+   direction**, because it counted only `def` and Rails classes carry
+   `attr_reader`. `BackupService` has three public units by contour's reckoning
+   and nominated nobody until macro-generated accessors were excluded. A census
+   that approximates the tool's own rule is not a census of the tool.
+
+The phenomenon is sharper than `#call`: an entry point is named for the
+**protocol** and its private helpers for the **behaviour**. DEC-029 records what
+was built, including the container-lexical half that was built and dropped.
+
 ## The recurring shape: identical bodies that mean different things
 
 Worth naming, because it has now arrived three times wearing three different
