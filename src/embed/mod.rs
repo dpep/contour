@@ -59,6 +59,26 @@ pub enum Workload {
     Bulk,
 }
 
+/// What this binary can do, decided at compile time.
+///
+/// Two contours built from the same commit answer English differently, and
+/// nothing about them looks different: a default build embeds with a feature
+/// hash and matches on names alone. `search` discloses which embedder answered,
+/// but only once you have run one — and an install can quietly replace a
+/// semantic build with a default one, which is how a session came to spend an
+/// afternoon wondering why the index had got worse. `--version` and `--status`
+/// say it before you ask a question rather than after.
+///
+/// Build-time, not resolved: a dynamic build can still fall back at runtime if
+/// no system ONNX Runtime is there, and saying so is the honest wording.
+#[cfg(feature = "semantic")]
+pub const BUILD: &str = "onnx embedder, statically linked";
+#[cfg(all(feature = "semantic-dynamic", not(feature = "semantic")))]
+pub const BUILD: &str = "onnx embedder, dlopened from a system ONNX Runtime — falls back to the hash embedder if none is found";
+#[cfg(not(feature = "_semantic"))]
+pub const BUILD: &str =
+    "hash embedder — English search matches names, not meaning; rebuild with --features semantic";
+
 /// The best embedder available: the real model if it loads, else the hash
 /// fallback. Callers never branch on which one they got — they read `kind()`
 /// and disclose it.

@@ -4,6 +4,13 @@
 
 Initial skeleton — nothing has been released, so everything below is new.
 
+- **`contour --version` says which embedder it was built with**, and so does
+  `contour --status`. A default build and a `--features semantic` build are
+  indistinguishable on disk and answer English completely differently — the
+  first matches what code is *called*. `cargo install` takes the features on its
+  command line rather than the ones already installed, so a reinstall with the
+  flag left off used to downgrade a working index in silence. `INSTALL.md` now
+  leads with the featured build.
 - **Summaries can be contributed from the command line.** `contour pending
   --model <id> -j` lists what nothing has summarized yet, with the source and
   context to write each against, and `contour store-summary` takes one back as

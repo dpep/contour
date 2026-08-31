@@ -1459,3 +1459,32 @@ fn a_summary_can_be_contributed_from_the_command_line() {
     assert_eq!(code, 2);
     assert!(err.contains("`summary` must be an object"), "got {err:?}");
 }
+
+/// Two builds of one commit answer English differently and look identical on
+/// disk: a default build matches names, a `semantic` build matches meaning.
+/// `search` disclosed which embedder answered, but only after you had run one —
+/// and a reinstall with the feature flag left off downgrades an index silently.
+/// So the two commands somebody runs *before* asking a question say it too.
+#[test]
+fn the_binary_says_which_embedder_it_was_built_with() {
+    let repo = Repo::new("build-info", &[("a.rb", "class A\n  def run; end\nend\n")]);
+
+    let (version, code) = repo.run(&["--version"]);
+    assert_eq!(code, 0);
+    assert!(version.contains("embedder:"), "got {version:?}");
+
+    repo.run(&["index"]);
+    let status = repo.json(&["--status", "--json"]);
+    assert!(
+        status["build"]
+            .as_str()
+            .is_some_and(|b| b.contains("embedder")),
+        "got {status}"
+    );
+    // The same fact in both places, because a reader who checked one should not
+    // have to wonder whether the other disagrees.
+    assert!(
+        version.contains(status["build"].as_str().unwrap()),
+        "got {version:?}"
+    );
+}

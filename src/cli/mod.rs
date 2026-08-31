@@ -18,7 +18,7 @@ use std::path::PathBuf;
 #[derive(Parser, Debug)]
 #[command(
     name = "contour",
-    version,
+    version = version(),
     about = "Semantic index of source code: search, navigation, and duplicate detection over intent.",
     disable_help_subcommand = true
 )]
@@ -188,6 +188,25 @@ enum Command {
         #[arg(long)]
         include_ignored: bool,
     },
+}
+
+/// The version, plus the one thing that differs between two builds of it.
+///
+/// Which embedder a binary carries is invisible until you run a search, and an
+/// install can change it without anyone noticing (see [`crate::embed::BUILD`]).
+/// `contour --version` is where somebody looks when a tool starts behaving
+/// differently, so it is where the answer goes.
+fn version() -> &'static str {
+    static VERSION: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    VERSION
+        .get_or_init(|| {
+            format!(
+                "{}\nembedder: {}",
+                env!("CARGO_PKG_VERSION"),
+                crate::embed::BUILD
+            )
+        })
+        .as_str()
 }
 
 /// Enough to see the shape of an answer without scrolling.
@@ -1134,12 +1153,17 @@ fn status(scope: Option<&std::path::Path>, format: Format) -> Result<i32> {
     let report = serde_json::json!({
         "db": path.to_string_lossy(),
         "schema": store.schema_version()?,
+        // Beside the database rather than only on `--version`: this is the
+        // command somebody runs when search stops finding things, and a
+        // default build is one of the two reasons it would.
+        "build": crate::embed::BUILD,
         "checkouts": rows,
     });
 
     match format {
         Format::Human => {
-            println!("db  {}", crate::paths::pretty(&path.to_string_lossy()));
+            println!("db     {}", crate::paths::pretty(&path.to_string_lossy()));
+            println!("build  {}", crate::embed::BUILD);
             // Two different empty answers, named apart: the machine has nothing
             // indexed at all, or it has plenty and none of it is this checkout.
             // The second is not a failure — nothing here has been asked a

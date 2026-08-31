@@ -5,21 +5,26 @@ Deliberately outside the skill, so the skill stays a copy of one file.
 ## 1. Install the binary
 
 ```sh
-cargo install --path .
-```
-
-For real semantic search rather than the hash fallback, build with the ONNX
-embedder:
-
-```sh
 cargo install --path . --features semantic
 # or, against a system onnxruntime (smaller, no build-time download):
 brew install onnxruntime && cargo install --path . --features semantic-dynamic
 ```
 
-Without either feature contour still runs, using a deterministic hash embedder
-that exercises the whole pipeline but is not a trained model. `contour search`
-discloses which embedder answered, so you always know which you have.
+**Install it with a feature, and reinstall it with the same one.** Without
+either, contour still runs, using a deterministic hash embedder that exercises
+the whole pipeline but is not a trained model — English search then matches what
+code is *called*, not what it does, which is most of the tool.
+
+```sh
+cargo install --path .       # fine for hacking on contour; not what you want installed
+```
+
+The two builds are indistinguishable on disk, and `cargo install` takes whatever
+features the command line gives it rather than what is already there — so a
+routine reinstall with the flag left off silently downgrades a working index to
+name matching. `contour --version` says which one you have, and so does
+`contour --status`; `contour search` says which one actually answered, which can
+differ for a `semantic-dynamic` build if no system ONNX Runtime is found.
 
 ## 2. Index once per checkout
 
