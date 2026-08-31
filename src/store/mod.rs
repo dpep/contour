@@ -103,8 +103,17 @@ pub fn open_default() -> Result<Store> {
 }
 
 impl Store {
+    /// Open the store `path` names.
+    ///
+    /// `path` is the **purchased** database — the one `$CONTOUR_DB` configures,
+    /// `--status` prints, and nothing may ever drop. The derived half lives
+    /// beside it in a file whose name carries the schema version
+    /// ([`schema::derived_file`]), and is opened as the main database with the
+    /// purchased one attached: a contour that speaks a different derived version
+    /// builds its own file and neither can wipe or be refused by the other's.
     pub fn open(path: &Path) -> Result<Store> {
-        let conn = Connection::open(path)?;
+        let derived = schema::derived_file(path);
+        let conn = Connection::open(&derived)?;
         // SQLite opens lazily, so the first statement is what discovers a file
         // that is not a database at all. Probing here keeps that failure apart
         // from the one `init` raises for a purchased schema it does not know —
@@ -113,57 +122,44 @@ impl Store {
         conn.pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0))
             .map_err(|err| {
                 anyhow::anyhow!(
-                    "{} is not a readable database ({err}). If it is corrupt, move it \
-                     aside and reindex — everything but summaries rebuilds from local \
-                     bytes.",
-                    path.display()
+                    "{} is not a readable database ({err}). It holds only derived \
+                     data, so if it is corrupt, delete it — everything in it \
+                     rebuilds from local bytes in seconds.",
+                    derived.display()
                 )
             })?;
-        Store::init(conn)
+        Store::init(conn, &path.to_string_lossy())
     }
 
     pub fn open_in_memory() -> Result<Store> {
-        Store::init(Connection::open_in_memory()?)
+        Store::init(Connection::open_in_memory()?, ":memory:")
     }
 
-    fn init(conn: Connection) -> Result<Store> {
+    fn init(conn: Connection, purchased: &str) -> Result<Store> {
         // WAL lets a reader answer while an indexer writes; busy_timeout makes
         // a second writer wait rather than fail.
         conn.execute_batch(
             "PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000; \
              PRAGMA synchronous=NORMAL; PRAGMA temp_store=MEMORY; PRAGMA cache_size=-32768;",
         )?;
+        // The derived half is whatever this file holds, and the file is named
+        // for the version — so a mismatch is not a state that can arise, and
+        // there is nothing here to drop or migrate. An empty file is a new one.
         let version: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0))?;
-        // An *older* binary must not drop a newer database. Two contours on
-        // one machine — one installed, one freshly built — would otherwise
-        // take turns wiping each other's index, and each would look like it
-        // had simply never been run.
-        anyhow::ensure!(
-            version <= schema::VERSION,
-            "database is schema v{version} but this contour speaks v{}; \
-             upgrade contour, or point $CONTOUR_DB elsewhere",
-            schema::VERSION
-        );
         if version != schema::VERSION {
-            // No migration, by design: see schema::VERSION.
-            if version != 0 {
-                conn.execute_batch("PRAGMA foreign_keys=OFF;")?;
-                for table in schema::TABLES {
-                    conn.execute_batch(&format!("DROP TABLE IF EXISTS {table};"))?;
-                }
-                conn.execute_batch("PRAGMA foreign_keys=ON;")?;
-            }
             conn.execute_batch(schema::SCHEMA)?;
             conn.pragma_update(None, "user_version", schema::VERSION)?;
         }
 
-        // The purchased layer, applied on every open and dropped by nothing
-        // above. Its version lives in a row rather than in `user_version`
-        // precisely so the rebuild cannot touch it.
+        // The purchased half, in its own file: one store, unversioned in its
+        // name, that every contour version reaches through the migration
+        // discipline below (DEC-016). Splitting it per version would orphan paid
+        // work on every upgrade, which is the one thing this must never do.
+        conn.execute("ATTACH DATABASE ?1 AS purchased", params![purchased])?;
         conn.execute_batch(schema::SUMMARY_SCHEMA)?;
         let stored: Option<i64> = conn
             .query_row(
-                "SELECT value FROM meta WHERE key = 'summary_version'",
+                "SELECT value FROM purchased.meta WHERE key = 'summary_version'",
                 [],
                 |r| r.get::<_, String>(0),
             )
@@ -172,7 +168,7 @@ impl Store {
         match stored {
             None => {
                 conn.execute(
-                    "INSERT INTO meta (key, value) VALUES ('summary_version', ?1)",
+                    "INSERT INTO purchased.meta (key, value) VALUES ('summary_version', ?1)",
                     params![schema::SUMMARY_VERSION.to_string()],
                 )?;
             }
@@ -215,7 +211,7 @@ impl Store {
                     at += 1;
                 }
                 conn.execute(
-                    "UPDATE meta SET value = ?1 WHERE key = 'summary_version'",
+                    "UPDATE purchased.meta SET value = ?1 WHERE key = 'summary_version'",
                     params![schema::SUMMARY_VERSION.to_string()],
                 )?;
             }
@@ -416,7 +412,7 @@ impl Store {
     pub fn put_summary(&mut self, key: &SummaryKey<'_>, summary: &Summary) -> Result<()> {
         summary.check()?;
         self.conn.execute(
-            "INSERT OR REPLACE INTO summary
+            "INSERT OR REPLACE INTO purchased.summary
                (norm_hash, ctx_hash, prompt, model, via, variant, level, json, created_at)
              VALUES (?1, ?2, ?3, ?4, ?5, 'body', 'unit', ?6, unixepoch())",
             params![
@@ -447,7 +443,7 @@ impl Store {
         via: &str,
     ) -> Result<HashSet<(u64, u64)>> {
         let mut stmt = self.conn.prepare(
-            "SELECT norm_hash, ctx_hash FROM summary
+            "SELECT norm_hash, ctx_hash FROM purchased.summary
               WHERE prompt = ?1 AND model = ?2 AND via = ?3
                 AND variant = 'body' AND level = 'unit'",
         )?;
@@ -509,7 +505,7 @@ impl Store {
     /// round trips, which is the same mistake `known` exists to avoid.
     pub fn all_summaries(&self) -> Result<HashMap<(u64, u64), Summary>> {
         let mut stmt = self.conn.prepare(
-            "SELECT norm_hash, ctx_hash, json FROM summary
+            "SELECT norm_hash, ctx_hash, json FROM purchased.summary
               WHERE variant = 'body' AND level = 'unit'
               ORDER BY created_at ASC",
         )?;
@@ -565,7 +561,7 @@ impl Store {
     pub fn summary_sources(&self) -> Result<Vec<(String, String)>> {
         let mut stmt = self
             .conn
-            .prepare("SELECT DISTINCT model, via FROM summary ORDER BY model, via")?;
+            .prepare("SELECT DISTINCT model, via FROM purchased.summary ORDER BY model, via")?;
         let rows = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?;
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
     }
@@ -727,11 +723,17 @@ mod tests {
     #[test]
     fn a_newer_purchased_schema_refuses_to_open() {
         let path = std::env::temp_dir().join(format!("contour-dec016-{}.db", std::process::id()));
-        for suffix in ["", "-wal", "-shm"] {
-            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+        let derived = schema::derived_file(&path);
+        for file in [&path, &derived] {
+            for suffix in ["", "-wal", "-shm"] {
+                let _ = std::fs::remove_file(format!("{}{suffix}", file.display()));
+            }
         }
         Store::open(&path).expect("a fresh store opens");
 
+        // Opened directly, so this file is `main` here and the purchased tables
+        // are unqualified — the split is a fact about how `Store` attaches
+        // them, not about the file.
         let conn = Connection::open(&path).unwrap();
         conn.execute(
             "UPDATE meta SET value = '99' WHERE key = 'summary_version'",
@@ -758,6 +760,60 @@ mod tests {
         assert_eq!(still, "99");
         drop(conn);
         let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(&derived);
+    }
+
+    /// The split's whole purpose, and the constraint the owner set on it: the
+    /// derived half is disposable — a version bump names a different file, which
+    /// is the same thing as deleting this one — and the purchased half is not
+    /// touched by that. Versioning the purchased half per schema instead would
+    /// orphan paid work on every upgrade, which is the one outcome DEC-016
+    /// exists to prevent.
+    #[test]
+    fn deleting_the_derived_half_keeps_what_was_purchased() {
+        let path = std::env::temp_dir().join(format!("contour-split-{}.db", std::process::id()));
+        let derived = schema::derived_file(&path);
+        for file in [&path, &derived] {
+            for suffix in ["", "-wal", "-shm"] {
+                let _ = std::fs::remove_file(format!("{}{suffix}", file.display()));
+            }
+        }
+
+        let summary = Summary {
+            summary: "Returns a customer's unpaid invoices.".into(),
+            primary_purpose: "unpaid invoice lookup".into(),
+            secondary_concerns: Vec::new(),
+            side_effects: Vec::new(),
+            domain: "billing".into(),
+            patterns: Vec::new(),
+        };
+        let mut store = Store::open(&path).unwrap();
+        store
+            .put_summary(
+                &SummaryKey {
+                    norm_hash: 7,
+                    ctx_hash: 11,
+                    prompt: "v1",
+                    model: "m",
+                    via: VIA_API,
+                },
+                &summary,
+            )
+            .unwrap();
+        drop(store);
+
+        assert!(derived.exists(), "the derived half is its own file");
+        std::fs::remove_file(&derived).unwrap();
+
+        let store = Store::open(&path).unwrap();
+        let kept = store.all_summaries().unwrap();
+        assert_eq!(kept.len(), 1, "the purchased half survives");
+        assert_eq!(kept.get(&(7, 11)), Some(&summary));
+        // And the derived half is genuinely rebuilt rather than recovered.
+        assert!(store.status().unwrap().is_empty());
+        drop(store);
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(schema::derived_file(&path));
     }
 
     #[test]

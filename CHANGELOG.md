@@ -4,6 +4,19 @@
 
 Initial skeleton — nothing has been released, so everything below is new.
 
+- **The index is two files now, and a schema bump can no longer break a running
+  contour.** Derived data (blobs, units, checkouts, vectors, signatures) lives in
+  `contour-derived-v<N>.db`, named for its schema version, so two contours of
+  different versions each build their own and neither can drop or be refused by
+  the other's. Summaries stay in `contour.db` — one unversioned store every
+  version reaches through its migrations, because splitting *that* per version
+  would orphan work somebody paid for.
+  - **Nothing to do, and nothing lost:** your summaries stay where they are and
+    the derived half rebuilds itself on the next query (seconds).
+  - The old derived tables are left in `contour.db` rather than dropped: an
+    older contour on the same machine is still using them, and reclaiming the
+    space would be one binary wiping another's index — the exact thing this
+    change exists to stop.
 - **A Rust unit is named by its module now**: `summary::contributed::accept`
   rather than a bare `accept`, and `lang::go::tests::find` rather than a
   `tests::find` that five of rq's language plugins all answered to. The gap had

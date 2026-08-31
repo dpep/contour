@@ -755,20 +755,40 @@ Two edges are known, both about *how* an installer writes:
   `cargo install` path, which is how contour is installed today; the day it
   ships through the tap, this is the thing to re-measure.
 
-### The other way to define this out of existence
+### The other way to define this out of existence — APPROVED AND BUILT
 
-Worth writing down because it is a smaller idea than either restart mechanism:
-**version the derived database in its filename.** DEC-016 already splits the
+**Version the derived database in its filename.** DEC-016 already split the
 schema into a derived half that may be dropped and a purchased half that may
-not. If the derived half lived in `contour-v10.db` beside the purchased
-`contour.db`, a v9 binary and a v10 binary would each build their own and never
-collide — no skew, no restart, and the "two contours take turns wiping each
-other's index" hazard that `Store::init` guards against would stop existing too.
+not; this puts them in two files and names one of them for its version. A v10
+binary opens `contour-derived-v10.db` and a v11 binary opens
+`contour-derived-v11.db`, so neither can see, drop, or be refused by the other's
+— **skew stops being a state that can arise**, and the "two contours take turns
+wiping each other's index" hazard `Store::init` guarded against goes with it.
 
-Not built, and not because it is wrong: it is an on-disk restructure (an
-`ATTACH`, every derived query qualified, a one-time split of existing
-databases), which is a structural change on top of a behavioural one. Left for
-the owner to rule on.
+The restart above is not thereby redundant. It still carries a session across an
+upgrade without a client noticing, and it is what makes a *new* build's tool list
+reach a client that already fetched the old one.
+
+**The owner's constraint, and it is the load-bearing half:** the purchased store
+stays a **single unversioned file** that every contour version reaches through
+DEC-016's migration discipline. Splitting it per version would orphan paid work
+on every upgrade, which is the one outcome that decision exists to prevent. A
+test asserts exactly this — delete the derived file, which is what a version bump
+amounts to, and the summaries are still there.
+
+As built: the derived file is `main` and the purchased one is `ATTACH`ed as
+`purchased`, because the derived half is what nearly every query touches.
+`$CONTOUR_DB` still names the purchased database — the file a person configures,
+`--status` prints, and nothing may ever drop.
+
+**The legacy tables are left alone, on purpose.** A database written before this
+holds both halves in one file; opening it now builds a fresh derived file beside
+it and attaches the old one for its summaries, which are untouched (measured: 45
+of 45 on a 79 MB store). The dead derived tables in it are *not* dropped, and the
+reason is the change's own premise — an older contour on the same machine is
+still using them, and reclaiming the space would be one binary wiping another's
+index, which is precisely what this stops. An explicit cleanup command can offer
+the space back later; a silent one would contradict the feature.
 
 ## DEC-026 — A Rust unit's owner includes the module its file declares
 

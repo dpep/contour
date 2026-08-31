@@ -1,8 +1,12 @@
-//! The on-disk schema, in two halves with different rules.
+//! The on-disk schema, in two halves with different rules — and, since M12b,
+//! in two **files**, because the rules differ that much.
 //!
 //! **Derived tables** (`blob`, `unit`, `checkout`, `file`) are a cache of a
-//! pure function of bytes this machine can read again. A version mismatch
-//! drops and rebuilds them — seconds of work, and no migration bugs ever.
+//! pure function of bytes this machine can read again. They live in a file whose
+//! name carries [`VERSION`], so a contour that speaks a different version builds
+//! its own rather than dropping anybody else's. That is what makes schema skew
+//! impossible instead of merely recoverable (DEC-025), and it retires the hazard
+//! where two contours on one machine took turns wiping each other's index.
 //!
 //! **The summary table is not that.** It holds work that was *purchased*: a
 //! full fill of a large repo is hundreds of dollars of LLM calls, and it
@@ -22,12 +26,12 @@
 /// already "known".
 ///
 /// There are no migrations, and that is deliberate (DEC-003): everything under
-/// this version is derived from bytes this machine can read again. A mismatch
-/// drops it and reindexes — which costs seconds and removes an entire class of
-/// migration bug. It also makes adding a column free, so nothing needs to be
-/// carried speculatively. See the module header for what this version
-/// deliberately does *not* govern.
-pub(crate) const VERSION: i64 = 10;
+/// this version is derived from bytes this machine can read again. A bump names
+/// a different file, which is built from scratch in seconds — that removes an
+/// entire class of migration bug, and makes adding a column free, so nothing
+/// needs to be carried speculatively. See the module header for what this
+/// version deliberately does *not* govern.
+pub(crate) const VERSION: i64 = 11;
 
 /// Applied whole to a fresh database.
 pub(crate) const SCHEMA: &str = r#"
@@ -132,9 +136,18 @@ CREATE INDEX unit_blob ON unit(blob_id);
 CREATE INDEX file_blob ON file(blob_id);
 "#;
 
-/// Every **derived** table, dependents first, so a drop respects nothing.
-/// `summary` is deliberately absent: see the module header.
-pub(crate) const TABLES: [&str; 6] = ["signature", "vector", "file", "checkout", "unit", "blob"];
+/// The name of the derived database beside a purchased one.
+///
+/// The version is in the **file name** rather than only in a pragma, which is
+/// the whole point: a v10 binary and a v11 binary each open the one they
+/// understand and neither can see, drop, or be refused by the other's.
+pub(crate) fn derived_file(purchased: &std::path::Path) -> std::path::PathBuf {
+    let stem = purchased
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "contour".to_string());
+    purchased.with_file_name(format!("{stem}-derived-v{VERSION}.db"))
+}
 
 /// Bump only for a real change to the summary table.
 ///
@@ -146,7 +159,7 @@ pub(crate) const SUMMARY_VERSION: i64 = 2;
 
 /// The expensive layer. Applied on every open, dropped by nothing.
 pub(crate) const SUMMARY_SCHEMA: &str = r#"
-CREATE TABLE IF NOT EXISTS meta (
+CREATE TABLE IF NOT EXISTS purchased.meta (
   key   TEXT PRIMARY KEY,
   value TEXT NOT NULL
 ) WITHOUT ROWID;
@@ -176,7 +189,7 @@ CREATE TABLE IF NOT EXISTS meta (
 -- `variant` and `level` are carried before they are used, against the usual
 -- rule, because they are KEY components. Adding a key column later re-keys
 -- every stored row — and re-keying summaries means buying them all again.
-CREATE TABLE IF NOT EXISTS summary (
+CREATE TABLE IF NOT EXISTS purchased.summary (
   norm_hash  INTEGER NOT NULL,
   ctx_hash   INTEGER NOT NULL,
   prompt     TEXT    NOT NULL,
@@ -205,8 +218,8 @@ CREATE TABLE IF NOT EXISTS summary (
 pub(crate) const SUMMARY_MIGRATIONS: [(i64, &str); 1] = [(
     1,
     r#"
-    ALTER TABLE summary RENAME TO summary_v1;
-    CREATE TABLE summary (
+    ALTER TABLE purchased.summary RENAME TO summary_v1;
+    CREATE TABLE purchased.summary (
       norm_hash  INTEGER NOT NULL,
       ctx_hash   INTEGER NOT NULL,
       prompt     TEXT    NOT NULL,
@@ -218,9 +231,9 @@ pub(crate) const SUMMARY_MIGRATIONS: [(i64, &str); 1] = [(
       created_at INTEGER NOT NULL,
       PRIMARY KEY (norm_hash, ctx_hash, prompt, model, via, variant, level)
     ) WITHOUT ROWID;
-    INSERT INTO summary
+    INSERT INTO purchased.summary
       SELECT norm_hash, ctx_hash, prompt, model, 'api', variant, level, json, created_at
-        FROM summary_v1;
-    DROP TABLE summary_v1;
+        FROM purchased.summary_v1;
+    DROP TABLE purchased.summary_v1;
     "#,
 )];
