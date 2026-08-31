@@ -577,13 +577,20 @@ fn a_server_restarts_into_a_contour_installed_underneath_it() {
     // to be proved is that the process becomes whatever is at that path, and a
     // program with an answer of its own proves it where a rebuild of the same
     // code could not.
+    //
+    // Written beside and **renamed** over, which is what cargo and brew do.
+    // Truncating the running binary in place instead kills the process before
+    // it can exec anything — a fact about installers rather than about the
+    // server, and one a live run found by doing it the other way.
+    let staged = installed.join("contour.new");
     std::fs::write(
-        &program,
+        &staged,
         "#!/bin/sh\nwhile read -r _; do\n  \
          printf '%s\\n' '{\"jsonrpc\":\"2.0\",\"id\":4,\"result\":{\"upgraded\":true}}'\ndone\n",
     )
     .unwrap();
-    std::fs::set_permissions(&program, PermissionsExt::from_mode(0o755)).unwrap();
+    std::fs::set_permissions(&staged, PermissionsExt::from_mode(0o755)).unwrap();
+    std::fs::rename(&staged, &program).unwrap();
 
     // One last answer from the build that started the session — it owes this
     // request a reply — and the restart happens after that reply goes out.

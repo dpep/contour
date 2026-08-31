@@ -727,10 +727,20 @@ lost request is a hang where a failed one is an error, which is worse.
 Removing it properly means the Envoy hot-restarter shape: a thin, stable parent
 that owns stdio and proxies to a restartable child. That is genuinely more
 robust and it is a second component, a second process, and a protocol between
-them. Recorded as the fallback if self-exec meets a platform edge — the one to
-watch for is an install that replaces the *symlink* rather than the file
-`current_exe` resolves to, which a Homebrew upgrade does and `cargo install`
-does not.
+them. Recorded as the fallback if self-exec meets a platform edge.
+
+Two edges are known, both about *how* an installer writes:
+
+- **An installer must rename over the path, not truncate it.** Truncating the
+  running binary in place kills the process before it can exec anything. `cargo
+  install` and `brew` both stage and rename, so this is not a limitation in
+  practice — it is how a live run of this feature first failed, by simulating an
+  install with a plain copy, and both tests now model the rename.
+- **An install that replaces a *symlink* rather than the file `current_exe`
+  resolves to** leaves the stamp unmoved, so nothing is detected. A Homebrew
+  upgrade relinks the Cellar; `cargo install` writes the file. Measured on the
+  `cargo install` path, which is how contour is installed today; the day it
+  ships through the tap, this is the thing to re-measure.
 
 ### The other way to define this out of existence
 
