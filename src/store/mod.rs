@@ -581,13 +581,19 @@ pub struct SummaryKey<'a> {
     pub ctx_hash: u64,
     pub prompt: &'a str,
     pub model: &'a str,
-    /// How the answer arrived: [`VIA_API`] or [`VIA_MCP`].
+    /// Who bought the answer: [`VIA_API`] or [`VIA_MCP`].
     pub via: &'a str,
 }
 
 /// contour called a model itself (or replayed a fixture through the same path).
 pub const VIA_API: &str = "api";
-/// A session handed contour a summary through the MCP surface.
+/// A session handed contour a summary it wrote.
+///
+/// The value says `mcp` because that was the only door when it was chosen, and
+/// it is a **key** column: renaming it to match the CLI door that arrived later
+/// would re-key every contribution, which DEC-016 says costs the work again.
+/// What it distinguishes is who paid — a session's attention against an API
+/// fill — and that is the same on both doors, which is why one value is right.
 pub const VIA_MCP: &str = "mcp";
 
 /// A unit plus where this checkout currently keeps it.

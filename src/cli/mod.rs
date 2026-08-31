@@ -12,7 +12,7 @@
 use crate::core::Unit;
 use anyhow::{Result, bail};
 use clap::{CommandFactory, Parser, Subcommand};
-use std::io::Write;
+use std::io::{IsTerminal, Write};
 use std::path::PathBuf;
 
 #[derive(Parser, Debug)]
@@ -134,6 +134,34 @@ enum Command {
         #[arg(long)]
         include_ignored: bool,
     },
+    /// List callables nothing has summarized yet, with their source.
+    ///
+    /// The CLI half of the grazing path (DEC-018). `-j` carries the source and
+    /// the structural context to summarize each one against; hand the results
+    /// back with `store-summary`.
+    Pending {
+        /// A file or directory to limit the list to. Defaults to the whole
+        /// checkout containing the working directory.
+        scope: Option<PathBuf>,
+        /// Your own model id. Required, because coverage is per model.
+        #[arg(long, value_name = "MODEL")]
+        model: String,
+        #[arg(long, value_name = "N", default_value_t = DEFAULT_PENDING)]
+        limit: usize,
+    },
+    /// Contribute a summary you wrote for one callable, as JSON.
+    ///
+    /// The payload is the object the MCP `store_summary` tool takes, and it
+    /// passes the same three gates: the prompt version must be the one this
+    /// contour speaks, the body must still be the one the index recorded, and
+    /// the summary must match the schema exactly.
+    StoreSummary {
+        /// A path inside the repository. Defaults to the working directory.
+        path: Option<PathBuf>,
+        /// Read the JSON from a file rather than from stdin.
+        #[arg(long, value_name = "FILE")]
+        file: Option<PathBuf>,
+    },
     /// Serve the Model Context Protocol on stdin/stdout, for an agent client.
     Mcp,
     /// Score this checkout against a labeled eval set.
@@ -164,6 +192,12 @@ enum Command {
 
 /// Enough to see the shape of an answer without scrolling.
 pub const DEFAULT_LIMIT: usize = 10;
+
+/// A batch a session can actually work through in one sitting. Larger than
+/// `DEFAULT_LIMIT` because these are units to summarize rather than answers to
+/// read, and smaller than a scope, because summaries are stored one at a time
+/// and an interrupted pass should keep what it did.
+pub const DEFAULT_PENDING: usize = 20;
 
 /// Conservative on purpose: this is the one command that spends money, and a
 /// bare `contour summarize` on rails would otherwise start ~50,000 API calls.
@@ -314,6 +348,18 @@ fn dispatch(cli: &Cli) -> Result<i32> {
             _,
             _,
         ) => similar(unit, path.as_deref(), *limit, *include_ignored, format),
+        (
+            Some(Command::Pending {
+                scope,
+                model,
+                limit,
+            }),
+            _,
+            _,
+        ) => pending(scope.as_deref(), model, *limit, format),
+        (Some(Command::StoreSummary { path, file }), _, _) => {
+            store_summary(path.as_deref(), file.as_deref(), format)
+        }
         (Some(Command::Eval { set, min_lines }), _, _) => eval(set, *min_lines, format),
         // Not a flag, per DEC-015: it serves the index.
         (Some(Command::Mcp), _, _) => {
@@ -665,6 +711,110 @@ fn summarize(
         true => HIT,
         false => MISS,
     })
+}
+
+/// The CLI half of the grazing path (DEC-018), and the half that works when the
+/// MCP server does not.
+///
+/// Two field trials asked for exactly this independently: a resident MCP server
+/// can be the wrong build for a whole session, and when it is, the only way to
+/// contribute anything is a command.
+fn pending(
+    scope: Option<&std::path::Path>,
+    model: &str,
+    limit: usize,
+    format: Format,
+) -> Result<i32> {
+    let (opened, relative) = opened(scope)?;
+    let (store, root) = (opened.store, opened.root);
+    let units = crate::summary::pending(
+        &store,
+        std::path::Path::new(&root),
+        relative.as_deref(),
+        model,
+        limit,
+    )?;
+    // Byte-for-byte what the MCP tool returns for the same question: the
+    // version travels with the units because a payload declaring the wrong one
+    // is refused, and reading it off a document is how it goes stale.
+    let whole = serde_json::json!({
+        "prompt_version": crate::summary::contributed::CONTRIBUTED_PROMPT_VERSION,
+        "units": units,
+    });
+
+    match format {
+        Format::Human => {
+            for unit in &units {
+                println!(
+                    "{}:{}-{}  {}",
+                    crate::paths::within(&root, &unit.path),
+                    unit.line,
+                    unit.end_line,
+                    unit.id
+                );
+            }
+            match units.is_empty() {
+                true => eprintln!(
+                    "contour: nothing left for {model} to summarize in {}",
+                    crate::paths::pretty(&root)
+                ),
+                false => eprintln!(
+                    "contour: {} unit(s) to summarize, prompt version {} — \
+                     `-j` carries the source and context to write each against",
+                    units.len(),
+                    crate::summary::contributed::CONTRIBUTED_PROMPT_VERSION,
+                ),
+            }
+        }
+        _ => answer(format, &whole, &units)?,
+    }
+    Ok(if units.is_empty() { MISS } else { HIT })
+}
+
+/// One contribution, as the JSON object the MCP tool takes.
+///
+/// Same envelope and the same three gates, because both doors are
+/// `contributed::accept` over `Store::put_summary` — a gate on one path is a
+/// gate the other forgets.
+fn store_summary(
+    path: Option<&std::path::Path>,
+    file: Option<&std::path::Path>,
+    format: Format,
+) -> Result<i32> {
+    let text = match file {
+        Some(file) => std::fs::read_to_string(file)
+            .map_err(|err| anyhow::anyhow!("cannot read {}: {err}", file.display()))?,
+        // A bare `store-summary` at a prompt would otherwise sit there looking
+        // like a hang, waiting for a payload nobody is typing.
+        None if std::io::stdin().is_terminal() => {
+            bail!("nothing on stdin: pipe the summary JSON in, or pass --file")
+        }
+        None => std::io::read_to_string(std::io::stdin())?,
+    };
+    let payload: serde_json::Value = serde_json::from_str(&text)
+        .map_err(|err| anyhow::anyhow!("the summary payload is not JSON: {err}"))?;
+
+    // Refreshed first, like every command that reads the index — the body the
+    // contribution describes is checked against the one recorded there.
+    let (mut opened, _) = opened(path)?;
+    let accepted = crate::summary::contributed::accept(
+        &mut opened.store,
+        std::path::Path::new(&opened.root),
+        &payload,
+    )?;
+
+    match format {
+        // Not "via mcp", which the JSON says and a reader of this line would
+        // read as the transport rather than as the provenance it keys on.
+        Format::Human => println!(
+            "stored {} ({}) as a contribution by {}",
+            accepted.id,
+            crate::paths::within(&opened.root, &accepted.path),
+            accepted.model,
+        ),
+        _ => emit(format, &accepted)?,
+    }
+    Ok(HIT)
 }
 
 fn search(

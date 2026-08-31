@@ -72,6 +72,36 @@ impl Repo {
         )
     }
 
+    /// The same, with something on stdin. `output()` gives a child a *null*
+    /// stdin, so a command whose default input is a pipe needs its own runner
+    /// or it is only ever tested through `--file`.
+    fn run_stdin(&self, args: &[&str], input: &str) -> (String, String, i32) {
+        let mut child = Command::new(env!("CARGO_BIN_EXE_contour"))
+            .args(args)
+            .current_dir(&self.dir)
+            .env("CONTOUR_DB", &self.db)
+            .env("CONTOUR_TREKR", "/nonexistent/trekr")
+            .env("CONTOUR_RQ", "/nonexistent/rq")
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .expect("run contour");
+        use std::io::Write;
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(input.as_bytes())
+            .unwrap();
+        let out = child.wait_with_output().expect("wait for contour");
+        (
+            String::from_utf8_lossy(&out.stdout).into_owned(),
+            String::from_utf8_lossy(&out.stderr).into_owned(),
+            out.status.code().unwrap_or(-1),
+        )
+    }
+
     fn json(&self, args: &[&str]) -> serde_json::Value {
         let (out, _) = self.run(args);
         serde_json::from_str(&out).unwrap_or(serde_json::Value::Null)
@@ -1349,4 +1379,83 @@ fn eval_scores_a_labeled_set() {
     let sweep = report["calibration"]["sweep"].as_array().unwrap();
     assert!(sweep.len() > 5);
     assert_eq!(sweep[0]["floor"], 0.0);
+}
+
+/// Grazing, from a command line. Two field trials asked for this
+/// independently, for the same reason: a resident MCP server can be the wrong
+/// build for a whole session, and when it is, a command is the only way left to
+/// contribute anything.
+///
+/// The round trip is what this pins — `pending` offers a unit, a summary goes
+/// back in, and `pending` stops offering it. The gate matrix belongs to
+/// `mcp_e2e`, because both doors are one function and testing it twice would
+/// only prove that.
+#[test]
+fn a_summary_can_be_contributed_from_the_command_line() {
+    let repo = Repo::new(
+        "graze",
+        &[(
+            "billing.rb",
+            "class Invoice\n  def unpaid_for(customer)\n    where(customer: customer, paid_at: nil).order(:created_at)\n  end\nend\n",
+        )],
+    );
+
+    let offered = repo.json(&["pending", "--model", "m", "--json"]);
+    assert_eq!(offered["prompt_version"], "mcp-v1");
+    assert_eq!(offered["units"].as_array().map(Vec::len), Some(1));
+    let unit = &offered["units"][0];
+    assert_eq!(unit["id"], "Invoice#unpaid_for");
+    // The source and the context are the point of `pending`: a session that has
+    // to open the file first has been told nothing it did not know.
+    assert!(
+        unit["source"].as_str().is_some_and(|s| s.contains("def ")),
+        "got {unit}"
+    );
+    assert!(
+        unit["context"]
+            .as_str()
+            .is_some_and(|c| c.contains("defined on: Invoice")),
+        "got {unit}"
+    );
+
+    let payload = serde_json::json!({
+        "unit": "Invoice#unpaid_for",
+        "model": "m",
+        "prompt_version": offered["prompt_version"],
+        "summary": {
+            "summary": "Returns a customer's unpaid invoices, oldest first.",
+            "primary_purpose": "unpaid invoice lookup",
+            "secondary_concerns": ["ordering"],
+            "side_effects": ["persists"],
+            "domain": "billing",
+            "patterns": ["scope"]
+        }
+    })
+    .to_string();
+
+    let (out, _, code) = repo.run_stdin(&["store-summary", "--json"], &payload);
+    assert_eq!(code, 0, "got {out}");
+    let stored: serde_json::Value = serde_json::from_str(&out).expect("accepted, as JSON");
+    assert_eq!(stored["id"], "Invoice#unpaid_for");
+    // Contributions key apart from an API fill (DEC-018), whichever door they
+    // come through: `via` is who paid, not which transport carried it.
+    assert_eq!(stored["via"], "mcp");
+
+    // The whole point: what a session contributes, the next one does not have
+    // to buy again.
+    let after = repo.json(&["pending", "--model", "m", "--json"]);
+    assert_eq!(after["units"].as_array().map(Vec::len), Some(0));
+    assert_eq!(repo.run(&["pending", "--model", "m"]).1, 1, "nothing left");
+
+    // Rejected rather than repaired, on this door as on the other — and the
+    // refusal names the field, because a payload typed against the CLI has no
+    // schema steering it the way an MCP client's does.
+    let flat = serde_json::json!({
+        "unit": "Invoice#unpaid_for", "model": "m", "prompt_version": "mcp-v1",
+        "summary": "Returns a customer's unpaid invoices."
+    })
+    .to_string();
+    let (_, err, code) = repo.run_stdin(&["store-summary"], &flat);
+    assert_eq!(code, 2);
+    assert!(err.contains("`summary` must be an object"), "got {err:?}");
 }

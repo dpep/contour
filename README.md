@@ -25,12 +25,14 @@ contour index [PATH]     # scan a checkout, index every callable in it
 contour dupes [SCOPE]    # identical bodies; --near for nearly-identical ones
                          # --canonical names the likely original, with the basis
 contour summarize [SCOPE] --budget N   # fill LLM summaries, on demand
+contour pending [SCOPE] --model M      # what nothing has summarized yet
+contour store-summary [PATH]           # contribute one, as JSON on stdin
 contour search "english query"         # rank by name match + meaning match
 contour similar Owner#method [PATH]    # nearest neighbours, tier disclosed
 contour eval <SET>                     # score against a labeled set
 contour mcp                            # MCP over stdio, for an agent client
 contour --symbols FILE   # outline one file — parses it live, no index needed
-contour --status         # what the index holds, and what it is missing
+contour --status [PATH]  # what the index holds, and what it is missing
 ```
 
 Built with `--features semantic` (or `semantic-dynamic`, which dlopens a

@@ -356,7 +356,8 @@ fn tools() -> Vec<Value> {
                             "secondary_concerns": {"type": "array", "items": {"type": "string"}},
                             "side_effects": {
                                 "type": "array",
-                                "items": {"type": "string", "enum": ["persists", "network", "filesystem", "mutates", "observes", "raises", "spawns"]}
+                                "description": "Closed vocabulary. `raises` means it signals failure to its caller as part of its contract — a Ruby raise, a Rust Err return, a documented panic.",
+                                "items": {"type": "string", "enum": crate::summary::SIDE_EFFECTS}
                             },
                             "domain": {"type": "string"},
                             "patterns": {"type": "array", "items": {"type": "string"}}
@@ -630,15 +631,8 @@ fn store_summary(args: &Value) -> Result<Value> {
     // index has to hold the body that is there now.
     let here = args["root"].as_str().unwrap_or(".");
     let mut opened = crate::index::open(Path::new(here))?;
-    let accepted = crate::summary::contributed::store(
-        &mut opened.store,
-        Path::new(&opened.root),
-        required(args, "unit")?,
-        args["path"].as_str(),
-        required(args, "model")?,
-        required(args, "prompt_version")?,
-        &args["summary"],
-    )?;
+    let accepted =
+        crate::summary::contributed::accept(&mut opened.store, Path::new(&opened.root), args)?;
     Ok(answered(serde_json::to_value(accepted)?, &opened.refreshed))
 }
 

@@ -9,7 +9,12 @@
 //! to bump the version. Same idiom as `crate::hash` and `ruby::norm`.
 
 /// Bump whenever anything in this file changes. See the frozen test.
-pub const PROMPT_VERSION: &str = "v1";
+///
+/// v2 dropped `other` from the side-effect enum and glossed `raises` for
+/// languages that return their errors. Free to take now and not later: no API
+/// fill has ever run, so no purchased answer is keyed under v1 (DEC-017's
+/// reasoning, at its own moment).
+pub const PROMPT_VERSION: &str = "v2";
 
 /// Thinking depth. A per-method summary is a bounded, well-specified task, and
 /// this is the dominant cost lever after model choice — 54k methods times a
@@ -86,12 +91,10 @@ pub(crate) fn schema() -> serde_json::Value {
             },
             "side_effects": {
                 "type": "array",
-                "items": {
-                    "type": "string",
-                    "enum": ["persists", "network", "filesystem", "mutates",
-                             "observes", "raises", "spawns", "other"]
-                },
-                "description": "What this does besides return a value. Empty for a pure function."
+                "items": {"type": "string", "enum": super::SIDE_EFFECTS},
+                "description": "What this does besides return a value. Empty for a pure function. \
+                    `raises` means it signals failure to its caller as part of its contract — a \
+                    Ruby raise, a Rust Err return, a documented panic."
             },
             "domain": {
                 "type": "string",
@@ -134,7 +137,7 @@ mod tests {
         h = fnv1a(h, schema().to_string().as_bytes());
         assert_eq!(
             (PROMPT_VERSION, h),
-            ("v1", 0xf201_48c6_aadb_9be1),
+            ("v2", 0x337f_f7d8_f2c2_7717),
             "the request shape changed; bump PROMPT_VERSION with it"
         );
     }
