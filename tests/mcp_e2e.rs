@@ -21,6 +21,13 @@ struct Session {
 
 impl Session {
     fn start(label: &str, files: &[(&str, &str)]) -> Session {
+        Session::start_using(label, files, Path::new(env!("CARGO_BIN_EXE_contour")))
+    }
+
+    /// The same session, served by a named program rather than by the build
+    /// under test. Only the upgrade case needs this: it launches from a *copy*
+    /// so the copy can be replaced underneath the running process.
+    fn start_using(label: &str, files: &[(&str, &str)], program: &Path) -> Session {
         let base = std::env::temp_dir();
         let dir = base.join(format!("contour-mcp-{}-{label}", std::process::id()));
         let db = base.join(format!("contour-mcp-{}-{label}.db", std::process::id()));
@@ -56,7 +63,7 @@ impl Session {
             );
         }
 
-        let mut child = Command::new(env!("CARGO_BIN_EXE_contour"))
+        let mut child = Command::new(program)
             .arg("mcp")
             .current_dir(&dir)
             .env("CONTOUR_DB", &db)
@@ -83,17 +90,29 @@ impl Session {
 
     /// Send a request and read its reply. Notifications use `notify`.
     fn request(&mut self, id: u32, method: &str, params: serde_json::Value) -> serde_json::Value {
+        self.send(id, method, params);
+        let reply = self.read_line();
+        assert_eq!(reply["jsonrpc"], "2.0");
+        assert_eq!(reply["id"], id, "replies must match their request");
+        reply
+    }
+
+    /// Write a request without waiting for it. Only the restart case needs the
+    /// two halves apart, and it needs them apart for a reason: a test that
+    /// blocks reading a line the server was supposed to volunteer fails by
+    /// hanging, which says nothing and costs a CI slot.
+    fn send(&mut self, id: u32, method: &str, params: serde_json::Value) {
         let message =
             serde_json::json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params});
         writeln!(self.stdin, "{message}").unwrap();
         self.stdin.flush().unwrap();
+    }
+
+    /// The next line the server writes, whatever it is.
+    fn read_line(&mut self) -> serde_json::Value {
         let mut line = String::new();
-        self.stdout.read_line(&mut line).expect("a reply");
-        let reply: serde_json::Value = serde_json::from_str(&line)
-            .unwrap_or_else(|e| panic!("reply was not JSON ({e}): {line:?}"));
-        assert_eq!(reply["jsonrpc"], "2.0");
-        assert_eq!(reply["id"], id, "replies must match their request");
-        reply
+        self.stdout.read_line(&mut line).expect("a line");
+        serde_json::from_str(&line).unwrap_or_else(|e| panic!("line was not JSON ({e}): {line:?}"))
     }
 
     fn notify(&mut self, method: &str) {
@@ -529,4 +548,108 @@ fn contributions_are_rejected_rather_than_repaired() {
     // fn, all still waiting.
     let pending = mcp.tool(6, "pending", serde_json::json!({"model": "m"}));
     assert_eq!(pending["units"].as_array().unwrap().len(), 4);
+}
+
+/// A resident server outlives the binary it was launched from. Install a new
+/// contour and the running process is instantly the old one; the moment
+/// anything brings the shared database up to the new schema, every tool that
+/// reads it fails for the rest of the session. Two field trials lost their
+/// whole grazing budget to that, with no in-session recovery.
+///
+/// So the server becomes the new build. This drives the real arc: launch from a
+/// copy, replace the copy underneath a live session, and check that the next
+/// request is served by the replacement — same pid, same pipes, no handshake.
+#[test]
+fn a_server_restarts_into_a_contour_installed_underneath_it() {
+    let installed = std::env::temp_dir().join(format!("contour-upgrade-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&installed);
+    std::fs::create_dir_all(&installed).unwrap();
+    let program = installed.join("contour");
+    std::fs::copy(env!("CARGO_BIN_EXE_contour"), &program).unwrap();
+
+    let mut mcp = Session::start_using("upgrade", &corpus(), &program);
+    let init = mcp.request(
+        1,
+        "initialize",
+        serde_json::json!({"protocolVersion": "2025-06-18", "capabilities": {}}),
+    );
+    // Declared because it is true: this server can restart into a build with a
+    // different tool list, and the notification it then sends is only one a
+    // client may act on if the handshake said so.
+    assert_eq!(init["result"]["capabilities"]["tools"]["listChanged"], true);
+    mcp.notify("notifications/initialized");
+    // Healthy first, so a later failure cannot be blamed on the session never
+    // having worked.
+    let outline = mcp.tool(
+        2,
+        "symbols",
+        serde_json::json!({"file": mcp.dir.join("billing.rb").to_string_lossy()}),
+    );
+    assert_eq!(outline["units"].as_array().map(Vec::len), Some(2));
+
+    // Upgrade one: the same contour, freshly installed. A client holding the
+    // replaced build's tool list has no way to know anything happened, so the
+    // restart tells it — and answering calls correctly while describing them
+    // wrongly would be a half-heal.
+    install(&installed, &program, |staged| {
+        std::fs::copy(env!("CARGO_BIN_EXE_contour"), staged).unwrap();
+    });
+    // One last answer from the build that started the session — it owes this
+    // request a reply — and the restart happens after that reply goes out.
+    let still_ours = mcp.tool(
+        3,
+        "symbols",
+        serde_json::json!({"file": mcp.dir.join("ledger.rb").to_string_lossy()}),
+    );
+    assert_eq!(still_ours["units"].as_array().map(Vec::len), Some(1));
+
+    // Asked before read, so a notification that never comes fails on the wrong
+    // line instead of blocking on one that will never arrive.
+    mcp.send(4, "ping", serde_json::json!({}));
+    assert_eq!(
+        mcp.read_line()["method"],
+        "notifications/tools/list_changed",
+        "the restarted build should tell the client to re-read its tools"
+    );
+    // Still serving, on the same pid and the same pipes.
+    assert_eq!(mcp.read_line()["id"], 4);
+    let across = mcp.tool(
+        5,
+        "symbols",
+        serde_json::json!({"file": mcp.dir.join("billing.rb").to_string_lossy()}),
+    );
+    assert_eq!(across["units"].as_array().map(Vec::len), Some(2));
+
+    // Upgrade two, so a session that outlives two installs is covered as well
+    // as one. This time a stand-in rather than contour: what is left to prove
+    // is that the process becomes whatever is at that path, which a copy of the
+    // same code cannot show — and that the restart marker crosses the exec.
+    install(&installed, &program, |staged| {
+        std::fs::write(
+            staged,
+            "#!/bin/sh\nwhile read -r _; do\n  printf '%s\\n' \
+             '{\"jsonrpc\":\"2.0\",\"id\":7,\"result\":{\"restarted\":\"'\"$CONTOUR_MCP_RESTARTED\"'\"}}'\ndone\n",
+        )
+        .unwrap();
+    });
+    mcp.request(6, "ping", serde_json::json!({}));
+    let after = mcp.request(7, "tools/list", serde_json::json!({}));
+    assert_eq!(
+        after["result"]["restarted"], "1",
+        "the stand-in should be answering, and told it replaced a build: {after}"
+    );
+
+    let _ = std::fs::remove_dir_all(&installed);
+}
+
+/// Put a program at `program`, the way an installer does: staged beside it and
+/// **renamed** over. Truncating the running binary in place instead kills the
+/// process before it can exec anything — a fact about installers rather than
+/// about the server, and one a live run found by doing it the other way.
+fn install(dir: &Path, program: &Path, write: impl FnOnce(&Path)) {
+    use std::os::unix::fs::PermissionsExt;
+    let staged = dir.join("contour.new");
+    write(&staged);
+    std::fs::set_permissions(&staged, PermissionsExt::from_mode(0o755)).unwrap();
+    std::fs::rename(&staged, program).unwrap();
 }

@@ -26,6 +26,7 @@ use anyhow::Result;
 use serde_json::{Value, json};
 use std::io::{BufRead, Write};
 use std::path::{Path, PathBuf};
+use std::time::SystemTime;
 
 /// Protocol revisions this server knows how to speak. The newest first: an
 /// `initialize` naming any of them is answered in that revision, and anything
@@ -37,26 +38,136 @@ const SUPPORTED: [&str; 3] = ["2025-06-18", "2025-03-26", "2024-11-05"];
 /// **Nothing but protocol may reach stdout.** Every diagnostic in this module
 /// goes to stderr, because one stray line of human text corrupts the session
 /// in a way that reads to the client as a malformed server.
+///
+/// ## Upgrading underneath a live session
+///
+/// This process outlives the binary it was launched from. Install a new contour
+/// and the resident server is instantly the old one — and the moment anything
+/// brings the shared database up to the new schema, every tool that reads it
+/// fails for the rest of the session, with no way for the session to recover.
+/// Two field trials lost their whole grazing budget to exactly that.
+///
+/// So the server becomes the new build instead: it stamps the binary it was
+/// launched from, restats it after each answer, and `exec`s the replacement in
+/// place when it differs. `exec` keeps the pid and the file descriptors, so the
+/// client's pipes survive and it never learns that the program on the other end
+/// was replaced. Nothing needs carrying across, because [`handle_line`] holds
+/// no session state — a property a test pins, since the restart depends on it.
 pub fn serve() -> Result<()> {
+    let launched_from = stamp();
     let stdin = std::io::stdin();
     let mut stdout = std::io::stdout();
+    // The one thing worth carrying across the exec, and the reason [`RESTARTED`]
+    // exists: the client is still holding the tool list of the build that was
+    // replaced, and it cannot know to re-ask, because from where it sits nothing
+    // happened. Answering calls correctly while describing them wrongly is a
+    // half-heal.
+    if std::env::var_os(RESTARTED).is_some() {
+        writeln!(
+            stdout,
+            r#"{{"jsonrpc":"2.0","method":"notifications/tools/list_changed"}}"#
+        )?;
+        stdout.flush()?;
+    }
     for line in stdin.lock().lines() {
         let line = line?;
         if line.trim().is_empty() {
             continue;
         }
-        let Some(response) = handle_line(&line) else {
+        let Some(response) = handle_line(&line, &launched_from) else {
             continue;
         };
         writeln!(stdout, "{response}")?;
         stdout.flush()?;
+        // The one moment this process owes nobody anything: an answer has just
+        // gone out and the next request has not been read. A client that
+        // pipelined a batch can still have siblings sitting in a buffer we
+        // cannot see, and those are lost — the known edge of doing this in
+        // process, and the reason `docs/DECISIONS.md` records the proxy-parent
+        // shim as the shape that removes it.
+        if let Some(newer) = superseded(&launched_from) {
+            let err = restart(&newer);
+            eprintln!(
+                "contour: could not restart into {} ({err}); still serving the \
+                 build this session started with",
+                newer.display()
+            );
+        }
     }
     Ok(())
 }
 
+/// A binary's identity on disk.
+///
+/// **The inode is the load-bearing field.** An installer stages a new file and
+/// renames it over the path, which always gives a new inode — but not always a
+/// new mtime, because a clone on APFS carries the original's timestamps across.
+/// Size and mtime are kept beside it for the case the inode cannot move: a
+/// rewrite in place, which is not how anything installs but is how a build
+/// script might.
+///
+/// Read rather than hashed: this is taken after every answer, and a 26 MB digest
+/// per request would be real cost to detect something a rename states outright.
+#[derive(PartialEq)]
+struct Stamp {
+    path: PathBuf,
+    inode: u64,
+    len: u64,
+    modified: SystemTime,
+}
+
+/// What the binary this process was launched from looks like on disk. `None`
+/// when the path cannot be read at all.
+fn stamp() -> Option<Stamp> {
+    use std::os::unix::fs::MetadataExt;
+    let path = std::env::current_exe().ok()?;
+    let meta = std::fs::metadata(&path).ok()?;
+    Some(Stamp {
+        path,
+        inode: meta.ino(),
+        len: meta.len(),
+        modified: meta.modified().ok()?,
+    })
+}
+
+/// The binary to become, if the one on disk is no longer the one running.
+///
+/// Both stamps must be readable. A path that has *become* unreadable is not an
+/// upgrade — exec'ing it would fail on every request from then on — and a path
+/// that was never readable cannot tell us anything changed.
+fn superseded(launched_from: &Option<Stamp>) -> Option<PathBuf> {
+    let (was, now) = (launched_from.as_ref()?, stamp()?);
+    match *was == now {
+        true => None,
+        false => Some(now.path),
+    }
+}
+
+/// Set across the `exec` so the new process knows it replaced one, which it has
+/// no other way to tell — everything else about the two invocations is
+/// identical. See [`serve`] for the one thing it does with that.
+const RESTARTED: &str = "CONTOUR_MCP_RESTARTED";
+
+/// Become the binary at `path`, keeping this process's pid and open files.
+///
+/// Returns only on failure — a successful `exec` never comes back. Unix only,
+/// like `$HOME`-relative storage and every other assumption in this tool.
+fn restart(path: &Path) -> std::io::Error {
+    use std::os::unix::process::CommandExt;
+    std::process::Command::new(path)
+        .args(std::env::args_os().skip(1))
+        .env(RESTARTED, "1")
+        .exec()
+}
+
 /// One request in, at most one response out. `None` for a notification, which
 /// by JSON-RPC must not be answered at all.
-fn handle_line(line: &str) -> Option<String> {
+///
+/// Holds no state between calls, deliberately: a request is answered the same
+/// way whether or not this process is the one the client handshook with, which
+/// is what lets [`serve`] replace itself mid-session without replaying
+/// anything.
+fn handle_line(line: &str, launched_from: &Option<Stamp>) -> Option<String> {
     let request: Value = match serde_json::from_str(line) {
         Ok(value) => value,
         // No id is recoverable from unparseable input, so this is the one
@@ -101,15 +212,27 @@ fn handle_line(line: &str) -> Option<String> {
         // A tool that failed is a *result* with `isError`, not a protocol
         // error: the model is meant to see the message and adapt, which it
         // cannot do if the failure is swallowed by the transport layer.
-        Err(err) => json!({
-            "jsonrpc": "2.0",
-            "id": id,
-            "result": {
-                "isError": true,
-                "content": [{"type": "text", "text": format!("{err:#}")}]
+        Err(err) => {
+            let mut text = format!("{err:#}");
+            // Almost always the schema-skew refusal, and the caller's next move
+            // depends on something the message cannot know: whether a newer
+            // contour is already installed. When it is, "upgrade contour" is
+            // advice they have taken, and what they need to hear instead is
+            // that no session restart is required.
+            if superseded(launched_from).is_some() {
+                text.push_str(
+                    "\n\nA newer contour is installed than the one serving this session. \
+                     The server is restarting into it now — retry this call; there is no \
+                     need to restart the session.",
+                );
             }
-        })
-        .to_string(),
+            json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "result": {"isError": true, "content": [{"type": "text", "text": text}]}
+            })
+            .to_string()
+        }
     })
 }
 
@@ -121,7 +244,10 @@ fn initialize(params: &Value) -> Value {
     };
     json!({
         "protocolVersion": version,
-        "capabilities": {"tools": {}},
+        // `listChanged` is not decoration: this server can restart into a
+        // different build mid-session, and the notification it then sends is
+        // only one a client is entitled to act on if we said so here.
+        "capabilities": {"tools": {"listChanged": true}},
         "serverInfo": {"name": "contour", "version": env!("CARGO_PKG_VERSION")},
     })
 }
@@ -229,8 +355,10 @@ fn tools() -> Vec<Value> {
         json!({
             "name": "status",
             "description": "What the index holds, whether a checkout looks stale, and how much of \
-                it is summarized. Check this first when `search` returns less than expected.",
-            "inputSchema": {"type": "object", "properties": {}},
+                it is summarized. Check this first when `search` returns less than expected. \
+                Reports every checkout on this machine, or with `path`, just the one containing \
+                it.",
+            "inputSchema": {"type": "object", "properties": {"path": path}},
             "annotations": {"readOnlyHint": true}
         }),
         json!({
@@ -268,7 +396,8 @@ fn tools() -> Vec<Value> {
                             "secondary_concerns": {"type": "array", "items": {"type": "string"}},
                             "side_effects": {
                                 "type": "array",
-                                "items": {"type": "string", "enum": ["persists", "network", "filesystem", "mutates", "observes", "raises", "spawns"]}
+                                "description": "Closed vocabulary. `raises` means it signals failure to its caller as part of its contract — a Ruby raise, a Rust Err return, a documented panic.",
+                                "items": {"type": "string", "enum": crate::summary::SIDE_EFFECTS}
                             },
                             "domain": {"type": "string"},
                             "patterns": {"type": "array", "items": {"type": "string"}}
@@ -299,7 +428,7 @@ fn call(params: &Value) -> Result<Value> {
         "similar" => similar(args)?,
         "dupes" => dupes(args)?,
         "symbols" => symbols(args)?,
-        "status" => status()?,
+        "status" => status(args)?,
         "index" => index(args)?,
         "pending" => pending(args)?,
         "store_summary" => store_summary(args)?,
@@ -478,9 +607,9 @@ fn symbols(args: &Value) -> Result<Value> {
     }))
 }
 
-fn status() -> Result<Value> {
+fn status(args: &Value) -> Result<Value> {
     let store = crate::store::open_default()?;
-    let checkouts = store.status()?;
+    let checkouts = crate::store::checkouts(&store, args["path"].as_str().map(Path::new))?;
     let sources = store.summary_sources()?;
     let mut rows = Vec::new();
     for checkout in &checkouts {
@@ -542,15 +671,8 @@ fn store_summary(args: &Value) -> Result<Value> {
     // index has to hold the body that is there now.
     let here = args["root"].as_str().unwrap_or(".");
     let mut opened = crate::index::open(Path::new(here))?;
-    let accepted = crate::summary::contributed::store(
-        &mut opened.store,
-        Path::new(&opened.root),
-        required(args, "unit")?,
-        args["path"].as_str(),
-        required(args, "model")?,
-        required(args, "prompt_version")?,
-        &args["summary"],
-    )?;
+    let accepted =
+        crate::summary::contributed::accept(&mut opened.store, Path::new(&opened.root), args)?;
     Ok(answered(serde_json::to_value(accepted)?, &opened.refreshed))
 }
 
@@ -566,7 +688,7 @@ mod tests {
     use super::*;
 
     fn request(line: &str) -> Value {
-        serde_json::from_str(&handle_line(line).expect("a response")).unwrap()
+        serde_json::from_str(&handle_line(line, &None).expect("a response")).unwrap()
     }
 
     #[test]
@@ -592,7 +714,28 @@ mod tests {
     /// one is the classic way to desynchronise a client.
     #[test]
     fn a_notification_is_not_answered() {
-        assert!(handle_line(r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#).is_none());
+        assert!(
+            handle_line(
+                r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#,
+                &None
+            )
+            .is_none()
+        );
+    }
+
+    /// The property [`serve`]'s self-restart rests on: a request is answered
+    /// the same way whether or not this process saw the handshake. If a tool
+    /// ever starts requiring `initialize`, a session that restarts into a new
+    /// build breaks on its very next call — so this is the guard, not a test of
+    /// protocol leniency.
+    #[test]
+    fn a_tool_call_needs_no_handshake_before_it() {
+        let reply = request(
+            r#"{"jsonrpc":"2.0","id":7,"method":"tools/call",
+                "params":{"name":"symbols","arguments":{"file":"/nope/missing.rb"}}}"#,
+        );
+        assert!(reply["error"].is_null(), "answered without an initialize");
+        assert_eq!(reply["result"]["isError"], true, "the file, not the state");
     }
 
     #[test]

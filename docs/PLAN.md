@@ -315,6 +315,42 @@ And it defines the labeller's hardest judgement out of existence. Today someone
 has to decide per pair whether the offered refactor is real; with the caveat in
 the output, the tool discloses the uncertainty and the reader applies the rule.
 
+## Milestone 12a — DELIVERED
+
+Contribution resilience: the flywheel had one door, and that door could be shut
+for a whole session.
+
+| shipped | where |
+| ------- | ----- |
+| a resident MCP server restarts into a contour installed underneath it | DEC-025 — `src/mcp.rs` |
+| `contour pending` / `contour store-summary`, same gates, one payload | `src/cli/mod.rs`, `summary::contributed::accept` |
+| `side_effects: raises` means "signals failure to its caller" in any language | `summary::SIDE_EFFECTS`, the skill, two frozen tests |
+| `--status` takes a path | `store::checkouts` |
+
+Verified against the real thing rather than only the suite: two optimized builds
+swapped under an open stdio session (same pid, healed, tools re-announced), and a
+live MCP round that contributed two summaries to the real index. The second is
+the DEC-018 bet paying off in public — the query "notice that the program on disk
+is not the one running" shares no word with `superseded`, returned three
+unrelated test functions before the contribution and returned `superseded` first
+at `[semantic/summary] cos 0.47` after it.
+
+### Awaiting a ruling
+
+**1. Version the derived database in its filename** (DEC-025's last section). The
+restart *recovers* from schema skew; this would make it impossible, and would
+also retire the "two contours take turns wiping each other's index" hazard
+`Store::init` guards against. It is an on-disk restructure, so it is the owner's
+call rather than an implementer's.
+
+**2. The Rust free-function owner gap now costs contributions, not just search.**
+DEC-021 records it as path-class work's sibling and it has stood since Phase 1.5.
+The new evidence: writing a summary for `contributed::accept` — the name a reader
+of the source would use — is refused, because contour knows that unit as bare
+`accept`. `pending` returns the right id and the skill says to use it, so the
+grazing path works; but the natural name is wrong, on a surface where being
+wrong costs a session's tokens. Same fix, one more reason.
+
 ## The recurring shape: identical bodies that mean different things
 
 Worth naming, because it has now arrived three times wearing three different

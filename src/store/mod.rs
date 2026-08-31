@@ -74,6 +74,25 @@ pub fn default_path() -> Result<PathBuf> {
     })
 }
 
+/// The checkouts a status question is about: every one, or just the one
+/// containing `path`.
+///
+/// Shared by `--status` and the MCP `status` tool so "which checkout does this
+/// path mean" has one answer rather than two that almost agree.
+///
+/// Deliberately not an index refresh (DEC-015): status is a flag, so it reports
+/// on the database rather than filling it, and a path nothing has indexed is an
+/// empty answer rather than a scan.
+pub fn checkouts(store: &Store, path: Option<&Path>) -> Result<Vec<Checkout>> {
+    let all = store.status()?;
+    let Some(path) = path else {
+        return Ok(all);
+    };
+    let root = crate::scan::repo_root(path)?;
+    let root = root.to_string_lossy();
+    Ok(all.into_iter().filter(|c| c.root == root).collect())
+}
+
 /// The database every command uses.
 pub fn open_default() -> Result<Store> {
     let path = default_path()?;
@@ -562,13 +581,19 @@ pub struct SummaryKey<'a> {
     pub ctx_hash: u64,
     pub prompt: &'a str,
     pub model: &'a str,
-    /// How the answer arrived: [`VIA_API`] or [`VIA_MCP`].
+    /// Who bought the answer: [`VIA_API`] or [`VIA_MCP`].
     pub via: &'a str,
 }
 
 /// contour called a model itself (or replayed a fixture through the same path).
 pub const VIA_API: &str = "api";
-/// A session handed contour a summary through the MCP surface.
+/// A session handed contour a summary it wrote.
+///
+/// The value says `mcp` because that was the only door when it was chosen, and
+/// it is a **key** column: renaming it to match the CLI door that arrived later
+/// would re-key every contribution, which DEC-016 says costs the work again.
+/// What it distinguishes is who paid — a session's attention against an API
+/// fill — and that is the same on both doors, which is why one value is right.
 pub const VIA_MCP: &str = "mcp";
 
 /// A unit plus where this checkout currently keeps it.

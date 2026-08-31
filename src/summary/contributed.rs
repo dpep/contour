@@ -49,17 +49,7 @@ const REQUIRED: [&str; 6] = [
     "patterns",
 ];
 
-/// The closed side-effect vocabulary, spelled out here so a rejection can name
-/// what was allowed.
-const SIDE_EFFECTS: [&str; 7] = [
-    "persists",
-    "network",
-    "filesystem",
-    "mutates",
-    "observes",
-    "raises",
-    "spawns",
-];
+use super::SIDE_EFFECTS;
 
 /// What was stored, echoed back so a session can confirm what it bought.
 #[derive(Debug, serde::Serialize)]
@@ -69,6 +59,44 @@ pub struct Accepted {
     pub model: String,
     pub via: &'static str,
     pub prompt_version: String,
+}
+
+/// Take a contribution handed over as one JSON object.
+///
+/// The envelope both doors accept — the MCP tool's `arguments` and the CLI's
+/// stdin are the same object — so an agent writes one payload and the skill
+/// teaches one shape. Flags on one side and JSON on the other would be two
+/// shapes for one thing, and the second would be the one that drifted.
+///
+/// `root` is the caller's, not the payload's: MCP takes it from the tool
+/// argument and the CLI from its positional, and both have already brought that
+/// checkout up to date before calling — gate 2 below compares against the index.
+pub fn accept(store_: &mut Store, root: &Path, payload: &Value) -> Result<Accepted> {
+    let required = |name: &str| -> Result<&str> {
+        payload[name]
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("`{name}` is required"))
+    };
+    // Named here rather than left to `validate`, which sees the summary object
+    // without knowing what it was reached through. The mistake this catches is
+    // writing the six summary fields beside `unit` instead of under `summary` —
+    // the MCP tool's schema steers a client away from it, and a payload typed
+    // against the CLI has nothing to steer it.
+    anyhow::ensure!(
+        payload["summary"].is_object(),
+        "`summary` must be an object holding {}; the contribution's own fields \
+         (unit, model, prompt_version) sit beside it, not inside it",
+        REQUIRED.join(", ")
+    );
+    store(
+        store_,
+        root,
+        required("unit")?,
+        payload["path"].as_str(),
+        required("model")?,
+        required("prompt_version")?,
+        &payload["summary"],
+    )
 }
 
 /// Validate a contributed summary and store it.
@@ -271,6 +299,46 @@ mod tests {
                 .to_string();
             assert!(err.contains(expected), "{label}: got `{err}`");
         }
+    }
+
+    /// Frozen, like `prompt`'s request shape and for the same reason. The
+    /// difference is that this prompt does not live in this repository once it
+    /// ships — it lives in the contour skill a session reads — so nothing else
+    /// can notice the two drifting apart.
+    ///
+    /// **The rule this enforces**, spelled out because the next editor has to
+    /// know which side of the line they are on: the version moves when the
+    /// *schema* moves — a field, a vocabulary word, something newly refused. It
+    /// does **not** move when the skill's prose is clarified, or every wording
+    /// fix would strand summaries a session already paid for, and reads do not
+    /// filter on it anyway (`Store::all_summaries`). If this test fails, bump
+    /// `CONTRIBUTED_PROMPT_VERSION` and update the skill; never repin it.
+    #[test]
+    fn the_contribution_schema_is_frozen_to_its_prompt_version() {
+        assert_eq!(CONTRIBUTED_PROMPT_VERSION, "mcp-v1");
+        assert_eq!(
+            REQUIRED,
+            [
+                "summary",
+                "primary_purpose",
+                "secondary_concerns",
+                "side_effects",
+                "domain",
+                "patterns"
+            ]
+        );
+        assert_eq!(
+            SIDE_EFFECTS,
+            [
+                "persists",
+                "network",
+                "filesystem",
+                "mutates",
+                "observes",
+                "raises",
+                "spawns"
+            ]
+        );
     }
 
     /// The API path keeps `other` so a paid answer survives one odd word; a

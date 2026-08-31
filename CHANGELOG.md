@@ -4,6 +4,34 @@
 
 Initial skeleton — nothing has been released, so everything below is new.
 
+- **Summaries can be contributed from the command line.** `contour pending
+  --model <id> -j` lists what nothing has summarized yet, with the source and
+  context to write each against, and `contour store-summary` takes one back as
+  JSON on stdin (or `--file`). The payload is the object the MCP
+  `store_summary` tool takes, and both doors are one function, so the three
+  gates are the same either way. Grazing no longer depends on the MCP server
+  being reachable.
+- **`side_effects` says what `raises` means outside Ruby**: a callable that
+  signals failure to its caller as part of its contract — a Ruby `raise`, a Rust
+  `Err` return, a documented `panic!`. The vocabulary is unchanged and no
+  contributed summary is re-keyed; the seven words now live in one place rather
+  than three, and a test fails if the schema changes without its prompt version.
+  `other` is gone from the API summarizer's schema, which offered a word the
+  store then refused — **`PROMPT_VERSION` v1 → v2**, free to take because no API
+  fill has ever run.
+- **An MCP session survives contour being upgraded underneath it.** A resident
+  `contour mcp` outlives the binary it was launched from, and once anything
+  moved the shared index to a newer schema, every tool that reads it failed for
+  the rest of the session — twice, in field trials, with no way to recover short
+  of restarting the session. The server now restats its own binary after each
+  answer and restarts into a new one in place, keeping the client's pipes, then
+  tells the client to re-read its tool list. **You no longer need to restart a
+  session after installing contour**; the next tool call may report the old
+  schema error once, and it now says so.
+- **`--status` takes a path, like every other command.** `contour --status .`
+  reports on the checkout you are standing in; bare `--status` still reports on
+  every checkout this machine has indexed, which is the only place that question
+  is answered. The MCP `status` tool takes the same optional `path`.
 - **contour knows what kind of file it is looking at.** Every duplicate group,
   search hit and neighbour carries a `class`: `app`, `test`, `fixture`,
   `migration`, `generated` or `vendored`, decided from the path alone.

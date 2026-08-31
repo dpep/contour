@@ -194,13 +194,38 @@ Rules that make a summary worth storing:
   method would still make sense without it — pagination inside a payroll query
   is secondary, the payroll is primary.
 - `side_effects` is a **closed vocabulary**. Use only the seven words above; an
-  invented one is rejected rather than coerced.
+  invented one is rejected rather than coerced. Two that are not
+  self-explanatory:
+  - `raises` — it signals failure to its caller as part of its contract, rather
+    than only on a bug. Ruby `raise`, **Rust `Err` return or documented
+    `panic!`**, Go error return. The word is Ruby's because Ruby came first; the
+    concept is not.
+  - `mutates` — it changes state the caller can reach: the receiver, an
+    argument, a global. Not a local.
 - **Judge only from what you are shown.** Do not guess what the methods it
   calls do.
 
 The current contributed prompt version is **`mcp-v1`**. `pending` returns the
 version the server expects — pass that back verbatim, and if it does not match
 this document, trust `pending` and mention the mismatch.
+
+### When the MCP tools are not there
+
+The same two doors exist on the command line, taking the same payload — use
+them when contour has no MCP server in this session, or when its tools are
+failing:
+
+```sh
+contour pending --model <your model id> --limit 20 -j   # source + context
+contour store-summary <<'JSON'
+{"unit": "Invoice#settle!", "model": "<your model id>", "prompt_version": "mcp-v1",
+ "summary": { ...the schema above... }}
+JSON
+```
+
+Note the nesting: `unit`, `model` and `prompt_version` sit *beside* `summary`,
+and the six schema fields sit *inside* it. `--file` reads the payload from a
+file instead of stdin.
 
 ### Why contributions are kept separate
 
