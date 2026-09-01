@@ -47,3 +47,10 @@ safe to call twice with the same result	Dispatcher#close
 hold stock for a customer before checkout	Warehouse#reserve
 how many units can still be sold	Warehouse#available
 add more units to a shelf	Warehouse#restock
+
+# --- a guard, and the callers that narrate it --------------------------------
+# Field-reported (docs/PLAN.md): a question about a check is answered by the
+# methods that CALL the guard rather than the one that implements it. Asked in
+# keywords here and as a sentence in the natural band, because only one of the
+# two phrasings triggers it — which is the finding.
+refuse changes after finalization	Shipment#ensure_open!

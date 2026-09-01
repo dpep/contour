@@ -828,6 +828,108 @@ prints an id. That is DEC-014's question and belongs with the tree layer, not
 with a milestone about hardening. Parked, with the reasoning rather than a
 guess.
 
+## The guard-clause case: two mechanisms, and only one is the scorer
+
+The field report's first finding: *"a query about 'prevent an action once a
+resource is already finalized' missed the one guard-clause method that
+implemented exactly that check, while several methods that merely called that
+guard ranked above it."* M12b's rule says do not tune ranking on one anecdote,
+so this was reproduced instead. It reproduces — twice, by two different
+mechanisms, and they want opposite things.
+
+**The case is now labeled**, in `tests/eval/fixture`: `corpus/shipping.rb` is a
+one-line guard and four methods that call it, with a keyword row in
+`queries.tsv` and a sentence row in `queries_natural.tsv`, both expecting the
+guard. Only one of the two phrasings triggers each mechanism, which is itself
+the finding.
+
+### A. One stopword prefix-match tips the fusion — contour's fault
+
+On a corpus holding only the five methods, `prevent a change once something has
+been finalized` ranks `add_parcel` (cos 0.27) above `ensure_open!` (cos 0.42),
+which carries the highest cosine on the page and is the only unit that answers
+the question. Scores 0.0164 against 0.0164 — a tie broken the wrong way.
+
+The whole difference is the word **"a"**, which prefix-matches **"add"**.
+`lexical_score` gives a prefix half credit, that is 0.06 of the query, and the
+0.06 buys `add_parcel` a *second* RRF term where `ensure_open!` has one. Delete
+one word from the query and the ranking is right:
+
+| query | first | why |
+| ----- | ----- | --- |
+| `prevent a change once …` | `add_parcel` cos 0.27 | `both`, lexical 0.06 |
+| `prevent changes once …` | `ensure_open!` cos 0.38 | `semantic` only |
+| `stop an update after the record is finalized` | `ensure_open!` cos 0.36 | no lexical hit anywhere |
+
+This is **exactly the case DEC-027 parked**: "IDF is not refuted, it is
+unmeasurable here… no labeled query in any set is phrased the way the repro
+is." The field report supplies the phrasing the eval lacked. Two candidate
+moves, neither taken, both falsifiable against all eleven sets:
+
+- **No prefix credit for a query token of one or two characters.** `pay`
+  matching `payroll` is the evidence the half credit was written for; `a`
+  matching `add` is not. One line, and it attacks the trigger rather than the
+  symptom.
+- **IDF**, re-asked against the natural band, which is what DEC-027 said to do
+  before declaring it dead.
+
+Deliberately not chosen here: the anecdote is one query on a five-unit corpus,
+and M12b's own history is a diagnosis that was half right with a prescription
+that was wrong.
+
+### B. The caller's summary out-scores the guard's — the summarizer's fault
+
+Ask the same question in keywords over the 26-unit fixture and the guard ranks
+**fourth with no lexical hit anywhere**: pure cosine puts `relabel` (0.33),
+`remove_parcel` (0.33) and `reroute` (0.29) above `ensure_open!` (0.28). That
+is the field report's own hypothesis — narrative similarity beating the precise
+match — and it looked like the ranking's fault.
+
+It is not. Rewrite **only the guard's summary**, changing nothing else:
+
+| the guard's summary | its rank | cosine |
+| ------------------- | -------: | -----: |
+| "Signals an error unless the shipment is still open, so that nothing may change once it has been finalized." | 4th | 0.28 |
+| "Refuses any change to a shipment that has already been finalized." | **1st** | **0.39** |
+
+Both are accurate. The first describes **how the check is spelled**, the second
+**what the caller is prevented from doing** — and a guard clause is precisely
+the shape where those diverge, because its implementation is a negation of a
+negation while its contract is a plain refusal. The callers' summaries state the
+contract in passing ("refusing once the shipment has been finalized"), so they
+win against a guard that states its mechanism.
+
+That makes the cheapest lever a **line in the summarizer prompt**, not a
+scoring change: for a method whose purpose is to refuse, say what it refuses.
+It is also the safest, because it moves nothing that is already ranked.
+
+### What the case cost the rest of the set
+
+Same build, same machine, `tests/eval/fixture` before and after the five units
+and two rows:
+
+| row | before, 22 queries | after, 23 |
+| --- | ------------------ | --------- |
+| `contour` | 10 top-1, 21 top-5 | 10 top-1, 22 top-5 |
+| `contour:identifier` | 9 top-1, 14 top-5 | 8 top-1, 14 top-5 |
+| `contour:natural` | 14 top-1, 22 top-5 | 17 top-1, 23 top-5 |
+
+The new keyword row is a **miss at top-1 and a hit at top-5** (rank 4), which is
+finding B pinned; the new natural row is a top-1 hit. Everything else in those
+columns is five distractor units moving unrelated queries around: −1 on the
+identifier band and +3 on the natural band, from a case that added one query.
+**Read that as the fixture set being too small to carry a signal**, which its
+own README already says — the case is here to pin a shape, and any ranking
+change it motivates has to be scored on rails and discourse.
+
+**The caveat, and it is load-bearing.** The summaries in this fixture were
+written by hand for this case, and finding B is *sensitive to the words
+chosen* — which is what the rewrite above demonstrates and is the reason it is
+reported as a summarizer finding rather than a ranking one. Confirming it needs
+a real summarized corpus and a real summarizer, which is an API bill this did
+not have. Finding A needs no such caveat: `"a"` prefix-matching `"add"` is in
+the code.
+
 ## Monorepo scale, measured
 
 The plan's non-goal said "brute-force cosine with rayon handles ~50k records

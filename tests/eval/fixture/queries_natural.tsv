@@ -47,3 +47,6 @@ which of these is safe for me to call twice with the same result	Dispatcher#clos
 how do I hold some stock for a customer before they check out	Warehouse#reserve
 is there something that says how many units can still be sold	Warehouse#available
 what do I use to add more units to a shelf	Warehouse#restock
+
+# --- a guard, and the callers that narrate it --------------------------------
+how do I prevent a change once something has been finalized	Shipment#ensure_open!

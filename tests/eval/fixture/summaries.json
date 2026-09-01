@@ -291,5 +291,77 @@
       "guard clause",
       "idempotent write"
     ]
+  },
+  "Shipment#ensure_open!": {
+    "summary": "Signals an error unless the shipment is still open, so that nothing may change once it has been finalized.",
+    "primary_purpose": "guard against changing a finalized shipment",
+    "secondary_concerns": [],
+    "side_effects": [
+      "raises"
+    ],
+    "domain": "shipping",
+    "patterns": [
+      "guard clause"
+    ]
+  },
+  "Shipment#add_parcel": {
+    "summary": "Adds a parcel to the shipment, refusing once the shipment has been finalized, then recalculates the total weight.",
+    "primary_purpose": "parcel addition",
+    "secondary_concerns": [
+      "weight recalculation",
+      "refusing a finalized shipment"
+    ],
+    "side_effects": [
+      "persists"
+    ],
+    "domain": "shipping",
+    "patterns": [
+      "guard clause"
+    ]
+  },
+  "Shipment#remove_parcel": {
+    "summary": "Removes a parcel from the shipment, refusing once the shipment has been finalized, then recalculates the total weight.",
+    "primary_purpose": "parcel removal",
+    "secondary_concerns": [
+      "weight recalculation",
+      "refusing a finalized shipment"
+    ],
+    "side_effects": [
+      "persists"
+    ],
+    "domain": "shipping",
+    "patterns": [
+      "guard clause"
+    ]
+  },
+  "Shipment#relabel": {
+    "summary": "Changes the shipment's label, refusing once the shipment has been finalized.",
+    "primary_purpose": "label change",
+    "secondary_concerns": [
+      "refusing a finalized shipment"
+    ],
+    "side_effects": [
+      "persists"
+    ],
+    "domain": "shipping",
+    "patterns": [
+      "guard clause"
+    ]
+  },
+  "Shipment#reroute": {
+    "summary": "Sends the shipment to a different depot, refusing once the shipment has been finalized, and tells the customer.",
+    "primary_purpose": "depot change",
+    "secondary_concerns": [
+      "notification",
+      "refusing a finalized shipment"
+    ],
+    "side_effects": [
+      "persists",
+      "network"
+    ],
+    "domain": "shipping",
+    "patterns": [
+      "guard clause"
+    ]
   }
 }

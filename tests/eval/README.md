@@ -20,6 +20,15 @@ Veto or amend any line. The harness reads these files directly, so an edit is
 the whole change. Labels the drafter was unsure of carry a `provisional` flag
 in the last column and are counted separately in the report.
 
+**And in `fixture/`, so were the summaries.** `summaries.json` is replayed
+rather than bought, so its wording is an authored input to every score the set
+produces. That matters for one case in particular: the guard-clause rows
+(`Shipment#ensure_open!`) reproduce their finding only because the guard's
+summary describes its mechanism rather than its contract, and rewriting that
+one summary moves it from fourth to first. See `docs/PLAN.md`, "The
+guard-clause case" — read that result as evidence about summaries, not about
+ranking.
+
 ## Sets
 
 | set | corpus | needs |
