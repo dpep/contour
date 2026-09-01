@@ -1106,19 +1106,23 @@ fn vectors_for(
         // If this needs to be faster, the lever is embedding *less* — a
         // scope-bounded warm — rather than restructuring this loop: `user`
         // running ~4x `wall` says the parallelism is already real.
-        if missing.len() > 2_000 {
-            eprintln!(
-                "contour: embedding {} texts with the {} embedder — this is a one-time \
-                 cost per corpus and is cached; subsequent queries are instant",
-                missing.len(),
-                embedder.kind()
-            );
-        }
-        // One vector per distinct text: identical summaries embed once.
+        // One vector per distinct text: identical summaries embed once. Deduped
+        // before the estimate below, because it is the distinct texts that get
+        // embedded and quoting the other number would overstate the bill.
         let mut unique: Vec<(u64, String)> = missing;
         unique.sort_unstable_by_key(|(key, _)| *key);
         unique.dedup_by_key(|(key, _)| *key);
         let texts: Vec<String> = unique.iter().map(|(_, text)| text.clone()).collect();
+
+        crate::embed::afford(embedder.kind(), texts.len(), units.len())?;
+        if texts.len() > 2_000 {
+            eprintln!(
+                "contour: embedding {} texts with the {} embedder — this is a one-time \
+                 cost per corpus and is cached; subsequent queries are instant",
+                texts.len(),
+                embedder.kind()
+            );
+        }
 
         // `None`: no `--embed-model` flag exists yet, so the spec is genuinely
         // constant and the pool resolves the same embedder `embedder` did —

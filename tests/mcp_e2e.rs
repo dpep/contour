@@ -21,13 +21,23 @@ struct Session {
 
 impl Session {
     fn start(label: &str, files: &[(&str, &str)]) -> Session {
-        Session::start_using(label, files, Path::new(env!("CARGO_BIN_EXE_contour")))
+        Session::start_using(label, files, Path::new(env!("CARGO_BIN_EXE_contour")), &[])
+    }
+
+    /// The same, with extra environment. Only the cost-budget case needs it.
+    fn start_with_env(label: &str, files: &[(&str, &str)], env: &[(&str, &str)]) -> Session {
+        Session::start_using(label, files, Path::new(env!("CARGO_BIN_EXE_contour")), env)
     }
 
     /// The same session, served by a named program rather than by the build
     /// under test. Only the upgrade case needs this: it launches from a *copy*
     /// so the copy can be replaced underneath the running process.
-    fn start_using(label: &str, files: &[(&str, &str)], program: &Path) -> Session {
+    fn start_using(
+        label: &str,
+        files: &[(&str, &str)],
+        program: &Path,
+        env: &[(&str, &str)],
+    ) -> Session {
         let base = std::env::temp_dir();
         let dir = base.join(format!("contour-mcp-{}-{label}", std::process::id()));
         let db = base.join(format!("contour-mcp-{}-{label}.db", std::process::id()));
@@ -67,6 +77,7 @@ impl Session {
 
         let mut child = Command::new(program)
             .arg("mcp")
+            .envs(env.iter().copied())
             .current_dir(&dir)
             .env("CONTOUR_DB", &db)
             // Hermetic: a test must not shell out to whatever trekr this
@@ -588,7 +599,7 @@ fn a_server_restarts_into_a_contour_installed_underneath_it() {
     let program = installed.join("contour");
     std::fs::copy(env!("CARGO_BIN_EXE_contour"), &program).unwrap();
 
-    let mut mcp = Session::start_using("upgrade", &corpus(), &program);
+    let mut mcp = Session::start_using("upgrade", &corpus(), &program, &[]);
     let init = mcp.request(
         1,
         "initialize",
@@ -898,4 +909,31 @@ fn a_cancelled_call_stops_the_work() {
     // the worker that served it.
     let outline = mcp.tool(5, "symbols", serde_json::json!({"file": "f0.rb"}));
     assert_eq!(outline["units"][0]["name"], "widget_handler_0_0");
+}
+
+/// The same refusal, as a tool result: an agent gets the bill rather than a
+/// two-hour silence. See the CLI case for why the budget is microseconds.
+#[test]
+fn an_unaffordable_call_hands_back_the_bill() {
+    let mut mcp = Session::start_with_env(
+        "budget",
+        &corpus(),
+        &[("CONTOUR_EMBED_BUDGET", "0.0000000001")],
+    );
+    mcp.request(
+        1,
+        "initialize",
+        serde_json::json!({"protocolVersion": "2025-06-18"}),
+    );
+    mcp.tool(2, "index", serde_json::json!({}));
+
+    let reply = mcp.request(
+        3,
+        "tools/call",
+        serde_json::json!({"name": "search", "arguments": {"query": "settle an invoice"}}),
+    );
+    assert_eq!(reply["result"]["isError"], true, "{reply}");
+    let text = reply["result"]["content"][0]["text"].as_str().unwrap_or("");
+    assert!(text.contains("nothing embedded yet"), "got {text:?}");
+    assert!(text.contains("Narrow the scope"), "got {text:?}");
 }

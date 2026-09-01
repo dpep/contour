@@ -26,6 +26,15 @@
   a hand-rolled client that assumed otherwise must stop assuming it. The
   mid-session restart (DEC-025) is unaffected and still exec's only when
   nothing is outstanding. DEC-031.
+- **A query that would have to embed the whole corpus now says so first.**
+  `search` and `similar` refuse a cold scope whose embedding is projected past
+  five minutes, naming the units in scope, how many have no vector, the rate
+  and thread count behind the projection, and what it would cost — rather than
+  starting a two-hour run with nothing to show for it. **Scope it**: a
+  directory at a time embeds the same corpus in the same total time, keeps what
+  it embeds, and answers at every step. `CONTOUR_EMBED_BUDGET` sets the budget
+  in seconds and `0` removes it. Builds with the hash embedder are ~8.5 million
+  texts a second and will not meet this. DEC-032.
 - **Where a monorepo's time actually goes, measured** at 132k and 256k units
   and written down in `docs/PLAN.md`: a cold unscoped query is an embedding run
   at ~295 units/second, 97% of the wall clock, extrapolating to about 110

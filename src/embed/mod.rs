@@ -115,6 +115,99 @@ impl From<Workload> for onnx::Workload {
 /// `&dyn Embedder`: every thread would serialise on it. One embedder per
 /// thread is what actually buys the parallelism.
 ///
+/// How long a cold corpus takes to embed, before anybody waits for it.
+///
+/// **Measured, per thread, so the estimate follows the machine.** A build
+/// corpus of replicated public Ruby was embedded at two sizes on 8 threads
+/// (release, 8 cores, quiet machine — `docs/PLAN.md` has the method and the
+/// table):
+///
+/// | embedder | 8 threads | per thread |
+/// | -------- | --------: | ---------: |
+/// | `onnx`   |     295/s |       37/s |
+/// | `hash`   |  8,500,000/s |  1,060,000/s |
+///
+/// Two significant figures, which is what two points over a 1.9× range support.
+/// Per-thread because core count is the variance this can actually see; machine
+/// speed it cannot, so the estimate is worth a factor of two or so and is
+/// quoted as "about". That is ample for the judgment it is used for, which is
+/// telling three minutes from two hours.
+///
+/// An unknown embedder gets the slow rate. Over-estimating the bill costs a
+/// refusal somebody can override; under-estimating it costs the wait this
+/// exists to prevent.
+fn per_thread_per_second(kind: &str) -> f64 {
+    match kind {
+        "onnx" => 37.0,
+        "hash" => 1_060_000.0,
+        _ => 37.0,
+    }
+}
+
+/// Seconds this many texts should take to embed on this machine.
+pub fn projected_seconds(kind: &str, texts: usize) -> f64 {
+    let rate = per_thread_per_second(kind) * rayon::current_num_threads().max(1) as f64;
+    texts as f64 / rate
+}
+
+/// How long a caller is willing to wait for a corpus to be embedded before
+/// their first answer, in seconds. `CONTOUR_EMBED_BUDGET` overrides it; `0`
+/// removes it.
+///
+/// **Five minutes, and both ends of that are evidence.** A cold rails checkout
+/// — 54k units, the corpus this tool was designed against and the one its docs
+/// call a one-time cost — is about three minutes, so the budget has to sit
+/// above it or the documented normal becomes a refusal. A 2M-unit monorepo is
+/// about two hours, which a field report reached and abandoned after twenty
+/// minutes. Anything between those two separates them; five minutes is the
+/// round number in the gap.
+///
+/// It is a **budget, not a limit on the corpus**: scoping the same query to a
+/// directory at a time warms the index cumulatively, and every one of those
+/// answers arrives. That is why refusing is better than starting — the caller
+/// gets a shorter first answer rather than a longer wait.
+fn budget_seconds() -> Option<f64> {
+    let budget = std::env::var("CONTOUR_EMBED_BUDGET")
+        .ok()
+        .and_then(|v| v.parse::<f64>().ok())
+        .unwrap_or(300.0);
+    (budget > 0.0).then_some(budget)
+}
+
+/// Refuse a cold corpus that would cost more than the budget, saying what it
+/// weighed and what to do instead.
+///
+/// Placed where the bill is known and before any of it is paid. The numbers are
+/// in the message rather than only in a doc because this is the one moment a
+/// caller can act on them — DEC-032.
+pub fn afford(kind: &str, texts: usize, units_in_scope: usize) -> anyhow::Result<()> {
+    let Some(budget) = budget_seconds() else {
+        return Ok(());
+    };
+    let projected = projected_seconds(kind, texts);
+    if projected <= budget {
+        return Ok(());
+    }
+    anyhow::bail!(
+        "this scope holds {units_in_scope} unit(s), {texts} of which have nothing embedded \
+         yet. That is about {} with the {kind} embedder on {} thread(s), against a budget of \
+         {}. Narrow the scope — a directory at a time warms the index for good, and each \
+         answer arrives — or set CONTOUR_EMBED_BUDGET to a number of seconds (0 for no \
+         budget).",
+        about(projected),
+        rayon::current_num_threads().max(1),
+        about(budget),
+    )
+}
+
+/// A duration at the precision an estimate built from a rate actually has.
+fn about(seconds: f64) -> String {
+    match seconds {
+        s if s < 120.0 => format!("{} second(s)", s.round() as u64),
+        s => format!("{} minute(s)", (s / 60.0).round() as u64),
+    }
+}
+
 /// `Workload::Bulk` on purpose: rayon is already running an inference per
 /// core, so intra-op threads on top of that only oversubscribe — measured by
 /// gqls at ~19% slower when set the other way.

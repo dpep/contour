@@ -1248,3 +1248,77 @@ likelihood, and the exposure is a long write — indexing a monorepo for the
 first time — running past five seconds while another request wants to write.
 Recorded rather than pre-solved: raising the timeout without a case that hits
 it would be tuning against imagination.
+
+## DEC-032 — A cold corpus states its bill instead of quietly running it
+
+The field report's fifth finding: an unscoped call on ~2M units ran 20+ minutes
+with no progress, no partial results and no way to estimate what was left.
+Measured (PLAN.md), that call is not slow — it is a corpus-sized inference run,
+about two hours and about 9 GB, standing between the caller and their first
+answer. Nothing about it gets better with a spinner.
+
+**As built: `embed::afford` refuses before any of it is paid for**, naming the
+units in scope, how many have nothing embedded yet, the projected time, the
+rate and thread count behind that projection, and the budget it broke. One
+gate, at the one place that knows the bill — `vectors_for`, which both `search`
+and `similar` reach and `dupes` never does.
+
+### Why refuse rather than warn
+
+A warning arrives *with the answer*, which is two hours too late; and a tool
+call has no stderr to warn on before it. The three things a caller can do — ask
+a smaller question, wait deliberately, or come back once something else has
+warmed the corpus — all need to be offered *before* the wait, and a refusal is
+the only shape that does that. It is also the house register: an ambiguous unit
+name is refused rather than resolved (DEC-010), and a malformed contribution is
+rejected rather than repaired (DEC-016).
+
+**And the refusal is not a smaller tool.** Scoping the same query to a
+directory at a time embeds the same corpus in the same total time, cumulatively
+and for good, with an answer at every step — a strictly better shape than one
+silent block. That is the sentence the message ends on, and it is only true
+because `scope` now reaches every query surface (DEC-030).
+
+### The estimate is measured, and says how well
+
+Two rates, from the two-size scale run in PLAN.md, quoted per *thread* so the
+estimate follows the machine's core count: **37 units/second/thread for `onnx`,
+about 1.06 million for `hash`.** Two significant figures, which is what two
+points over a 1.9× range support. What it cannot see is machine speed, so the
+projection is worth a factor of two or so — ample for the judgment it makes,
+which is telling three minutes from two hours, and the message says "about"
+rather than pretending otherwise. An unknown embedder gets the slow rate:
+over-estimating costs a refusal somebody can override, under-estimating costs
+the wait this exists to prevent.
+
+The gap between the two rates is the reason this is a *time* budget rather than
+a unit count. A count that refused a 2M-unit `onnx` corpus would refuse a
+`hash` corpus that embeds in a quarter of a second.
+
+### Five minutes, and both ends of it are evidence
+
+A cold rails checkout — 54k units, the corpus this tool was designed against
+and the one its own docs call a one-time cost — is about three minutes, so the
+budget has to sit above it or the documented normal becomes a refusal. The 2M
+monorepo is about two hours and was abandoned at twenty minutes. Five minutes
+is the round number in that gap. `CONTOUR_EMBED_BUDGET` overrides it in
+seconds, `0` removes it — the same escape `CONTOUR_SEMANTIC_FLOOR` gives the
+other inherited constant, and for the same reason: a threshold nobody can
+switch off is an unfalsifiable one.
+
+### What was considered and dropped
+
+- **`notifications/progress`.** Checked before being designed against: the
+  client this ships to does not put a `progressToken` on `tools/call` and does
+  not render server progress. Building on it would be a progress bar nobody
+  sees (DEC-031).
+- **Partial results.** Worth having only where the algorithm yields them
+  naturally, and this one does not: which units got embedded first is an
+  artefact of a hash-ordered walk, so a "partial" answer would be a search of
+  an arbitrary slice reported as a search. A scoped answer is the honest
+  partial, and the caller chooses the slice.
+- **Sampling the rate live** — embed a few hundred texts, time them, project.
+  Self-calibrating, and it would have been wrong: each rayon worker loads its
+  own ONNX session, ~3.7 s of fixed cost that a small sample measures as
+  per-text and would inflate the estimate several-fold. A measured constant
+  with its method written down beats a measurement taken badly.

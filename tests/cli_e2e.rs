@@ -55,8 +55,14 @@ impl Repo {
     /// The same binary and database, invoked from somewhere else. Only a test
     /// about *finding* the checkout needs this; everything else runs inside it.
     fn run_in(&self, cwd: &Path, args: &[&str]) -> (String, String, i32) {
+        self.run_env(cwd, args, &[])
+    }
+
+    /// The same, with extra environment. Only the cost-budget cases need it.
+    fn run_env(&self, cwd: &Path, args: &[&str], env: &[(&str, &str)]) -> (String, String, i32) {
         let out = Command::new(env!("CARGO_BIN_EXE_contour"))
             .args(args)
+            .envs(env.iter().copied())
             .current_dir(cwd)
             .env("CONTOUR_DB", &self.db)
             // Hermetic: no case may consult whatever trekr or rq this machine
@@ -1696,4 +1702,56 @@ fn similar_takes_a_scope_and_says_which_one_it_searched() {
     // hold a vector for are the ones inside it.
     assert_eq!(narrowed["coverage"]["summarizable"], 1);
     assert_eq!(all["coverage"]["summarizable"], 2);
+}
+
+/// A cold corpus too big to embed inside the budget is refused before any of
+/// it is paid for, and the refusal carries the numbers it was refused on.
+///
+/// The field report: an unscoped call on ~2M units ran 20+ minutes with no
+/// estimate and no way to bound it. Measured, that call is a corpus-sized
+/// inference run — about two hours — and the useful thing to hand back is not
+/// a progress bar but the bill and a smaller question.
+///
+/// **The budget in this test is microseconds, and it has to be**: the hash
+/// embedder this build carries does about 8.5 million texts a second, so
+/// nothing a test can generate costs a readable number of them. What is pinned
+/// here is the plumbing — estimate, refusal, message, override. The rates
+/// behind the estimate are measurements, recorded in `docs/PLAN.md`.
+#[test]
+fn an_unaffordable_cold_corpus_is_refused_with_its_bill() {
+    let body = "class %C%\n  def save(a)\n    b = a.check\n    persist(b)\n    b\n  end\nend\n";
+    let repo = Repo::new(
+        "budget",
+        &[
+            ("a/one.rb", &body.replace("%C%", "Widget")),
+            ("b/two.rb", &body.replace("%C%", "Gadget")),
+        ],
+    );
+    repo.run(&["index"]);
+
+    let tiny = [("CONTOUR_EMBED_BUDGET", "0.0000000001")];
+    let (_, err, code) = repo.run_env(&repo.dir.clone(), &["search", "persist a thing"], &tiny);
+    assert_eq!(code, 2, "{err}");
+    assert!(err.contains("2 unit(s)"), "the scope's size: {err:?}");
+    assert!(err.contains("nothing embedded yet"), "{err:?}");
+    assert!(err.contains("Narrow the scope"), "{err:?}");
+    assert!(err.contains("CONTOUR_EMBED_BUDGET"), "{err:?}");
+
+    // `similar` goes through the same gate, and a scope is the answer the
+    // message points at.
+    let (_, err, code) = repo.run_env(&repo.dir.clone(), &["similar", "Widget#save"], &tiny);
+    assert_eq!(code, 2, "{err}");
+    assert!(
+        err.contains("1 unit(s)") || err.contains("2 unit(s)"),
+        "{err:?}"
+    );
+
+    // Nothing was embedded and nothing was written, so removing the budget
+    // still finds the same answer.
+    let (_, err, code) = repo.run_env(
+        &repo.dir.clone(),
+        &["search", "persist a thing"],
+        &[("CONTOUR_EMBED_BUDGET", "0")],
+    );
+    assert_eq!(code, 0, "{err}");
 }

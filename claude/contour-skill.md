@@ -83,6 +83,20 @@ a `semantic` one is a suggestion.
 `dupes` take, and it answers with the `scope` it searched. The unit you ask
 about is found wherever it lives; the scope bounds the *answers*.
 
+### On a big repository, scope the first question
+
+Every unit in scope needs a vector, and one that has nothing embedded yet is
+embedded on the spot — measured at ~295 units/second with the real embedder, so
+a cold million-unit scope is an hour before the first answer, not a slow query.
+contour refuses that rather than running it, and the refusal tells you how many
+units it weighed and what it would have cost.
+
+**The fix is always the same: name a directory.** `contour search "..." app/billing`,
+`contour similar 'Owner#method' lib/`, `dupes app/models`. Each scoped run keeps
+what it embeds, so working through a repository a directory at a time warms it
+for good and answers at every step. Once a scope is warm, asking it again is
+under a second.
+
 If `search` returns less than you expect, run `contour --status` before
 concluding the code is not there.
 
