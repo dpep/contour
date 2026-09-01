@@ -1376,3 +1376,118 @@ is still true of an *unscoped* query and no longer true of a scoped one, which
 is what a session on a monorepo actually issues. Four workers stands; the
 arithmetic behind it now applies to the worst case rather than to every case.
 
+
+## DEC-034 — `contour embed` is where the embedding bill is paid on purpose
+
+DEC-032 taught `search` and `similar` to refuse a cold scope that would cost
+more than five minutes, and the refusal's advice was "narrow the scope". That
+is true and it is not enough: on a large monorepo the only way to reach a warm
+index was to name every directory in it by hand, one query at a time. The bill
+itself is entirely reasonable — vectors are keyed by normalized content and
+shared across every checkout on the machine (DEC-003), so about two hours
+overnight buys a 2M-unit corpus once, for good. What is unreasonable is paying
+it *inside a tool call*.
+
+**As built: `contour embed [SCOPE] [--budget SECONDS]`.** It embeds every text
+in scope that has no vector, commits every batch as it finishes, reports
+progress on stderr from its own measured rate, and prints a `--json` /
+`--ndjson` summary. `src/embed/fill.rs`.
+
+### Why a verb, and why this verb
+
+DEC-015 settles half of it: this fills the index, so it is a subcommand rather
+than a flag. The other half is which subcommand, and the two candidates were
+`contour index --embed` and a verb of its own.
+
+`index` is the wrong host, for a reason DEC-030 already recorded: **`index`
+deliberately takes no scope**, because it writes the checkout's whole file map
+and a partial one is a corrupt index rather than a cheaper one. Embedding is
+exactly the layer that has to be scopeable — that is the entire cost control —
+so hanging it off `index` would mean one command whose two halves disagree
+about what a scope is.
+
+What it *is* is the sibling of `summarize`: one verb per expensive layer, each
+taking a scope, each budgeted, each resumable, each reporting what it bought.
+A reader who has met one can predict the other, which is the property that
+makes a second one cheap and a third one predictable.
+
+### The budget is seconds, and `summarize`'s is a count
+
+The one place the two verbs deliberately differ. `summarize --budget N` bounds
+*answers* because an answer is what costs money. Embedding costs time, and the
+two embedders differ by four orders of magnitude in rate (DEC-032): a count
+that bounded a 2M-unit `onnx` fill would bound a `hash` fill that finishes in a
+quarter of a second. Seconds is the unit the thing is actually spent in, and it
+is the unit `CONTOUR_EMBED_BUDGET` already speaks.
+
+`--budget 0` is refused rather than read as "no budget" — that is what leaving
+the flag off means, and one word must not mean two things two flags apart.
+
+### It never refuses, because it is the consent
+
+`afford`'s projection is still computed and still printed — the caller sees the
+same estimate the query refused on — but nothing here can decline. Asking for
+this command is what the refusal was asking for. What replaces the refusal is
+the ability to change your mind: progress every few seconds, Ctrl-C at any
+moment, and everything embedded so far still there.
+
+### Resumable was free, and that is the design working
+
+There is no checkpoint, no cursor and no "resume" flag, because a vector is
+keyed by the text it came from (DEC-003) and the fill's first act is to ask the
+store which of the texts in scope already have one. A second run over a warm
+scope is one query and a report; a run over a half-warm scope continues.
+**The interrupted-run bookkeeping is a special case that cannot arise**, which
+is the cheapest kind to handle.
+
+The one thing that had to be built for it is the commit granularity: batches of
+500, under two seconds of work at the measured ONNX rate, so an interrupt loses
+at most that. A fill that wrote once at the end would have lost the whole run,
+and that is what the test pins.
+
+### Not an MCP tool, and the reason is the problem statement
+
+A two-hour tool call is the thing this exists to prevent, so exposing it as one
+would close the circle back on DEC-032. Three specifics behind that:
+
+- **Progress has nowhere to go.** A CLI has a stderr and a terminal; a tool call
+  has neither, and DEC-031 already checked that this client does not render
+  `notifications/progress`. The fill would be as silent as the run DEC-032
+  refuses.
+- **A budgeted tool call is the refusal with extra steps.** `embed --budget 120`
+  as a tool would return "stopped, 1.9M texts left" — which is what the refusal
+  already says, without spending two minutes to say it.
+- **The session is the wrong place to spend it.** This is a per-machine,
+  one-time cost that outlives the session; a person running it in another
+  terminal, or overnight, is the shape that fits.
+
+So the skill tells a session to *suggest* the command rather than to run it, and
+the refusal message names it. Reconsider if a client ever renders progress and
+survives a long call — nothing about the fill would have to change, only who is
+allowed to start it.
+
+### An already-warm scope exits non-zero
+
+The house rule is 0 = something happened, non-zero = nothing did, and a fill
+with nothing to fill is the second. It reads oddly beside `contour embed &&
+contour search …`, which is why the human line says "already warm — nothing to
+embed" rather than printing zeroes. `summarize` has behaved this way since it
+shipped, and two fills disagreeing about it would be worse than either answer.
+
+### The thing this makes urgent, recorded rather than fixed
+
+**Vectors live in the derived half, and the derived half is named for its
+schema version.** So a `VERSION` bump — which DEC-003 treats as free, because
+"everything under this version is derived from bytes this machine can read
+again" — now silently costs two hours on a monorepo, because the new derived
+file starts with an empty `vector` table.
+
+DEC-016 put embeddings on that side of the line with its arithmetic stated:
+"re-embedding a large repo locally is about a minute". That was true of the
+repo it was written about and is not true of the corpus this command exists
+for. Nothing here changes it — moving `vector` into the purchased half is a
+storage decision with its own migration story, and taking it in passing while
+shipping a fill command would be exactly the kind of key-adjacent change
+DEC-016 warns about. But **the next `VERSION` bump should not be taken as free
+without reading this**, and the honest options are two: move the table, or make
+the bump say what it is about to throw away.

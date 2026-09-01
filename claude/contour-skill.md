@@ -83,7 +83,7 @@ a `semantic` one is a suggestion.
 `dupes` take, and it answers with the `scope` it searched. The unit you ask
 about is found wherever it lives; the scope bounds the *answers*.
 
-### On a big repository, scope the first question
+### On a big repository: refused → `contour embed` → warm forever
 
 Every unit in scope needs a vector, and one that has nothing embedded yet is
 embedded on the spot — measured at ~295 units/second with the real embedder, so
@@ -91,11 +91,23 @@ a cold million-unit scope is an hour before the first answer, not a slow query.
 contour refuses that rather than running it, and the refusal tells you how many
 units it weighed and what it would have cost.
 
-**The fix is always the same: name a directory.** `contour search "..." app/billing`,
-`contour similar 'Owner#method' lib/`, `dupes app/models`. Each scoped run keeps
-what it embeds, so working through a repository a directory at a time warms it
-for good and answers at every step. Once a scope is warm, asking it again is
-under a second.
+**Two ways out, and the first is the durable one.**
+
+1. **Pay it once, deliberately, outside the session**: `contour embed` (or
+   `contour embed <dir>` for part of the repo). It embeds only what has no
+   vector, commits as it goes, prints progress with a measured rate and an ETA,
+   and continues where an interrupted run stopped. `--budget SECONDS` bounds a
+   sitting. Vectors are keyed by content and shared across every checkout on the
+   machine, so an overnight run is paid once and never again. **Suggest this to
+   the user rather than running it inside a tool call** — the whole reason for
+   the refusal is that a two-hour call is not a tool call.
+2. **Name a directory** for the answer you need now: `contour search "..."
+   app/billing`, `contour similar 'Owner#method' lib/`, `dupes app/models`. Each
+   scoped run keeps what it embeds, so working through a repository a directory
+   at a time warms it cumulatively and answers at every step.
+
+Once a scope is warm, asking it again is fast, and a scoped query pays only for
+the vectors in its scope.
 
 If `search` returns less than you expect, run `contour --status` before
 concluding the code is not there.
@@ -297,16 +309,22 @@ checkout indexes it, and every later one brings it up to date first.
 contour --status              # what is indexed, and how much is summarized
 contour index                 # only if you want the cost paid now rather than
                               # on the first question
+contour embed                 # pay the whole checkout's embedding cost now,
+                              # once, with progress — see "On a big repository"
 ```
 
 Indexing is fast (rails: ~2 s for 3,300 files). The first `search` on a fresh
 corpus embeds every identifier once and caches the result: a few seconds on a
 normal repo, and **~3 minutes on something the size of rails** (54k
-callables). contour prints a notice before a long pass.
+callables). contour prints a notice before a long pass, and refuses one
+projected past five minutes — that is what `contour embed` is for.
 
-Queries after that are served from the cache: ~0.2 s on a normal repo, **~5 s
-on rails**, where loading and scoring 54k vectors is most of the cost. "Instant"
-is true of a small repo and an overstatement of a large one.
+Queries after that are served from the cache: ~0.2 s on a normal repo, and
+**under a second for a scoped query on a 265k-unit corpus** — a scoped query
+loads only its own scope's vectors, so the cost follows the question rather than
+the repository. An *unscoped* query on that corpus is ~2 s, and it grows with
+the checkout. "Instant" is true of a small repo, and of a scoped question on a
+large one.
 
 **Rust ids carry the module the file declares** — `summary::contributed::accept`,
 not `accept`, and `lang::go::tests::find` rather than a `tests::find` that five

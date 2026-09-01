@@ -24,6 +24,7 @@ is a deliberately degraded tier (a comment-stripped token stream, disclosed as
 contour index [PATH]     # scan a checkout, index every callable in it
 contour dupes [SCOPE]    # identical bodies; --near for nearly-identical ones
                          # --canonical names the likely original, with the basis
+contour embed [SCOPE] [--budget SEC]   # fill embeddings, so queries answer warm
 contour summarize [SCOPE] --budget N   # fill LLM summaries, on demand
 contour pending [SCOPE] --model M      # what nothing has summarized yet
 contour store-summary [PATH]           # contribute one, as JSON on stdin
@@ -63,6 +64,14 @@ a lookup or a join over the chain of keys a unit accumulates.
 
 Cheap layers index eagerly, repo-wide. Expensive layers fill on demand and
 budgeted, with coverage disclosed on every answer.
+
+A query embeds whatever in its scope has no vector yet, which is a wait a large
+repository cannot absorb: at the measured rate a million units is over an hour.
+So `search` and `similar` **refuse** a cold scope projected past five minutes
+and say what it would cost (`CONTOUR_EMBED_BUDGET` overrides), and `contour
+embed` is where you pay it on purpose — scoped, resumable, with progress on
+stderr. Embeddings are keyed by content and shared across checkouts, so a
+machine pays once.
 
 The index is per-machine (`~/.local/share/contour/contour.db`, `$CONTOUR_DB`
 overrides) and keyed by git blob OID, so branch switches, rebases, and N

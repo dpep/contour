@@ -119,6 +119,23 @@ enum Command {
         #[arg(long, value_name = "MODEL", default_value = DEFAULT_MODEL)]
         model: String,
     },
+    /// Embed everything in a scope, so queries over it answer warm.
+    ///
+    /// Queries embed what they need on the spot, which is a wait a large
+    /// corpus cannot absorb — `search` and `similar` refuse one projected past
+    /// five minutes rather than running it (DEC-032). This is where you say
+    /// yes to it: it embeds only what has no vector, commits as it goes, and
+    /// continues where an interrupted run stopped. One machine pays it once
+    /// (DEC-034).
+    Embed {
+        /// A file or directory to fill. Defaults to the working directory,
+        /// which scopes it — name the checkout root for all of it.
+        scope: Option<PathBuf>,
+        /// Stop after this many seconds, keeping everything embedded so far.
+        /// Unbounded by default: being asked for is the consent.
+        #[arg(long, value_name = "SECONDS")]
+        budget: Option<f64>,
+    },
     /// Find callables by what they do, in English.
     #[command(allow_negative_numbers = true)]
     Search {
@@ -344,6 +361,7 @@ fn dispatch(cli: &Cli) -> Result<i32> {
             model,
             format,
         ),
+        (Some(Command::Embed { scope, budget }), _, _) => embed(scope.as_deref(), *budget, format),
         (
             Some(Command::Search {
                 query,
@@ -732,6 +750,59 @@ fn summarize(
     // Nothing bought and nothing left to buy is a miss: the scope was already
     // complete, or held nothing summarizable.
     Ok(match filled.summarized > 0 || filled.remaining > 0 {
+        true => HIT,
+        false => MISS,
+    })
+}
+
+/// The deliberate fill of the embedding layer (DEC-034).
+///
+/// The sibling of `summarize`: one verb per expensive layer, each scoped, each
+/// budgeted, each resumable. The budget is in **seconds** rather than in a
+/// count of answers because the two embedders differ by four orders of
+/// magnitude in rate, so a count would mean something different on each
+/// (DEC-032).
+fn embed(scope: Option<&std::path::Path>, budget: Option<f64>, format: Format) -> Result<i32> {
+    if budget.is_some_and(|budget| budget <= 0.0) {
+        // Not the same word as `CONTOUR_EMBED_BUDGET=0`, which removes a
+        // *query's* budget. Nothing here needs a way to spend nothing.
+        bail!("a budget is how many seconds to spend, so it has to be more than zero");
+    }
+    let (opened, relative) = opened(scope)?;
+    let (mut store, root) = (opened.store, opened.root);
+    // `Bulk`: the pool runs an inference per core already, and intra-op
+    // threads on top of that only oversubscribe.
+    let embedder = crate::embed::default_embedder(None, crate::embed::Workload::Bulk);
+    let filled = crate::embed::fill::fill(
+        &mut store,
+        &root,
+        relative.as_deref(),
+        embedder.as_ref(),
+        budget,
+    )?;
+
+    match format {
+        Format::Human => match (filled.embedded, filled.remaining) {
+            (0, 0) => println!("{} unit(s) already warm — nothing to embed", filled.units),
+            _ => {
+                println!(
+                    "{} embedded, {} already warm, {} left",
+                    filled.embedded, filled.warm, filled.remaining
+                );
+                if let Some(rate) = filled.rate {
+                    println!("{}s at {rate} text(s)/s", filled.seconds);
+                }
+                if let Some(stopped) = filled.stopped {
+                    println!("stopped: {stopped} — re-run to continue");
+                }
+            }
+        },
+        _ => emit(format, &filled)?,
+    }
+    // Nothing embedded and nothing left to embed is a scope that was already
+    // warm: no work happened, which is what a non-zero exit says here and in
+    // `summarize`.
+    Ok(match filled.embedded > 0 || filled.remaining > 0 {
         true => HIT,
         false => MISS,
     })

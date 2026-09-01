@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+- **`contour embed [SCOPE]` pays the embedding bill on purpose.** A query
+  embeds whatever in its scope has no vector yet, and `search`/`similar` refuse
+  a cold scope projected past five minutes rather than running it (0.2.0). This
+  is the way to say yes to it: it embeds only what has none, commits every
+  batch, prints progress with its own measured rate and an ETA, and continues
+  where an interrupted run stopped — so **run it once per machine and every
+  query over that scope is warm afterwards** (vectors are keyed by content and
+  shared across checkouts). `--budget SECONDS` bounds a sitting; `--json` /
+  `--ndjson` report what it did. Measured on a synthetic 265k-unit corpus: 943 s
+  and 851 MB, against 1,219 MB for the query that embeds the same corpus.
+  Deliberately **not** an MCP tool — a two-hour tool call is the problem it
+  solves — and the refusal message now names it. DEC-034.
+
 - **A scoped query no longer pays for the whole repository's vectors.** Loading
   them read the entire vector table whatever scope you asked about — about a
   second and 750 MB at 132k units, and the whole cost of every warm call at

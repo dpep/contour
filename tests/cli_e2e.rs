@@ -1755,3 +1755,60 @@ fn an_unaffordable_cold_corpus_is_refused_with_its_bill() {
     );
     assert_eq!(code, 0, "{err}");
 }
+
+/// The refusal's way out (DEC-034). `embed` is the consent DEC-032's message
+/// asks for, so it never refuses, and once it has run the same query under the
+/// same budget answers — which is the whole "refused → embed once → warm
+/// forever" story, end to end.
+///
+/// The budget here is microseconds for the reason the case above gives: this
+/// build's hash embedder is too fast for a test to spend a readable amount of
+/// time. What is pinned is the plumbing.
+#[test]
+fn a_filled_scope_answers_the_query_it_refused_cold() {
+    let body = "class %C%\n  def save(a)\n    b = a.check\n    persist(b)\n    b\n  end\nend\n";
+    let repo = Repo::new(
+        "embed-fill",
+        &[
+            ("a/one.rb", &body.replace("%C%", "Widget")),
+            ("b/two.rb", &body.replace("%C%", "Gadget")),
+        ],
+    );
+    repo.run(&["index"]);
+    let tiny = [("CONTOUR_EMBED_BUDGET", "0.0000000001")];
+    let here = repo.dir.clone();
+
+    let (_, err, code) = repo.run_env(&here, &["search", "persist a thing"], &tiny);
+    assert_eq!(code, 2, "{err}");
+    assert!(err.contains("contour embed"), "the way out: {err:?}");
+
+    // The same budget, and this one pays rather than refusing.
+    let (out, err, code) = repo.run_env(&here, &["embed", "-j"], &tiny);
+    assert_eq!(code, 0, "{err}");
+    let filled: serde_json::Value = serde_json::from_str(&out).unwrap();
+    assert_eq!(filled["units"], 2);
+    assert!(filled["embedded"].as_u64().unwrap() > 0, "{out}");
+    assert_eq!(filled["remaining"], 0);
+    assert_eq!(filled["embedder"], "hash");
+    assert!(err.contains("text(s) to embed"), "the estimate: {err:?}");
+
+    // Warm, under the budget that refused it.
+    let (out, err, code) = repo.run_env(&here, &["search", "persist a thing"], &tiny);
+    assert_eq!(code, 0, "{err}");
+    assert!(out.contains("Widget#save"), "{out}");
+
+    // A warm scope is a fill with nothing to do, which is the house's
+    // "nothing happened" exit — and one compact line under --ndjson.
+    let (out, err, code) = repo.run_env(&here, &["embed", "-J"], &tiny);
+    assert_eq!(code, 1, "{err}");
+    assert_eq!(out.lines().count(), 1, "{out}");
+    let again: serde_json::Value = serde_json::from_str(&out).unwrap();
+    assert_eq!(again["embedded"], 0);
+    assert_eq!(again["warm"], filled["texts"]);
+
+    // A budget is time to spend, so zero is a mistake rather than a synonym
+    // for the environment variable's "no budget".
+    let (_, err, code) = repo.run_env(&here, &["embed", "--budget", "0"], &tiny);
+    assert_eq!(code, 2, "{err}");
+    assert!(err.contains("more than zero"), "{err:?}");
+}

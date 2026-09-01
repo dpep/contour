@@ -17,6 +17,7 @@
 //! here would double-count it and blur the very bet this design exists to
 //! test: that English summaries answer behavioural queries.
 
+pub mod fill;
 pub mod mrl;
 #[cfg(feature = "_semantic")]
 mod onnx;
@@ -192,8 +193,9 @@ pub fn afford(kind: &str, texts: usize, units_in_scope: usize) -> anyhow::Result
         "this scope holds {units_in_scope} unit(s), {texts} of which have nothing embedded \
          yet. That is about {} with the {kind} embedder on {} thread(s), against a budget of \
          {}. Narrow the scope — a directory at a time warms the index for good, and each \
-         answer arrives — or set CONTOUR_EMBED_BUDGET to a number of seconds (0 for no \
-         budget).",
+         answer arrives — or run `contour embed` on it once, which pays the same bill \
+         deliberately, with progress, and keeps it. `CONTOUR_EMBED_BUDGET` sets the budget \
+         in seconds (0 for no budget).",
         about(projected),
         rayon::current_num_threads().max(1),
         about(budget),
@@ -201,7 +203,7 @@ pub fn afford(kind: &str, texts: usize, units_in_scope: usize) -> anyhow::Result
 }
 
 /// A duration at the precision an estimate built from a rate actually has.
-fn about(seconds: f64) -> String {
+pub(crate) fn about(seconds: f64) -> String {
     match seconds {
         s if s < 120.0 => format!("{} second(s)", s.round() as u64),
         s => format!("{} minute(s)", (s / 60.0).round() as u64),
