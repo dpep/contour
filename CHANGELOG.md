@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.2.0 — 2026-08-31
 
 - **`similar` takes a scope.** Its second positional is now a path to seek
   neighbours *within*, exactly as `search` and `dupes` read theirs, and the MCP
