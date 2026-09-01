@@ -28,7 +28,7 @@ contour summarize [SCOPE] --budget N   # fill LLM summaries, on demand
 contour pending [SCOPE] --model M      # what nothing has summarized yet
 contour store-summary [PATH]           # contribute one, as JSON on stdin
 contour search "english query"         # rank by name match + meaning match
-contour similar Owner#method [PATH]    # nearest neighbours, tier disclosed
+contour similar Owner#method [SCOPE]   # nearest neighbours, tier disclosed
 contour eval <SET>                     # score against a labeled set
 contour mcp                            # MCP over stdio, for an agent client
 contour --symbols FILE   # outline one file — parses it live, no index needed

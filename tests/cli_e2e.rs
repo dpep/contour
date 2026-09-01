@@ -1650,3 +1650,50 @@ fn the_binary_says_which_embedder_it_was_built_with() {
         "got {version:?}"
     );
 }
+
+/// `similar`'s second positional is a scope, the same noun `search` and
+/// `dupes` take there: the working directory or the path you name bounds the
+/// *answers*, while the unit asked about is found wherever it lives.
+///
+/// Field-reported against a monorepo: `similar` had no way to say "look here",
+/// so every call had to hold a vector for every unit in the checkout.
+#[test]
+fn similar_takes_a_scope_and_says_which_one_it_searched() {
+    let body = "class %C%\n  def save(a)\n    b = a.check\n    persist(b)\n    b\n  end\nend\n";
+    let repo = Repo::new(
+        "similar-scope",
+        &[
+            ("a/one.rb", &body.replace("%C%", "Widget")),
+            ("b/two.rb", &body.replace("%C%", "Gadget")),
+        ],
+    );
+    repo.run(&["index"]);
+
+    let all = repo.json(&["similar", "Widget#save", "--json"]);
+    assert_eq!(all["neighbors"][0]["id"], "Gadget#save");
+    assert!(all["scope"].is_null(), "the whole checkout names no scope");
+
+    // The clone is in `b`, so a scope of `a` holds nothing to find — and the
+    // run says where it looked, or an empty answer reads as a thin corpus.
+    let (_, err, code) = repo.run_in(&repo.dir.clone(), &["similar", "Widget#save", "a"]);
+    assert_eq!(code, 1, "{err}");
+    assert!(err.contains("under a only"), "got {err:?}");
+
+    // The unit itself is in `a`, outside this scope: a narrower search, not a
+    // missing unit.
+    let elsewhere = repo.json(&["similar", "Widget#save", "b", "--json"]);
+    assert_eq!(elsewhere["scope"], "b");
+    assert_eq!(elsewhere["neighbors"][0]["id"], "Gadget#save");
+
+    // Standing in a directory scopes to it, as it already does for `search`
+    // and `dupes` — the rule is one rule, and it is now disclosed.
+    let inside = repo.dir.join("a");
+    let (out, _, code) = repo.run_in(&inside, &["similar", "Widget#save", "--json"]);
+    assert_eq!(code, 1, "{out}");
+    let narrowed: serde_json::Value = serde_json::from_str(&out).unwrap();
+    assert_eq!(narrowed["scope"], "a");
+    // The point of the scope, stated as a number: the units a call has to
+    // hold a vector for are the ones inside it.
+    assert_eq!(narrowed["coverage"]["summarizable"], 1);
+    assert_eq!(all["coverage"]["summarizable"], 2);
+}

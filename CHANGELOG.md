@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+- **`similar` takes a scope.** Its second positional is now a path to seek
+  neighbours *within*, exactly as `search` and `dupes` read theirs, and the MCP
+  tool gained a matching `scope` property. **This changes what an existing
+  invocation means**: `contour similar Owner#method some/dir` used to search the
+  whole checkout and now searches `some/dir`, and so does a bare `contour
+  similar Owner#method` run from inside a subdirectory — which is how `search`
+  and `dupes` have always behaved. Pass the checkout root to search all of it.
+  Every answer now carries the `scope` it searched, so a short list from one
+  directory cannot read as a thin corpus. Scope it on a large repository:
+  everything in scope needs a vector, and anything without one is embedded on
+  the spot (DEC-030).
+
 ## 0.1.0 — 2026-08-31
 
 First release. contour indexes what code *means*: every callable in a checkout

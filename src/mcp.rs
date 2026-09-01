@@ -275,6 +275,12 @@ fn tools() -> Vec<Value> {
     });
     // One description for one flag, so the three tools that take it cannot
     // drift into describing the same default differently.
+    let scope = json!({
+        "type": "string",
+        "description": "Repo-relative file or directory to look within. Defaults to the whole \
+            checkout — bound it on a large one, where an unscoped call has to hold a vector for \
+            every unit in the repository."
+    });
     let include_ignored = json!({
         "type": "boolean",
         "description": "Include paths ignored by default — migrations, generated and vendored code, \
@@ -295,7 +301,7 @@ fn tools() -> Vec<Value> {
                 "properties": {
                     "query": {"type": "string", "description": "A behavioural question in plain English."},
                     "path": path,
-                    "scope": {"type": "string", "description": "Repo-relative file or directory to search within."},
+                    "scope": scope,
                     "limit": {"type": "integer", "description": "Maximum hits. Default 10."},
                     "floor": {"type": "number", "description": "Cosine floor; 0 shows everything the default withholds."},
                     "include_ignored": include_ignored
@@ -314,7 +320,8 @@ fn tools() -> Vec<Value> {
                 "type": "object",
                 "properties": {
                     "unit": {"type": "string", "description": "`Owner#method` or `Owner.method` in Ruby, `Owner::fn` in Rust. A name that means two units is refused with both locations listed; pass `path:line` to pick one."},
-                    "path": path,
+                    "path": path.clone(),
+                    "scope": scope.clone(),
                     "limit": {"type": "integer", "description": "Maximum neighbours. Default 10."},
                     "include_ignored": include_ignored
                 },
@@ -344,7 +351,7 @@ fn tools() -> Vec<Value> {
                 "type": "object",
                 "properties": {
                     "path": path,
-                    "scope": {"type": "string", "description": "Repo-relative file or directory."},
+                    "scope": scope.clone(),
                     "min_lines": {"type": "integer", "description": "Ignore bodies shorter than this. Default 4."},
                     "near": {"type": "boolean", "description": "Also report nearly-identical bodies."},
                     "near_threshold": {"type": "number", "description": "Jaccard for `near`. Default 0.8."},
@@ -538,7 +545,7 @@ fn search(args: &Value) -> Result<Value> {
 
 fn similar(args: &Value) -> Result<Value> {
     let unit = required(args, "unit")?;
-    let (opened, _) = opened(args)?;
+    let (opened, scope) = opened(args)?;
     let classes = classes(Path::new(&opened.root), args)?;
     let embedder = crate::embed::default_embedder(None, crate::embed::Workload::Query);
     let mut store = opened.store;
@@ -546,6 +553,7 @@ fn similar(args: &Value) -> Result<Value> {
         &mut store,
         &opened.root,
         unit,
+        scope.as_deref(),
         embedder.as_ref(),
         args["limit"].as_u64().unwrap_or(10) as usize,
         &classes,

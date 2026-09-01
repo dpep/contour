@@ -1008,6 +1008,9 @@ fn score_similar(
                 store,
                 root,
                 &label.probe,
+                // The whole checkout: a labeled set scores the tool's reach,
+                // and a scope would score the scope.
+                None,
                 embedder,
                 crate::cli::DEFAULT_LIMIT,
                 classes,

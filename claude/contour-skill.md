@@ -11,7 +11,7 @@ you cannot guess.
 
 ```sh
 contour search "customer has not paid their bill"   # behaviour, in English
-contour similar 'Invoice#settle!'                    # does this already exist?
+contour similar 'Invoice#settle!' app                # does this already exist?
 contour dupes --near                                 # copy-paste, incl. tweaked
 contour dupes app/models --canonical                 # ...and which copy to keep
 contour --symbols app/models/invoice.rb              # outline before reading
@@ -78,6 +78,10 @@ same job once you have a candidate.
 body), `near_structural` (mostly the same shape, with a measured Jaccard), or
 `semantic` (a nearby summary, with the cosine). A `structural` match is a fact;
 a `semantic` one is a suggestion.
+
+`similar` also takes a **scope**, the same second-positional path `search` and
+`dupes` take, and it answers with the `scope` it searched. The unit you ask
+about is found wherever it lives; the scope bounds the *answers*.
 
 If `search` returns less than you expect, run `contour --status` before
 concluding the code is not there.

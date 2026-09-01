@@ -1104,3 +1104,44 @@ not because grouping is wrong — the census says the information is *already* i
 the result list, in a member of the right container. A grouped rendering of
 nominated results is the likely eventual UI, and it is a human-output change
 that can land whenever somebody wants it.
+
+## DEC-030 — Scope is the cost control, and every command that can take one does
+
+A field trial on a monorepo of ~2M indexed units — 40× the "~50k records,
+revisit at monorepo scale" non-goal in the plan — found `similar` was the one
+query surface with no `scope`. `search` and `dupes` both take one; `similar`
+took a *path*, documented as locating the checkout and nothing else, so there
+was no way to say "look here" and every call had to hold a vector for every
+unit in the repository. Unscoped `similar` and `dupes` on that corpus ran 20+
+minutes on ~10 cores with no way to bound them.
+
+**The second positional of `similar` is now a scope, exactly as it is for
+`search` and `dupes`**, and the MCP tool takes a `scope` property with the one
+shared description all three now render from. One noun, one meaning, three
+commands.
+
+Three things fall out of it that are worth stating:
+
+- **The scope narrows the answer, never the question.** The unit asked about is
+  resolved against the whole checkout first and then carried into the scope, so
+  `similar Widget#save app/billing` asks "is there anything like this in
+  billing" rather than failing with "no such unit". The special case that would
+  otherwise need handling does not arise.
+- **The working directory is a scope, and now says so.** This was already true
+  of `search`, `dupes`, `pending` and `summarize` — `scoped(None)` resolves `.`
+  against the repo root — and it was true silently, while two of those
+  commands' help text claimed they defaulted to the whole checkout. `similar`
+  now behaves the same way, and `Neighbors` carries a `scope` field so an
+  answer from one directory cannot read as an answer from a thin corpus
+  (DEC-010). The stale help text is corrected in the same change.
+- **`index` deliberately gets no scope.** `index` writes the checkout's whole
+  file map (`store.write(root, files, …)`); a partial one would silently delete
+  every path outside the scope from that checkout's view, which is a corrupt
+  index rather than a cheaper one. It is also the wrong lever: indexing is
+  blob-keyed and re-parses only what this machine has never seen, so the second
+  run over a monorepo is a git call and a fold. The expensive layer is
+  embedding, and that is what `scope` bounds.
+
+Scoping is a **narrowing of the answer, not of the truth** — a duplicate
+outside the scope is still a duplicate. That is the same bargain `dupes` has
+always struck, and the reason both surfaces disclose the scope they searched.

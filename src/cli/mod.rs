@@ -67,8 +67,9 @@ enum Command {
     // clap's tip about quoting it.
     #[command(allow_negative_numbers = true)]
     Dupes {
-        /// A file or directory to limit the report to. Defaults to the whole
-        /// checkout containing the working directory.
+        /// A file or directory to limit the report to. Defaults to the
+        /// working directory, which scopes it — name the checkout root for
+        /// all of it.
         scope: Option<PathBuf>,
         /// Ignore bodies shorter than this, `def` through `end`.
         #[arg(long, value_name = "N", default_value_t = DEFAULT_MIN_LINES)]
@@ -100,8 +101,9 @@ enum Command {
     },
     /// Summarize callables with an LLM, up to a budget.
     Summarize {
-        /// A file or directory to limit the fill to. Defaults to the whole
-        /// checkout containing the working directory.
+        /// A file or directory to limit the fill to. Defaults to the
+        /// working directory, which scopes it — name the checkout root for
+        /// all of it.
         scope: Option<PathBuf>,
         /// Stop after this many distinct answers. Clones in identical context
         /// share one, so this bounds spend, not units covered.
@@ -121,7 +123,8 @@ enum Command {
     #[command(allow_negative_numbers = true)]
     Search {
         query: String,
-        /// A file or directory to search within.
+        /// A file or directory to search within. Defaults to the working
+        /// directory, which scopes it — name the checkout root for all of it.
         scope: Option<PathBuf>,
         #[arg(short = 'l', long, value_name = "N", default_value_t = DEFAULT_LIMIT)]
         limit: usize,
@@ -140,8 +143,9 @@ enum Command {
     /// the structural context to summarize each one against; hand the results
     /// back with `store-summary`.
     Pending {
-        /// A file or directory to limit the list to. Defaults to the whole
-        /// checkout containing the working directory.
+        /// A file or directory to limit the list to. Defaults to the
+        /// working directory, which scopes it — name the checkout root for
+        /// all of it.
         scope: Option<PathBuf>,
         /// Your own model id. Required, because coverage is per model.
         #[arg(long, value_name = "MODEL")]
@@ -175,12 +179,13 @@ enum Command {
     Similar {
         /// `Owner#method`, `Owner.method`, or a bare name at top level.
         unit: String,
-        /// A path inside the repository. Defaults to the working directory.
+        /// A file or directory to seek neighbours within, as `search` and
+        /// `dupes` take one. Defaults to the working directory.
         ///
-        /// Locates the checkout only — neighbours are always sought across the
-        /// whole of it, since the useful answer to "has this been written
-        /// before" is rarely in the directory you are standing in.
-        path: Option<PathBuf>,
+        /// The unit asked about is found wherever it lives; this bounds the
+        /// answers. Bound them on a large checkout: every unit in scope needs
+        /// a vector, so an unscoped first call is an embedding run.
+        scope: Option<PathBuf>,
         #[arg(short = 'l', long, value_name = "N", default_value_t = DEFAULT_LIMIT)]
         limit: usize,
         /// Also report neighbours in paths ignored by default — migrations,
@@ -360,13 +365,13 @@ fn dispatch(cli: &Cli) -> Result<i32> {
         (
             Some(Command::Similar {
                 unit,
-                path,
+                scope,
                 limit,
                 include_ignored,
             }),
             _,
             _,
-        ) => similar(unit, path.as_deref(), *limit, *include_ignored, format),
+        ) => similar(unit, scope.as_deref(), *limit, *include_ignored, format),
         (
             Some(Command::Pending {
                 scope,
@@ -964,18 +969,25 @@ fn disclose(answer: &crate::search::Answer) {
 
 fn similar(
     unit: &str,
-    path: Option<&std::path::Path>,
+    scope: Option<&std::path::Path>,
     limit: usize,
     include_ignored: bool,
     format: Format,
 ) -> Result<i32> {
-    let (opened, _) = opened(path)?;
+    let (opened, relative) = opened(scope)?;
     let (mut store, root) = (opened.store, opened.root);
     let classes = crate::paths::Classes::load(std::path::Path::new(&root))?
         .including_ignored(include_ignored);
     let embedder = crate::embed::default_embedder(None, crate::embed::Workload::Query);
-    let neighbors =
-        crate::search::similar(&mut store, &root, unit, embedder.as_ref(), limit, &classes)?;
+    let neighbors = crate::search::similar(
+        &mut store,
+        &root,
+        unit,
+        relative.as_deref(),
+        embedder.as_ref(),
+        limit,
+        &classes,
+    )?;
 
     match format {
         Format::Human => {
@@ -1009,11 +1021,24 @@ fn similar(
             // `similar` disclosed nothing at all until now, so an empty answer
             // was zero bytes and an exit code — indistinguishable from a thin
             // corpus, a cold index, or a floor doing its job.
+            // Where it looked, not just what it found: a scope can arrive
+            // from the working directory without anyone typing one, and an
+            // empty answer from `app/billing` reads exactly like an empty
+            // answer from the whole repo.
+            let searched = match &neighbors.scope {
+                Some(scope) => scope.clone(),
+                None => crate::paths::pretty(&neighbors.root),
+            };
             if neighbors.neighbors.is_empty() {
                 eprintln!(
-                    "contour: nothing similar to {} in {}",
+                    "contour: nothing similar to {} in {searched}",
                     neighbors.unit,
-                    crate::paths::pretty(&neighbors.root)
+                );
+            }
+            if neighbors.scope.is_some() {
+                eprintln!(
+                    "contour: neighbours sought under {searched} only; name the \
+                     checkout root to search all of it"
                 );
             }
             eprintln!(

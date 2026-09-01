@@ -540,18 +540,39 @@ pub struct Neighbor {
 /// Nearest neighbours of one named unit, structural tier first.
 ///
 /// The unit asked about is resolved against the whole checkout, ignored paths
-/// included — you can ask about a migration you are looking at. Its
+/// included — you can ask about a migration you are looking at, and about one
+/// that sits outside the `scope` its neighbours are sought in. Its
 /// *neighbours* follow the path policy, and say what they withheld.
+///
+/// **`scope` is what makes this affordable on a large corpus.** Every unit in
+/// it needs a vector, and one that has none is embedded on the spot — so an
+/// unscoped call on a cold monorepo is an embedding run, not a query.
 pub fn similar(
     store: &mut Store,
     root: &str,
     id: &str,
+    scope: Option<&str>,
     embedder: &dyn Embedder,
     limit: usize,
     classes: &crate::paths::Classes,
 ) -> Result<Neighbors> {
-    let units = in_scope(store, root, None)?;
-    let target = resolve(&units, id)?;
+    let mut units = in_scope(store, root, None)?;
+    let mut target = resolve(&units, id)?;
+    // Narrowed after resolution rather than before it, so a scope that
+    // excludes the unit asked about is a smaller search and not a "no such
+    // unit" — the target is the query, never one of the answers.
+    if let Some(scope) = scope {
+        let mut kept = Vec::new();
+        for (i, unit) in units.into_iter().enumerate() {
+            if i == target || crate::paths::under(&unit.path, scope) {
+                if i == target {
+                    target = kept.len();
+                }
+                kept.push(unit);
+            }
+        }
+        units = kept;
+    }
     let summaries = vectors_for(store, &units, embedder, Prefer::Best)?;
     let here = &units[target];
     let floor = relevance_floor(embedder.kind());
@@ -600,7 +621,7 @@ pub fn similar(
     // meaning. Runs before the semantic tier so a reader sees the cheaper,
     // sharper evidence first.
     {
-        for near in crate::near::neighbors(store, root, here, crate::near::NEAR_THRESHOLD, None)? {
+        for near in crate::near::neighbors(store, root, here, crate::near::NEAR_THRESHOLD, scope)? {
             let index = units
                 .iter()
                 .position(|u| u.path == near.path && u.unit.line == near.line);
@@ -670,6 +691,7 @@ pub fn similar(
     out.truncate(limit);
     Ok(Neighbors {
         root: root.to_string(),
+        scope: scope.map(str::to_string),
         unit: here.unit.id(),
         path: crate::paths::absolute(root, &here.path),
         line: here.unit.line,
@@ -693,6 +715,12 @@ pub fn similar(
 #[derive(Debug, serde::Serialize)]
 pub struct Neighbors {
     pub root: String,
+    /// The path prefix the neighbours were sought under, absent for the whole
+    /// checkout. Disclosed because a caller standing in a subdirectory gets
+    /// one without asking, and three neighbours from `app/billing` read
+    /// exactly like three from a thin corpus.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scope: Option<String>,
     /// The unit that was asked about, resolved — which matters when the name
     /// given was ambiguous and a location settled it.
     pub unit: String,

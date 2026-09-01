@@ -37,7 +37,9 @@ impl Session {
         }
         std::fs::create_dir_all(&dir).unwrap();
         for (path, body) in files {
-            std::fs::write(dir.join(path), body).unwrap();
+            let target = dir.join(path);
+            std::fs::create_dir_all(target.parent().unwrap()).unwrap();
+            std::fs::write(target, body).unwrap();
         }
         for args in [
             vec!["init", "-q"],
@@ -701,4 +703,58 @@ fn a_tool_payload_is_not_pretty_printed() {
         !text.contains("null"),
         "an empty option was serialized: {text}"
     );
+}
+
+/// `similar` takes a `scope`, and it means what `search`'s and `dupes`' means:
+/// a path prefix the *answers* must lie under. The unit asked about is still
+/// found wherever it lives — a scope that excludes it is a narrower search,
+/// not a missing unit — and the answer says which scope it searched, because
+/// three neighbours from one directory read exactly like three from a thin
+/// corpus.
+///
+/// Field-reported: without a scope, `similar` on a monorepo has to hold a
+/// vector for every unit in it.
+#[test]
+fn similar_takes_a_scope_and_discloses_it() {
+    let body = "class %C%\n  def save(a)\n    b = a.check\n    persist(b)\n    b\n  end\nend\n";
+    let mut mcp = Session::start(
+        "similar-scope",
+        &[
+            ("a/one.rb", &body.replace("%C%", "Widget")),
+            ("b/two.rb", &body.replace("%C%", "Gadget")),
+        ],
+    );
+    mcp.request(
+        1,
+        "initialize",
+        serde_json::json!({"protocolVersion": "2025-06-18"}),
+    );
+    mcp.tool(2, "index", serde_json::json!({}));
+
+    let all = mcp.tool(3, "similar", serde_json::json!({"unit": "Widget#save"}));
+    assert_eq!(all["neighbors"][0]["id"], "Gadget#save");
+    assert!(all["scope"].is_null(), "the whole checkout names no scope");
+
+    // The clone is in `b`, so scoping to `a` must not report it.
+    let narrowed = mcp.tool(
+        4,
+        "similar",
+        serde_json::json!({"unit": "Widget#save", "scope": "a"}),
+    );
+    assert_eq!(narrowed["scope"], "a");
+    assert_eq!(
+        narrowed["neighbors"].as_array().map(Vec::len),
+        Some(0),
+        "{narrowed}"
+    );
+
+    // And the unit itself lives in `a`, outside this scope, which is a
+    // smaller search rather than an error.
+    let elsewhere = mcp.tool(
+        5,
+        "similar",
+        serde_json::json!({"unit": "Widget#save", "scope": "b"}),
+    );
+    assert_eq!(elsewhere["scope"], "b");
+    assert_eq!(elsewhere["neighbors"][0]["id"], "Gadget#save");
 }
