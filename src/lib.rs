@@ -28,7 +28,10 @@
 //!   with a meaning match and disclosing which found what.
 //! - [`eval`] — the labeled set that settles every threshold (DEC-011).
 //! - [`mcp`] — the agent surface, returning exactly the JSON the CLI does.
+//! - [`cancel`] — the flag a served request watches, so abandoning a call
+//!   stops the work rather than only the waiting (DEC-031).
 
+pub mod cancel;
 pub mod canonical;
 pub mod cli;
 pub mod constants;

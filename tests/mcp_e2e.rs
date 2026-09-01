@@ -118,7 +118,13 @@ impl Session {
     }
 
     fn notify(&mut self, method: &str) {
-        let message = serde_json::json!({"jsonrpc": "2.0", "method": method});
+        self.notify_with(method, serde_json::Value::Null);
+    }
+
+    /// A notification that carries params — `notifications/cancelled` is the
+    /// only one a client sends that this server acts on.
+    fn notify_with(&mut self, method: &str, params: serde_json::Value) {
+        let message = serde_json::json!({"jsonrpc": "2.0", "method": method, "params": params});
         writeln!(self.stdin, "{message}").unwrap();
         self.stdin.flush().unwrap();
     }
@@ -757,4 +763,139 @@ fn similar_takes_a_scope_and_discloses_it() {
     );
     assert_eq!(elsewhere["scope"], "b");
     assert_eq!(elsewhere["neighbors"][0]["id"], "Gadget#save");
+}
+
+/// A corpus big enough that one query is measurably slow: 150 classes of 100
+/// methods, ~15k units, 3 MB. A cold `similar` over it embeds every unit and
+/// takes about 1.7 s in a debug build, where `symbols` on one file is under a
+/// millisecond — a margin of three orders of magnitude, which is what lets the
+/// two tests below assert on order rather than on a clock.
+fn heavy_corpus() -> Vec<(String, String)> {
+    (0..150)
+        .map(|i| {
+            let body: String = (0..100)
+                .map(|j| {
+                    format!(
+                        "  def widget_handler_{i}_{j}(alpha, beta, gamma)\n    \
+                         b = alpha.one\n    c = b.two(beta)\n    d = c.three(gamma)\n    \
+                         persist(d)\n  end\n"
+                    )
+                })
+                .collect();
+            (format!("f{i}.rb"), format!("class Widget{i}\n{body}end\n"))
+        })
+        .collect()
+}
+
+fn as_refs(files: &[(String, String)]) -> Vec<(&str, &str)> {
+    files
+        .iter()
+        .map(|(p, b)| (p.as_str(), b.as_str()))
+        .collect()
+}
+
+/// A cheap call is answered while a heavy one is still running.
+///
+/// The field report: a `symbols` call — documented as needing no index at all —
+/// sat with no output for fifteen minutes behind two unscoped heavy calls,
+/// because the server read a line, answered it, and only then read the next.
+///
+/// Asserted on **order, not a clock**: the two requests go out back to back and
+/// the first line the server writes must be the cheap one's. A serial loop can
+/// never do that, whatever machine it runs on.
+#[test]
+fn a_cheap_call_does_not_wait_behind_a_heavy_one() {
+    let files = heavy_corpus();
+    let mut mcp = Session::start("concurrent", &as_refs(&files));
+    mcp.request(
+        1,
+        "initialize",
+        serde_json::json!({"protocolVersion": "2025-06-18"}),
+    );
+    mcp.tool(2, "index", serde_json::json!({}));
+
+    mcp.send(
+        3,
+        "tools/call",
+        serde_json::json!({"name": "similar", "arguments": {"unit": "Widget0#widget_handler_0_0"}}),
+    );
+    mcp.send(
+        4,
+        "tools/call",
+        serde_json::json!({"name": "symbols", "arguments": {"file": "f0.rb"}}),
+    );
+
+    let first = mcp.read_line();
+    assert_eq!(first["id"], 4, "the cheap call waited: {first}");
+    let second = mcp.read_line();
+    assert_eq!(second["id"], 3);
+}
+
+/// `notifications/cancelled` stops the work, not just the waiting.
+///
+/// The field report's fourth finding: abandoning a call client-side left the
+/// server burning every core until the process was killed by hand. Nothing
+/// could stop it, because nothing was reading.
+///
+/// **The response is the proof.** Only the worker writes it, and it writes it
+/// after the call returns — so an error naming the cancellation, arriving in a
+/// fraction of the time the same call takes uncancelled, says the work stopped
+/// rather than that the client gave up on it.
+///
+/// What this pins is the *outer* half: the reader saw the notification while a
+/// worker was busy, and the request stopped before its expensive write. The
+/// embedding pool, which is where a real corpus spends 97% of a cold call, is
+/// pinned by `embed::tests::a_cancelled_embedding_stops_rather_than_finishing`
+/// instead — here the corpus is small and the embedder is the hash one, so
+/// embedding 15k texts is 20 ms against a second of `put_vectors`.
+#[test]
+fn a_cancelled_call_stops_the_work() {
+    let files = heavy_corpus();
+    let mut mcp = Session::start("cancelled", &as_refs(&files));
+    mcp.request(
+        1,
+        "initialize",
+        serde_json::json!({"protocolVersion": "2025-06-18"}),
+    );
+    mcp.tool(2, "index", serde_json::json!({}));
+
+    let started = std::time::Instant::now();
+    mcp.send(
+        3,
+        "tools/call",
+        serde_json::json!({"name": "similar", "arguments": {"unit": "Widget0#widget_handler_0_0"}}),
+    );
+    mcp.notify_with(
+        "notifications/cancelled",
+        serde_json::json!({"requestId": 3, "reason": "the user pressed escape"}),
+    );
+
+    let reply = mcp.read_line();
+    let cancelled = started.elapsed();
+    assert_eq!(reply["id"], 3);
+    assert_eq!(reply["result"]["isError"], true, "{reply}");
+    let text = reply["result"]["content"][0]["text"].as_str().unwrap_or("");
+    assert!(text.contains("cancelled"), "got {text:?}");
+
+    // The bar is the same call on the same machine, not a constant: a wall
+    // clock in a test suite is a promise about somebody else's CI box. This
+    // run is still cold, because a cancelled embedding stores nothing — which
+    // is the second thing worth pinning, since half-written vectors would be
+    // answers no embedder produced.
+    let started = std::time::Instant::now();
+    mcp.tool(
+        4,
+        "similar",
+        serde_json::json!({"unit": "Widget0#widget_handler_0_0"}),
+    );
+    let whole = started.elapsed();
+    assert!(
+        cancelled * 2 < whole,
+        "cancelled in {cancelled:?} against {whole:?} for the whole call"
+    );
+
+    // And the session is still usable — a cancelled request must not poison
+    // the worker that served it.
+    let outline = mcp.tool(5, "symbols", serde_json::json!({"file": "f0.rb"}));
+    assert_eq!(outline["units"][0]["name"], "widget_handler_0_0");
 }

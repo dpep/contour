@@ -303,6 +303,10 @@ pub fn find_near(
         .filter(|(norm_hash, _)| by_hash.contains_key(norm_hash))
         .collect();
     let (pairs, mut stats) = crate::near::pairs(&signatures, threshold);
+    // `pairs` returns what it had rather than what it would have found, so the
+    // refusal has to happen here or an abandoned run reports a short list as a
+    // complete one.
+    crate::cancel::current().check()?;
     // A body with no signature is uncovered for one of two reasons, and they
     // are not interchangeable: Rust has no sub-shapes at all (DEC-012), while
     // a Ruby body can simply be too small to hold one above the size floor.

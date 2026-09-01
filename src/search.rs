@@ -1124,6 +1124,10 @@ fn vectors_for(
         // constant and the pool resolves the same embedder `embedder` did —
         // which it must, because `config` above was keyed from that one.
         let vectors = crate::embed::embed_all(None, &texts);
+        // Before anything is written: a cancelled run comes back holding empty
+        // vectors for whatever it did not reach, and storing those would poison
+        // the cache with answers no embedder produced.
+        crate::cancel::current().check()?;
         let fresh: HashMap<u64, Vec<f32>> = unique
             .into_iter()
             .map(|(key, _)| key)

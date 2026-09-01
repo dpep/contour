@@ -190,8 +190,18 @@ pub fn pairs(signatures: &HashMap<u64, Vec<Subtree>>, threshold: f32) -> (Vec<Pa
 
     // Count shared sub-shapes per candidate pair, skipping the buckets that
     // are too common to mean anything.
+    //
+    // The longest single-threaded stretch in the tool, and the one an
+    // abandoned `dupes --near` used to run to completion regardless. Checked
+    // per bucket rather than per pair: a bucket is bounded by
+    // `COMMON_SUBTREE_CAP`, so the check is at most that far from the flag and
+    // costs one relaxed load.
+    let cancel = crate::cancel::current();
     let mut shared: HashMap<(u64, u64), usize> = HashMap::new();
     for bodies in index.values() {
+        if cancel.cancelled() {
+            return (Vec::new(), stats);
+        }
         if bodies.len() > COMMON_SUBTREE_CAP {
             stats.dropped_common += 1;
             continue;
@@ -208,6 +218,7 @@ pub fn pairs(signatures: &HashMap<u64, Vec<Subtree>>, threshold: f32) -> (Vec<Pa
 
     let mut out: Vec<Pair> = shared
         .into_iter()
+        .take_while(|_| !cancel.cancelled())
         .filter_map(|((a, b), shapes)| {
             // An identical body is the *exact* tier's business, not this one.
             // Reporting it twice under two names makes a reader deduplicate by

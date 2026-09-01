@@ -26,6 +26,7 @@ use anyhow::Result;
 use serde_json::{Value, json};
 use std::io::{BufRead, Write};
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 use std::time::SystemTime;
 
 /// Protocol revisions this server knows how to speak. The newest first: an
@@ -33,11 +34,36 @@ use std::time::SystemTime;
 /// else is answered in ours so the client can decide whether to continue.
 const SUPPORTED: [&str; 3] = ["2025-06-18", "2025-03-26", "2024-11-05"];
 
+/// How many requests may be worked on at once.
+///
+/// The bound is **memory, not cores**. An unscoped query holds a vector for
+/// every unit in the checkout, so four of them on a monorepo is gigabytes; the
+/// CPU needs no bounding here because the heavy work goes to one shared rayon
+/// pool however many requests submit to it. Four is enough that a cheap call
+/// never waits behind the one or two heavy calls a session actually issues.
+const WORKERS: usize = 4;
+
 /// Serve MCP on stdin/stdout until the client closes the stream.
 ///
 /// **Nothing but protocol may reach stdout.** Every diagnostic in this module
 /// goes to stderr, because one stray line of human text corrupts the session
 /// in a way that reads to the client as a malformed server.
+///
+/// ## Reading and working are different threads
+///
+/// A loop that reads a line, answers it, and only then reads the next one
+/// cannot notice anything while it works — not `notifications/cancelled`, not
+/// the client hanging up. A field trial watched a `symbols` call, which needs
+/// no index at all, sit for fifteen minutes behind two unscoped heavy calls,
+/// and watched an abandoned call go on burning every core until the process
+/// was killed by hand.
+///
+/// So one thread reads and [`WORKERS`] work. The reader parses just enough to
+/// tell a cancellation from a request, hands requests to a channel, and goes
+/// straight back to stdin; a worker answers and writes under a lock, because
+/// two interleaved responses would be one corrupt line. Responses come back in
+/// whatever order they finish, which JSON-RPC allows and every client already
+/// handles by matching on `id`.
 ///
 /// ## Upgrading underneath a live session
 ///
@@ -53,39 +79,76 @@ const SUPPORTED: [&str; 3] = ["2025-06-18", "2025-03-26", "2024-11-05"];
 /// client's pipes survive and it never learns that the program on the other end
 /// was replaced. Nothing needs carrying across, because [`handle_line`] holds
 /// no session state — a property a test pins, since the restart depends on it.
+///
+/// The restart stays on **this** thread, for the reason spelled out where it
+/// happens: the reader is the only thread that takes bytes off stdin, so it is
+/// the only one that knows it is holding none. On seeing a newer binary it
+/// stops reading, waits for the in-flight map to empty, and execs. The known
+/// edge is unchanged — a pipelined batch can still have siblings in this
+/// thread's buffer when the drain begins, and only DEC-025's proxy parent
+/// would catch those.
 pub fn serve() -> Result<()> {
-    let launched_from = stamp();
+    let launched_from = Arc::new(stamp());
     let stdin = std::io::stdin();
-    let mut stdout = std::io::stdout();
+    let out = Arc::new(Mutex::new(std::io::stdout()));
     // The one thing worth carrying across the exec, and the reason [`RESTARTED`]
     // exists: the client is still holding the tool list of the build that was
     // replaced, and it cannot know to re-ask, because from where it sits nothing
     // happened. Answering calls correctly while describing them wrongly is a
     // half-heal.
     if std::env::var_os(RESTARTED).is_some() {
-        writeln!(
-            stdout,
-            r#"{{"jsonrpc":"2.0","method":"notifications/tools/list_changed"}}"#
-        )?;
-        stdout.flush()?;
+        say(
+            &out,
+            r#"{"jsonrpc":"2.0","method":"notifications/tools/list_changed"}"#,
+        );
     }
+
+    let live = Arc::new(Live::default());
+    let (tx, rx) = std::sync::mpsc::channel::<Job>();
+    let rx = Arc::new(Mutex::new(rx));
+    let workers: Vec<_> = (0..WORKERS)
+        .map(|_| {
+            let (rx, out, live, launched_from) =
+                (rx.clone(), out.clone(), live.clone(), launched_from.clone());
+            std::thread::spawn(move || work(&rx, &out, &live, &launched_from))
+        })
+        .collect();
+
+    let mut seq: u64 = 0;
     for line in stdin.lock().lines() {
         let line = line?;
         if line.trim().is_empty() {
             continue;
         }
-        let Some(response) = handle_line(&line, &launched_from) else {
-            continue;
-        };
-        writeln!(stdout, "{response}")?;
-        stdout.flush()?;
-        // The one moment this process owes nobody anything: an answer has just
-        // gone out and the next request has not been read. A client that
-        // pipelined a batch can still have siblings sitting in a buffer we
-        // cannot see, and those are lost — the known edge of doing this in
-        // process, and the reason `docs/DECISIONS.md` records the proxy-parent
-        // shim as the shape that removes it.
+        seq += 1;
+        match control(&line, seq) {
+            // Handled here rather than dispatched, which is the whole point of
+            // reading on its own thread: the request it names is still running,
+            // and a worker is what it has to reach.
+            Control::Cancel(key) => live.cancel(&key),
+            Control::Drop => {}
+            Control::Serve(key) => {
+                let cancel = live.accept(key.clone());
+                // The receiver outlives this loop, so the only way this fails
+                // is every worker having panicked — in which case there is
+                // nobody left to answer and saying so beats a silent hang.
+                if tx.send(Job { key, line, cancel }).is_err() {
+                    anyhow::bail!("no worker is left to answer requests");
+                }
+            }
+        }
+        // **Here, and on this thread, or a request is lost.** The reader is the
+        // only thread that takes bytes off stdin, so the safe moment to become
+        // another program is one where it holds none: between answering for
+        // what it has read and reading again. Deciding this on a worker instead
+        // — the obvious shape, and the first one built — races the reader over
+        // the request a client sends the instant it sees the previous reply,
+        // which is the commonest pattern there is: read into our buffer, exec,
+        // and the line is gone. Once an upgrade is seen, this thread stops
+        // reading, so anything that arrives during the drain stays in the pipe
+        // and the new build reads it.
         if let Some(newer) = superseded(&launched_from) {
+            live.wait_until_idle();
             let err = restart(&newer);
             eprintln!(
                 "contour: could not restart into {} ({err}); still serving the \
@@ -94,7 +157,147 @@ pub fn serve() -> Result<()> {
             );
         }
     }
+
+    // The client hung up. **This is the cancellation that always arrives**,
+    // whether or not a client ever sends the notification, and it is what the
+    // field report's ten idle cores were waiting for.
+    live.cancel_all();
+    drop(tx);
+    for worker in workers {
+        let _ = worker.join();
+    }
     Ok(())
+}
+
+/// One accepted request, on its way to a worker.
+struct Job {
+    /// What [`Live`] files it under — its JSON-RPC id, or a synthetic key when
+    /// the line is too broken to have one.
+    key: String,
+    line: String,
+    cancel: crate::cancel::Cancel,
+}
+
+/// Requests accepted and not yet answered.
+///
+/// One map, and it answers two questions that have to agree about the same
+/// instant: which requests may still be cancelled, and whether any is
+/// outstanding — which is what says the process may replace itself.
+#[derive(Default)]
+struct Live {
+    accepted: Mutex<std::collections::HashMap<String, crate::cancel::Cancel>>,
+    /// Signalled when the last outstanding request is retired, so the reader
+    /// can wait for that moment rather than poll for it.
+    idle: std::sync::Condvar,
+}
+
+impl Live {
+    /// File a request under `key` and hand back the flag it will watch.
+    fn accept(&self, key: String) -> crate::cancel::Cancel {
+        let cancel = crate::cancel::Cancel::new();
+        self.accepted.lock().unwrap().insert(key, cancel.clone());
+        cancel
+    }
+
+    /// Stop a request that is still running. A key that names nothing is
+    /// silence, not an error: the request finished while the notification was
+    /// in flight, which the protocol expects and the client cannot avoid.
+    fn cancel(&self, key: &str) {
+        if let Some(cancel) = self.accepted.lock().unwrap().get(key) {
+            cancel.cancel();
+        }
+    }
+
+    fn cancel_all(&self) {
+        for cancel in self.accepted.lock().unwrap().values() {
+            cancel.cancel();
+        }
+    }
+
+    /// Retire an answered request.
+    fn done(&self, key: &str) {
+        let mut accepted = self.accepted.lock().unwrap();
+        accepted.remove(key);
+        if accepted.is_empty() {
+            self.idle.notify_all();
+        }
+    }
+
+    /// Block until nothing is outstanding.
+    fn wait_until_idle(&self) {
+        let mut accepted = self.accepted.lock().unwrap();
+        while !accepted.is_empty() {
+            accepted = self.idle.wait(accepted).unwrap();
+        }
+    }
+}
+
+/// What the reader does with a line, decided from as little of it as possible.
+enum Control {
+    /// A `notifications/cancelled` naming this request key.
+    Cancel(String),
+    /// A notification nothing answers.
+    Drop,
+    /// A request, to be answered under this key.
+    Serve(String),
+}
+
+/// Peek at a line: is it a cancellation, a notification, or work?
+///
+/// The line is parsed again in [`handle_line`], which is the deliberate
+/// trade: one `serde_json::from_str` over a few hundred bytes, against
+/// splitting the protocol across two places that each know half of it.
+fn control(line: &str, seq: u64) -> Control {
+    let Ok(request) = serde_json::from_str::<Value>(line) else {
+        // Unparseable, and still owed the parse error `handle_line` writes.
+        // The synthetic key cannot collide with a JSON-RPC id, which is always
+        // a quoted string or a bare number.
+        return Control::Serve(format!("#{seq}"));
+    };
+    if request["method"] == "notifications/cancelled" {
+        return match request["params"].get("requestId") {
+            Some(id) => Control::Cancel(id.to_string()),
+            None => Control::Drop,
+        };
+    }
+    match request.get("id") {
+        Some(id) => Control::Serve(id.to_string()),
+        None => Control::Drop,
+    }
+}
+
+/// Take jobs until the channel closes, answering each under its own token.
+fn work(
+    rx: &Mutex<std::sync::mpsc::Receiver<Job>>,
+    out: &Mutex<std::io::Stdout>,
+    live: &Live,
+    launched_from: &Option<Stamp>,
+) {
+    // `launched_from` is here only so a failed call can say a newer contour is
+    // installed; the restart itself belongs to the reader (see `serve`).
+    loop {
+        // The lock is released before the work, so one worker holding a job
+        // does not stop the others taking theirs.
+        let job = match rx.lock().unwrap().recv() {
+            Ok(job) => job,
+            Err(_) => return,
+        };
+        let response = crate::cancel::with(&job.cancel, || handle_line(&job.line, launched_from));
+        if let Some(response) = response {
+            say(out, &response);
+        }
+        live.done(&job.key);
+    }
+}
+
+/// One line to stdout, whole. Two workers writing at once would interleave
+/// into a line no client can parse, so the lock is the framing.
+fn say(out: &Mutex<std::io::Stdout>, line: &str) {
+    let mut out = out.lock().unwrap();
+    // A closed stdout is the client gone; the reader will see the same thing
+    // on stdin and shut the session down. Nothing here can report it.
+    let _ = writeln!(out, "{line}");
+    let _ = out.flush();
 }
 
 /// A binary's identity on disk.

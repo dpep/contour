@@ -1145,3 +1145,106 @@ Three things fall out of it that are worth stating:
 Scoping is a **narrowing of the answer, not of the truth** — a duplicate
 outside the scope is still a duplicate. That is the same bargain `dupes` has
 always struck, and the reason both surfaces disclose the scope they searched.
+
+## DEC-031 — The server reads on one thread and works on others
+
+Three of the five findings in the first monorepo field report are the same
+sentence: **a loop that blocks on the work it is doing cannot notice
+anything.** A `symbols` call, documented as needing no index at all, sat for
+fifteen minutes behind two unscoped heavy calls. An abandoned call went on
+burning every core until the process was killed by hand. Neither is a
+performance problem; both are the shape of `serve`.
+
+**As built.** One thread reads stdin and hands each request to a channel; four
+workers take them and answer, writing whole lines under a mutex because two
+interleaved responses are one corrupt line. Responses come back in whatever
+order they finish, which JSON-RPC allows and every client already handles by
+matching on `id`. `notifications/cancelled` is acted on by the *reader*, which
+is the whole point of it being free: it sets an `AtomicBool` the running
+request watches.
+
+### Why four workers, and why the bound is memory
+
+CPU needs no bounding here. The heavy work is one shared rayon pool whatever
+number of requests submit to it, so N workers do not become N pools. What does
+not share is **memory**: an unscoped query holds a vector for every unit in the
+checkout, measured at 757 MB peak for 132k units, so four of them on a monorepo
+is gigabytes. Four is enough that the cheap call a session actually issues
+never waits, and low enough that the box survives someone asking four expensive
+questions at once.
+
+### The cancellation flag is ambient, and that is a considered trade
+
+`crate::cancel` puts the flag in a thread-local rather than in a parameter. The
+alternative is a `&Cancel` on `search`, `similar`, `dupes::find`,
+`dupes::find_near`, `near::pairs`, `vectors_for` and `embed_all` — six of which
+have a CLI caller with nothing to pass but a token that is never set, and every
+function added later would have to remember it. That is a parameter costing
+about as much as it hides.
+
+The price is one sharp edge, and it is documented at the module and at the one
+place it bites: **a rayon worker is a different thread**, so a parallel loop
+must take the token on its own thread and let the closure capture it. Reading
+it inside the closure gets a fresh, never-cancelled one and the run does not
+stop. `embed::embed_all` is the worked example.
+
+Three places check it, chosen because they are where the time goes (see
+PLAN.md's scale measurements): the embedding map, `near::pairs`' bucket walk,
+and the write that would otherwise store what a cancelled embedding did not
+produce. `embed_all` cannot break out of a rayon map, so a cancelled run turns
+every remaining item into a no-op and drains in about the time one embedding
+takes; the caller treats the result as void.
+
+### The hang-up is the cancellation that always arrives
+
+Whether a given client sends `notifications/cancelled` is not something this
+server can rely on — the notification is in the MCP spec, and support for it
+across clients is uneven. **Closing stdin is not optional**: when the client
+goes away the reader sees EOF, cancels everything outstanding, and joins. That
+alone answers the field report's fourth finding, which was ten cores burning
+after the client had stopped listening, and it does not depend on the client
+implementing anything.
+
+For the same reason nothing here is built on `notifications/progress`. It was
+checked before being designed against: the client this ships to does not
+populate `_meta.progressToken` on `tools/call` and does not display server
+progress. A progress channel nobody renders is a fake progress bar with extra
+steps; DEC-032's up-front estimate is what replaces it.
+
+### DEC-025's restart, and the bug that shape nearly shipped
+
+**The exec has to happen on the thread that reads.** The obvious shape — a
+worker notices it answered the last outstanding request and execs — was built
+first, and DEC-025's own regression test caught it hanging. The reason is worth
+recording because nothing about it is obvious:
+
+Once reading is a separate thread, that thread is *always* reading. So the
+moment a worker writes the last response, the reader may already have taken the
+client's next line off the pipe and into a userspace buffer, and not yet
+counted it. Exec at that instant and the line is gone — and a lost request is a
+hang where a failed one is an error. That is not a rare interleaving: a client
+sending its next request the moment it sees the previous reply is the commonest
+pattern there is, and the test hit it on the first run.
+
+So the reader owns the exec, at the one place it holds nothing: after
+dispatching what it has read and before reading again. When it sees a newer
+binary it stops reading, waits on a condition variable for the in-flight map to
+empty, and execs. Anything the client sends during that drain stays in the pipe
+and is read by the new build.
+
+The known edge is **unchanged, not shrunk** — an earlier draft of this decision
+claimed it shrank, and that was wrong. A client that pipelines a batch can
+still have siblings sitting in the reader's buffer when the drain begins, and
+those are lost exactly as they were before. DEC-025's proxy parent remains the
+only shape that removes it.
+
+### What this makes newly possible, and is therefore newly risky
+
+Two tool calls can now touch the store at once, where before they could not.
+The store has been WAL with `busy_timeout=5000` since milestone 1, so a second
+writer waits rather than fails, and the same overlap has always been possible
+between the server and a CLI run in another terminal. What changes is the
+likelihood, and the exposure is a long write — indexing a monorepo for the
+first time — running past five seconds while another request wants to write.
+Recorded rather than pre-solved: raising the timeout without a case that hits
+it would be tuning against imagination.

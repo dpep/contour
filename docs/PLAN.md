@@ -828,10 +828,68 @@ prints an id. That is DEC-014's question and belongs with the tree layer, not
 with a milestone about hardening. Parked, with the reasoning rather than a
 guess.
 
+## Monorepo scale, measured
+
+The plan's non-goal said "brute-force cosine with rayon handles ~50k records
+fine (measured in gqls); revisit at monorepo scale." A field trial on a
+monorepo of ~2M indexed units — 40× that — is the revisit, and this is what it
+cost.
+
+**Method.** No 2M-unit corpus was available, so one was built: the Ruby of
+three public checkouts (rails, discourse, mastodon — 17.7k files, 62 MB)
+replicated under distinct top-level directories in one throwaway git repo, each
+copy's `class`/`module` names prefixed so the copies are distinct blobs,
+distinct unit ids and distinct embedding texts. Release build with the ONNX
+embedder, 8 cores, 24 GB, quiet machine, `/usr/bin/time -l`. Two sizes; the
+third was refused by the disk, not by the method.
+
+| | 132,532 units | 256,402 units | per unit |
+| --- | ---: | ---: | ---: |
+| `index` (cold, every blob new) | 3.6 s | 5.7 s | 22 µs |
+| **unscoped `similar`, cold** | **441 s** | **881 s** | **3.4 ms** |
+| — of which embedding | ~430 s | ~870 s | |
+| its CPU time | 3,098 s | 6,398 s | |
+| its peak RSS | 757 MB | 1,219 MB | ~4.8 KB |
+| unscoped `similar`, warm | 1.2 s | 2.2 s | 8.5 µs |
+| unscoped `dupes --near` | 10.7 s | 24.9 s | (see caveat) |
+| derived database | 623 MB | 1,141 MB | ~4.5 KB |
+
+**Where the time goes: embedding, and it is not close.** Cold minus warm is 97%
+of the cold run, and the embedding pool ran at 7.0–7.3× on 8 cores — the ~10
+cores at 100% the field report saw, reproduced. The rate is **~295 units per
+second** at both sizes, and everything above is linear in units to within 4%
+over a 1.9× range.
+
+Linearly extrapolated to 2M units, which is the only honest way to state it and
+is stated as an extrapolation: an unscoped cold `similar` or `search` is
+**about 110 minutes and about 9 GB of resident memory**, with a derived
+database near 9 GB. That is the 20+ minutes with no progress signal the field
+report described, and it is not a tuning problem — it is a corpus-sized
+inference run standing between a caller and their first answer.
+
+**Three things this ruled out.** The suspicion list was embedding, loading
+vectors out of SQLite, and brute-force cosine. Only the first is real at this
+scale: the warm run — which loads every vector and scores every cosine — is
+1.2 s at 132k and 2.2 s at 256k, so the cosine scan the non-goal was written
+about is still not the problem at 40× its stated limit. Loading vectors *is*
+the warm cost, and it is a floor `scope` does not lower: `Store::vectors` reads
+the whole vector table regardless of scope. At 132k that floor is about a
+second; at 2M it is the next thing to measure.
+
+**The `dupes --near` figures carry a caveat that matters.** Normalization sees
+through the perturbation — renaming a class does not change a normalized body —
+so the replicated corpus holds ~50k *distinct bodies* at both sizes, and the
+near tier's candidate-pair count barely moved (160,834 → 161,000 out of 1.29
+billion possible). What those two numbers measure is the I/O half growing with
+units; the combinatorial half was never stretched. **A real monorepo has ~2M
+distinct bodies, and nothing here says what `near::pairs` costs on that.** It
+is the one part of the field report this measurement does not answer.
+
 ## Non-goals (for now)
 
 - Languages beyond Ruby and Rust (the extractor seam is pluggable; rq shows
   the multi-language registry shape).
 - ANN indexes — brute-force cosine with rayon handles ~50k records fine
-  (measured in gqls); revisit at monorepo scale.
+  (measured in gqls). Revisited at 256k above, and still not the bottleneck:
+  the cold cost is embedding, not scoring.
 - Runtime traces, coverage, ownership signals — future ranking inputs.

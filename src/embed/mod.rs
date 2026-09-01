@@ -127,11 +127,23 @@ pub fn embed_all(spec: Option<&str>, texts: &[String]) -> Vec<Vec<f32>> {
     thread_local! {
         static LOCAL: RefCell<Option<Box<dyn Embedder>>> = const { RefCell::new(None) };
     }
+    // Taken here and captured, never read inside the closure: a rayon worker is
+    // a different thread and would find its own never-cancelled token
+    // (`crate::cancel`). This is the loop that burns every core on a cold
+    // corpus, so it is the one that has to stop.
+    let cancel = crate::cancel::current();
     // `spec` is constant for a process, so every worker resolves the same
     // embedder kind and no run can mix onnx and hash vectors into one index.
     texts
         .par_iter()
         .map(|text| {
+            // Not an early exit — rayon has no break — but each remaining item
+            // becomes O(1), so the pool drains in about the time one embedding
+            // takes. The caller must treat the result as void, which is what
+            // `cancel.check()` beside every call site does.
+            if cancel.cancelled() {
+                return Vec::new();
+            }
             LOCAL.with(|cell| {
                 let mut slot = cell.borrow_mut();
                 let embedder = slot.get_or_insert_with(|| default_embedder(spec, Workload::Bulk));
@@ -271,6 +283,25 @@ pub fn humanize(ident: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The pool that burns every core on a cold corpus stops when the request
+    /// that started it is cancelled — and the ambient token really does reach
+    /// the rayon workers, which is the one sharp edge in `crate::cancel`.
+    ///
+    /// The second half is the control: without it, "every vector is empty"
+    /// would also pass if `embed_all` had simply stopped working.
+    #[test]
+    fn a_cancelled_embedding_stops_rather_than_finishing() {
+        let texts: Vec<String> = (0..64).map(|i| format!("widget handler {i}")).collect();
+
+        let cancel = crate::cancel::Cancel::new();
+        cancel.cancel();
+        let stopped = crate::cancel::with(&cancel, || embed_all(None, &texts));
+        assert_eq!(stopped.len(), texts.len(), "one slot per text, still");
+        assert!(stopped.iter().all(Vec::is_empty), "it kept embedding");
+
+        assert!(embed_all(None, &texts).iter().all(|v| !v.is_empty()));
+    }
 
     #[test]
     fn splits_identifiers_into_words() {

@@ -14,6 +14,24 @@
   everything in scope needs a vector, and anything without one is embedded on
   the spot (DEC-030).
 
+- **The MCP server answers more than one call at a time, and a cancelled call
+  stops.** It reads on one thread and works on four, so a `symbols` call no
+  longer waits behind a heavy one — a field report watched that wait run to
+  fifteen minutes. `notifications/cancelled` now reaches the running request
+  and stops it, and **so does hanging up**: closing the server's stdin cancels
+  everything outstanding, which is what the same report needed when abandoning
+  a call left ten cores burning until the process was killed by hand.
+  Responses now come back in whatever order they finish rather than in the
+  order they were asked — which JSON-RPC allows and clients match by `id`, but
+  a hand-rolled client that assumed otherwise must stop assuming it. The
+  mid-session restart (DEC-025) is unaffected and still exec's only when
+  nothing is outstanding. DEC-031.
+- **Where a monorepo's time actually goes, measured** at 132k and 256k units
+  and written down in `docs/PLAN.md`: a cold unscoped query is an embedding run
+  at ~295 units/second, 97% of the wall clock, extrapolating to about 110
+  minutes and 9 GB of memory at 2M units. The cosine scan the plan worried
+  about is not the problem at 5× the size it was worried about.
+
 ## 0.1.0 — 2026-08-31
 
 First release. contour indexes what code *means*: every callable in a checkout
