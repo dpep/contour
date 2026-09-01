@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.3.0 — 2026-09-01
 
 - **`contour embed [SCOPE]` pays the embedding bill on purpose.** A query
   embeds whatever in its scope has no vector yet, and `search`/`similar` refuse
