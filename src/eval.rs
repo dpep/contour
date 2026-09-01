@@ -518,8 +518,8 @@ pub fn run(
     // the difference between the two rows is exactly what summaries bought.
     let mut ranked: Vec<Ranking> = Vec::new();
     for (label, prefer) in [
-        ("contour", crate::search::Prefer::Best),
-        ("contour:identifier", crate::search::Prefer::IdentifierOnly),
+        ("contour", crate::embed::Prefer::Best),
+        ("contour:identifier", crate::embed::Prefer::IdentifierOnly),
     ] {
         let mut ranking = Ranking {
             label: label.to_string(),
@@ -588,7 +588,7 @@ pub fn run(
             }
         }
         // The floor is calibrated for the tier a user actually gets.
-        if prefer == crate::search::Prefer::Best {
+        if prefer == crate::embed::Prefer::Best {
             calibration_answers = answers;
             calibration_distractors = distractors;
         }

@@ -328,6 +328,49 @@ pub fn identifier_text(unit: &crate::core::Unit) -> String {
     parts.join(" ")
 }
 
+/// Which text a unit is found by, where it has both a summary and a name.
+///
+/// `Best` is what every caller but the eval wants. `IdentifierOnly` exists so
+/// the eval can score the tiers against each other on one corpus — the
+/// embed-code-against-embed-summary comparison DEC-004 promised — without
+/// needing two indexes to do it.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum Prefer {
+    Best,
+    IdentifierOnly,
+}
+
+/// The text a unit is embedded as, and the key that text is stored under.
+pub struct Text {
+    pub key: u64,
+    pub text: String,
+    /// Which tier produced it: `summary` or `identifier`.
+    pub via: &'static str,
+}
+
+/// The one rule for what a unit is embedded as.
+///
+/// Both the query path and the fill ask this, which is what makes a vector
+/// `embed` bought the one `search` looks for: two loops choosing the text
+/// separately would agree until one of them was edited. `None` where there is
+/// nothing to embed — a macro-generated unit with no name text at all.
+pub fn text_of(
+    unit: &crate::core::Unit,
+    summary: Option<&Summary>,
+    prefer: Prefer,
+) -> Option<Text> {
+    // Prefer meaning over naming where both exist — DEC-005's interop rule.
+    let (text, via) = match (summary, prefer) {
+        (Some(summary), Prefer::Best) => (summary_text(summary), "summary"),
+        _ => (identifier_text(unit), "identifier"),
+    };
+    if text.trim().is_empty() {
+        return None;
+    }
+    let key = text_key(&text);
+    Some(Text { key, text, via })
+}
+
 /// Identity of everything that invalidates a vector other than the text
 /// itself: width, embedder, model. Vectors sharing this are interchangeable by
 /// content key.

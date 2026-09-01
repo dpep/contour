@@ -31,9 +31,7 @@
 //! summarized units, so a search over a half-summarized repo answers from what
 //! exists and says so — rather than looking like the corpus is small.
 
-use crate::embed::{
-    Embedder, config_key, humanize, identifier_text, mrl, summary_text, text_key, tokenize,
-};
+use crate::embed::{Embedder, Prefer, config_key, humanize, mrl, tokenize};
 use crate::store::{Located, Store};
 use crate::summary::Coverage;
 use anyhow::{Result, bail};
@@ -232,18 +230,6 @@ pub struct Answer {
 pub struct Tiers {
     pub summary: usize,
     pub identifier: usize,
-}
-
-/// Which vector to prefer where a unit has both.
-///
-/// `Best` is what every caller but the eval wants. `IdentifierOnly` exists so
-/// the eval can score the tiers against each other on one corpus — the
-/// embed-code-against-embed-summary comparison DEC-004 promised — without
-/// needing two indexes to do it.
-#[derive(Clone, Copy, PartialEq, Debug)]
-pub enum Prefer {
-    Best,
-    IdentifierOnly,
 }
 
 /// Everything about a query except the query.
@@ -1039,16 +1025,11 @@ fn vectors_for(
             indexed.text.insert(i, summary.summary.clone());
         }
 
-        // Prefer meaning over naming where both exist — DEC-005's interop
-        // rule, finally exercised against two real indexes.
-        let (text, via) = match (summary, prefer) {
-            (Some(summary), Prefer::Best) => (summary_text(summary), "summary"),
-            _ => (identifier_text(&located.unit), "identifier"),
-        };
-        if text.trim().is_empty() {
+        let Some(crate::embed::Text { key, text, via }) =
+            crate::embed::text_of(&located.unit, summary, prefer)
+        else {
             continue;
-        }
-        let key = text_key(&text);
+        };
         match have.get(&key) {
             Some(vec) => {
                 indexed.vectors.insert(i, (vec.clone(), via));
