@@ -1173,6 +1173,13 @@ is gigabytes. Four is enough that the cheap call a session actually issues
 never waits, and low enough that the box survives someone asking four expensive
 questions at once.
 
+**Postscript, after DEC-033: the sentence above is now about the worst case
+rather than every case.** A *scoped* query holds a vector for every unit in its
+scope, not in the checkout — that is what DEC-033 changed, and a session on a
+monorepo is scoping, because DEC-032 refuses it otherwise. Four workers stands
+unchanged: the bound has to survive four callers who each named the checkout
+root, and that is exactly the case the 757 MB was measured on.
+
 ### The cancellation flag is ambient, and that is a considered trade
 
 `crate::cancel` puts the flag in a thread-local rather than in a parameter. The
@@ -1322,3 +1329,50 @@ switch off is an unfalsifiable one.
   own ONNX session, ~3.7 s of fixed cost that a small sample measures as
   per-text and would inflate the estimate several-fold. A measured constant
   with its method written down beats a measurement taken badly.
+
+## DEC-033 — A scope is a set of text keys, and the vector read honours it
+
+The scale run in PLAN.md ruled out two of the three suspects and named the
+third: cold cost is embedding. What it also found, in a sentence, is the floor
+underneath every *warm* answer — **`Store::vectors` read the whole vector table
+regardless of scope.** At 132k units that is about a second and most of the
+run's memory; extrapolated to 2M it is the entire cost of every call, including
+a call about one directory. Once DEC-034 makes a monorepo warm, this is what is
+left.
+
+**As built: `Store::vectors(config_key, wanted)` takes the set of text keys the
+caller needs**, in chunks of 900 because SQLite binds at most 999 parameters
+per statement.
+
+### Why the caller passes keys rather than a path
+
+The obvious shape is `vectors(config_key, scope)` with the filter in SQL, and
+it cannot be written honestly. **A vector is not keyed by a unit, a file or a
+path — it is keyed by the text it came from** (DEC-003), and the same text is
+one row however many units share it. There is no join from `vector` to `file`
+to filter on, and adding one would put a path back under layer 1, which is the
+restraint that makes N worktrees of one repo cost one index.
+
+So the scope is resolved where a scope is already known — the caller walks the
+units in scope, asks `embed::text_of` what each embeds as, and hands over the
+keys. That reorders `vectors_for`: it now decides every unit's text *before*
+reading any vector, where it used to load the table first and look each text up
+in it. The reorder is the change; everything downstream is untouched.
+
+### What it does not fix, said plainly
+
+`Store::units` still reads every unit in the checkout and filters by path in
+Rust, so a scoped query still pays a whole-checkout cost there. That is the
+next floor, and it is deliberately not attacked in the same change: pushing the
+filter into SQL means writing `paths::under`'s rule a second time, in a
+different language, and two spellings of "is this path in scope" that agree
+today is the exact shape of a bug that arrives later.
+
+### The memory bound in DEC-031 was written against the old behaviour
+
+"An unscoped query holds a vector for every unit in the checkout, measured at
+757 MB peak for 132k units, so four of them on a monorepo is gigabytes" — that
+is still true of an *unscoped* query and no longer true of a scoped one, which
+is what a session on a monorepo actually issues. Four workers stands; the
+arithmetic behind it now applies to the worst case rather than to every case.
+

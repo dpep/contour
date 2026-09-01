@@ -458,23 +458,89 @@ impl Store {
         Ok(rows.collect::<rusqlite::Result<HashSet<_>>>()?)
     }
 
-    /// Every vector stored for one embedder configuration, keyed by the text
-    /// it came from.
+    /// The vectors for one embedder configuration and a given set of texts,
+    /// keyed by the text each came from.
     ///
-    /// Loaded whole. Brute-force cosine reads all of them anyway (PLAN rules
-    /// out an ANN index at this scale), and at 50k units this is ~50 MB and
-    /// one query against 50k round trips.
-    pub fn vectors(&self, config_key: u64) -> Result<HashMap<u64, Vec<f32>>> {
+    /// **`wanted` is the scope, expressed in the only vocabulary this table
+    /// has.** A vector is keyed by its text, not by a unit or a path
+    /// (DEC-003), so the caller resolves its scope to the texts those units
+    /// embed as and asks for exactly those. Reading the whole table instead
+    /// was a floor no scope could lower — measured at ~1 s and 750 MB of
+    /// resident memory for 132k units, and linear from there (docs/PLAN.md).
+    ///
+    /// Two ways to answer, because neither wins everywhere: reading the table
+    /// through costs what the **table** holds, and looking each key up costs
+    /// what the **caller asked for**. Measured on a 117,556-vector table, a
+    /// read-through is ~1.3 µs a row and a lookup ~4.2 µs a key, so the
+    /// read-through wins until the table is about three times the size of the
+    /// request.
+    ///
+    /// Which side of that a call falls on is not something the caller can
+    /// know: this table holds every checkout on the machine, so even "the
+    /// whole repository" may be a small slice of it. So the read-through is
+    /// tried and **abandoned** once it has visited more rows than a lookup per
+    /// key would have cost — self-correcting, and needing no statistics, which
+    /// is just as well because `count(*)` on this table costs as much as
+    /// reading it.
+    pub fn vectors(
+        &self,
+        config_key: u64,
+        wanted: &std::collections::HashSet<u64>,
+    ) -> Result<HashMap<u64, Vec<f32>>> {
+        /// Rows a read-through may visit per key asked for, before looking
+        /// them up one at a time is the cheaper answer. From the two rates
+        /// above: 4.2 / 1.3.
+        const SCAN_RATIO: usize = 3;
+
+        if wanted.is_empty() {
+            return Ok(HashMap::new());
+        }
+        let budget = wanted.len().saturating_mul(SCAN_RATIO);
+        let mut out = HashMap::with_capacity(wanted.len());
         let mut stmt = self
             .conn
-            .prepare("SELECT text_key, vec FROM vector WHERE config_key = ?1")?;
-        let rows = stmt.query_map(params![config_key as i64], |r| {
-            Ok((r.get::<_, i64>(0)? as u64, r.get::<_, Vec<u8>>(1)?))
-        })?;
-        let mut out = HashMap::new();
-        for row in rows {
-            let (key, bytes) = row?;
-            out.insert(key, decode_vector(&bytes));
+            .prepare_cached("SELECT text_key, vec FROM vector WHERE config_key = ?1")?;
+        let mut rows = stmt.query(params![config_key as i64])?;
+        let mut visited = 0usize;
+        while let Some(row) = rows.next()? {
+            visited += 1;
+            if visited > budget {
+                drop(rows);
+                return self.vectors_by_key(config_key, wanted);
+            }
+            let key = row.get::<_, i64>(0)? as u64;
+            if wanted.contains(&key) {
+                out.insert(key, decode_vector(&row.get::<_, Vec<u8>>(1)?));
+            }
+        }
+        Ok(out)
+    }
+
+    /// One lookup per key. The other half of [`Store::vectors`]; never called
+    /// directly, because which half is right is a property of the table rather
+    /// than of the caller.
+    fn vectors_by_key(
+        &self,
+        config_key: u64,
+        wanted: &std::collections::HashSet<u64>,
+    ) -> Result<HashMap<u64, Vec<f32>>> {
+        let mut stmt = self
+            .conn
+            .prepare_cached("SELECT vec FROM vector WHERE config_key = ?1 AND text_key = ?2")?;
+        let mut out = HashMap::with_capacity(wanted.len());
+        // Ascending, so the seeks walk the b-tree forwards instead of jumping
+        // about in it — measured 20% faster on a whole-checkout request.
+        let mut keys: Vec<u64> = wanted.iter().copied().collect();
+        keys.sort_unstable();
+        for key in keys {
+            let found = stmt
+                .query_row(params![config_key as i64, key as i64], |r| {
+                    r.get::<_, Vec<u8>>(0)
+                })
+                .optional()?;
+            if let Some(bytes) = found {
+                out.insert(key, decode_vector(&bytes));
+            }
         }
         Ok(out)
     }
@@ -827,10 +893,44 @@ mod tests {
         let mut store = Store::open_in_memory().unwrap();
         let vec: Vec<f32> = vec![0.5, -0.25, 0.0, 1.0];
         store.put_vectors(7, &[(11, vec.clone())]).unwrap();
-        assert_eq!(store.vectors(7).unwrap().get(&11), Some(&vec));
+        assert_eq!(store.vectors(7, &keys(&[11])).unwrap().get(&11), Some(&vec));
         // A different embedder configuration is a different index, not an
         // overwrite (DEC-005).
-        assert!(store.vectors(8).unwrap().is_empty());
+        assert!(store.vectors(8, &keys(&[11])).unwrap().is_empty());
+    }
+
+    /// A read costs what the scope holds, not what the table holds — the
+    /// warm floor a scope could not lower before (DEC-033). Asking for one of
+    /// two stored vectors must return one: reading the tableful returns both,
+    /// which is what this pins.
+    ///
+    /// Both halves run here, chosen by the sizes: one key out of 2,500 stored
+    /// is answered key by key, and 2,000 of them by reading the table through.
+    /// Neither is visible from outside, which is the point — the contract is
+    /// "exactly what was asked for", and it has to hold whichever way the
+    /// answer was reached.
+    #[test]
+    fn a_vector_read_is_bounded_by_what_was_asked_for() {
+        let mut store = Store::open_in_memory().unwrap();
+        let stored: Vec<(u64, Vec<f32>)> = (0..2_500u64).map(|k| (k, vec![k as f32])).collect();
+        store.put_vectors(7, &stored).unwrap();
+
+        let one = store.vectors(7, &keys(&[42])).unwrap();
+        assert_eq!(one.len(), 1, "the scope was one vector");
+        assert_eq!(one.get(&42), Some(&vec![42.0]));
+
+        // Large enough to be read through, and asking for a key nothing
+        // stored, which neither half may invent.
+        let wide: Vec<u64> = (0..2_000).chain(std::iter::once(9_999)).collect();
+        let many = store.vectors(7, &keys(&wide)).unwrap();
+        assert_eq!(many.len(), 2_000, "every stored key, and only those");
+        assert_eq!(many.get(&1_999), Some(&vec![1999.0]));
+
+        assert!(store.vectors(7, &keys(&[])).unwrap().is_empty());
+    }
+
+    fn keys(of: &[u64]) -> std::collections::HashSet<u64> {
+        of.iter().copied().collect()
     }
 
     #[test]

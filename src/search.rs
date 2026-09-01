@@ -1000,7 +1000,6 @@ fn vectors_for(
 ) -> Result<Indexed> {
     let model = embedder.model().to_string();
     let config = config_key(embedder.kind(), &model);
-    let have = store.vectors(config)?;
     let stored = store.all_summaries()?;
 
     let mut indexed = Indexed {
@@ -1008,34 +1007,58 @@ fn vectors_for(
         text: HashMap::new(),
         coverage: Coverage::default(),
     };
-    let mut missing: Vec<(u64, String)> = Vec::new();
-    let mut pending: Vec<(usize, u64, &'static str)> = Vec::new();
 
-    for (i, located) in units.iter().enumerate() {
-        // A summary is only possible where there is a body to summarize;
-        // the identifier tier covers everything, including the
-        // macro-generated units that have no body at all.
-        let summary = located.unit.norm_hash.and_then(|norm_hash| {
-            indexed.coverage.summarizable += 1;
+    // A summary is only possible where there is a body to summarize; the
+    // identifier tier covers everything, including the macro-generated units
+    // that have no body at all.
+    let summary_of = |located: &Located| {
+        located.unit.norm_hash.and_then(|norm_hash| {
             let ctx = crate::summary::Context::of(&located.unit).hash();
             stored.get(&(norm_hash, ctx))
-        });
+        })
+    };
+
+    // What every unit in scope is embedded as, worked out before a single
+    // vector is read. That order is what makes the read scope-sized: the
+    // vector table is keyed by text, so the texts *are* the scope, and asking
+    // for them by name is the difference between loading a directory's
+    // vectors and loading a monorepo's (DEC-033).
+    //
+    // The key is kept and the text is dropped. Holding a quarter of a million
+    // live short strings to hand a fraction of them to the embedder costs
+    // about 0.2 s of allocation on a large checkout, and the warm path — the
+    // one that matters once `contour embed` has run — never wants them.
+    let mut planned: Vec<(usize, u64, &'static str)> = Vec::with_capacity(units.len());
+    for (i, located) in units.iter().enumerate() {
+        let summary = summary_of(located);
+        if located.unit.norm_hash.is_some() {
+            indexed.coverage.summarizable += 1;
+        }
         if let Some(summary) = summary {
             indexed.coverage.summarized += 1;
             indexed.text.insert(i, summary.summary.clone());
         }
+        if let Some(text) = crate::embed::text_of(&located.unit, summary, prefer) {
+            planned.push((i, text.key, text.via));
+        }
+    }
 
-        let Some(crate::embed::Text { key, text, via }) =
-            crate::embed::text_of(&located.unit, summary, prefer)
-        else {
-            continue;
-        };
+    let have = store.vectors(config, &planned.iter().map(|(_, key, _)| *key).collect())?;
+    let mut missing: Vec<(u64, String)> = Vec::new();
+    let mut pending: Vec<(usize, u64, &'static str)> = Vec::new();
+    for (i, key, via) in planned {
         match have.get(&key) {
             Some(vec) => {
                 indexed.vectors.insert(i, (vec.clone(), via));
             }
             None => {
-                missing.push((key, text));
+                // Rebuilt rather than kept, per the note above. Only what has
+                // no vector pays for it, and it is about to be embedded.
+                if let Some(text) =
+                    crate::embed::text_of(&units[i].unit, summary_of(&units[i]), prefer)
+                {
+                    missing.push((key, text.text));
+                }
                 pending.push((i, key, via));
             }
         }

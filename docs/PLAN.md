@@ -974,9 +974,66 @@ vectors out of SQLite, and brute-force cosine. Only the first is real at this
 scale: the warm run — which loads every vector and scores every cosine — is
 1.2 s at 132k and 2.2 s at 256k, so the cosine scan the non-goal was written
 about is still not the problem at 40× its stated limit. Loading vectors *is*
-the warm cost, and it is a floor `scope` does not lower: `Store::vectors` reads
+the warm cost, and it was a floor `scope` did not lower: `Store::vectors` read
 the whole vector table regardless of scope. At 132k that floor is about a
-second; at 2M it is the next thing to measure.
+second; at 2M it is the next thing to measure. **Measured and lowered — see
+directly below.**
+
+### The warm floor, measured before and after scoping the vector read
+
+The sentence above — "`Store::vectors` reads the whole vector table regardless
+of scope… at 2M it is the next thing to measure" — is what DEC-033 answered.
+
+**Method.** The same synthetic corpus, rebuilt to the same recipe at one and
+two copies (132,534 and 265,068 units), fully embedded with `contour embed` and
+the ONNX embedder so every query below is warm. Release build, 8 cores, quiet
+machine, `/usr/bin/time -l`. Each figure is the **median of five runs with a
+sixth, cold-cache run discarded**; the two binaries are the commit before the
+change and the commit after it, run against the same database. The small scope
+is one directory — 47 files, 391 summarizable units.
+
+| warm `search` | 132,534 units | | 265,068 units | |
+| --- | ---: | ---: | ---: | ---: |
+| | wall | peak RSS | wall | peak RSS |
+| **one directory**, before | 0.58 s | 315 MB | 1.00 s | 476 MB |
+| **one directory**, after | **0.36 s** | **193 MB** | **0.59 s** | **266 MB** |
+| whole checkout, before | 1.00 s | 487 MB | 1.88 s | 806 MB |
+| whole checkout, after | 1.05 s | 488 MB | 1.92 s | 814 MB |
+
+**A scoped answer costs about 40% less and holds about 40% less**, at both
+sizes, and the whole-checkout case is unchanged — the 2–5% on those two rows is
+inside the run-to-run spread, which was ±0.2 s. That last row is the constraint
+the design was built against: reading the table through is the right strategy
+when the request *is* most of the table, and DEC-033 keeps it by abandoning the
+read-through only once it has visited more rows than looking each key up would
+have cost.
+
+**Two things this does not fix, and both are visible in the table.** A scoped
+query still grows with the corpus — 0.36 s to 0.59 s for the same 391 units —
+because `Store::units` reads every unit in the checkout and filters by path in
+Rust. That is now the floor, and moving it means writing `paths::under`'s rule a
+second time in SQL, which is the trade DEC-033 declines to make blind. And the
+whole-checkout row is what it always was: an unscoped query on a monorepo is
+expensive because it is unscoped, which is the case DEC-030 and DEC-032 exist to
+steer away from.
+
+**What the fill itself cost, on the same two corpora**, since `contour embed`
+(DEC-034) is what made them warm:
+
+| `contour embed` | 132,534 units | 265,068 units |
+| --- | ---: | ---: |
+| distinct texts | 117,556 | 223,005 |
+| wall | 450 s | 943 s |
+| rate | 261/s | 237/s |
+| peak RSS | 740 MB | 851 MB |
+
+The rate is 10–20% under the 295/s the table above recorded for the same work
+done inside a query, and the machine was not as quiet — three release builds ran
+during the second fill. The peak memory is the interesting number: **851 MB at
+265k units against 1,219 MB for the query that embeds the same corpus**,
+because the fill holds one batch of 500 texts at a time where a query holds the
+whole corpus's texts and vectors at once. Batching for resumability bought a
+lower ceiling as well.
 
 **The `dupes --near` figures carry a caveat that matters.** Normalization sees
 through the perturbation — renaming a class does not change a normalized body —

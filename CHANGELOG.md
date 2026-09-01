@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- **A scoped query no longer pays for the whole repository's vectors.** Loading
+  them read the entire vector table whatever scope you asked about — about a
+  second and 750 MB at 132k units, and the whole cost of every warm call at
+  monorepo scale. It now reads only the vectors the scope needs. **Nothing to
+  do**: no reindex, no re-embed, same answers. `docs/PLAN.md` has the
+  before/after at two corpus sizes. DEC-033.
+
 ## 0.2.0 — 2026-08-31
 
 - **`similar` takes a scope.** Its second positional is now a path to seek
