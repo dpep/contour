@@ -90,6 +90,10 @@ pub fn open(path: &Path) -> Result<Opened> {
 }
 
 pub fn index(store: &mut Store, path: &Path) -> Result<(String, Indexed)> {
+    // One span over scan, parse and write. They are the three halves of "is
+    // the index current", and a caller who wants them apart wants a profile of
+    // `index`, not of a query that refreshed nothing.
+    let mut span = crate::profile::span("refresh");
     let root = scan::repo_root(path)?;
     let files = scan::scan(&root)?;
     let root_str = root.to_string_lossy().into_owned();
@@ -129,6 +133,7 @@ pub fn index(store: &mut Store, path: &Path) -> Result<(String, Indexed)> {
     // case that cannot occur needs no handling).
     let mut files = files;
     let mut parsed = Vec::with_capacity(read.len());
+    let parsed_len = read.len();
     for (oid, blob) in read {
         match blob {
             Some(blob) => parsed.push((oid, blob)),
@@ -137,5 +142,6 @@ pub fn index(store: &mut Store, path: &Path) -> Result<(String, Indexed)> {
     }
 
     let counts = store.write(&root_str, &files, parsed)?;
+    span.note(|| format!("{} file(s), {} blob(s) parsed", files.len(), parsed_len));
     Ok((root_str, counts))
 }

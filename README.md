@@ -34,6 +34,7 @@ contour eval <SET>                     # score against a labeled set
 contour mcp                            # MCP over stdio, for an agent client
 contour --symbols FILE   # outline one file — parses it live, no index needed
 contour --status [PATH]  # what the index holds, and what it is missing
+contour … --profile      # on any command: where this run's wall clock went
 ```
 
 ## Install

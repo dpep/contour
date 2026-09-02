@@ -291,6 +291,15 @@ pub fn search(
         .collect();
     let summaries = vectors_for(store, &units, embedder, prefer)?;
 
+    // Embedded before the lexical half rather than between the two, so
+    // `--profile` can time one inference apart from the scoring it feeds.
+    let query_vec = {
+        let _span = crate::profile::span("embed query");
+        mrl::compress_matryoshka_vector(&embedder.embed(query))
+    };
+    let mut score_span = crate::profile::span("score");
+    score_span.note(|| format!("{} unit(s) in scope", units.len()));
+
     // Lexical: how much of the query each humanized name accounts for.
     let mut lexical: Vec<(usize, f64)> = units
         .iter()
@@ -301,7 +310,6 @@ pub fn search(
     lexical.sort_by(|a, b| b.1.total_cmp(&a.1));
 
     // Semantic: cosine against each summary's vector, floored.
-    let query_vec = mrl::compress_matryoshka_vector(&embedder.embed(query));
     let scored: Vec<(usize, f32)> = summaries
         .vectors
         .iter()
@@ -450,6 +458,8 @@ pub fn search(
         })
         .collect();
 
+    drop(score_span);
+
     let mut tiers = Tiers::default();
     for (_, via) in summaries.vectors.values() {
         match *via {
@@ -575,6 +585,8 @@ pub fn similar(
     let mut claimed: std::collections::HashSet<usize> = std::iter::once(target).collect();
 
     // Structural: an identical normalized body, at a different place.
+    let mut structural_span = crate::profile::span("score");
+    structural_span.note(|| format!("{} unit(s) in scope", units.len()));
     let mut out: Vec<Neighbor> = Vec::new();
     if let Some(norm_hash) = here.unit.norm_hash {
         for (i, other) in units.iter().enumerate() {
@@ -602,6 +614,8 @@ pub fn similar(
             });
         }
     }
+
+    drop(structural_span);
 
     // Near-structural: mostly the same shape, between exact identity and
     // meaning. Runs before the semantic tier so a reader sees the cheaper,
@@ -642,6 +656,7 @@ pub fn similar(
     // Semantic: nearest summaries, minus anything a structural tier already
     // claimed — a result reported twice under two tiers is a result a reader
     // has to de-duplicate by hand.
+    let _semantic_span = crate::profile::span("score");
     if let Some((vec, _)) = summaries.vectors.get(&target) {
         let mut scored: Vec<(usize, f32)> = summaries
             .vectors

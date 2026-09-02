@@ -30,6 +30,7 @@
 //! - [`mcp`] — the agent surface, returning exactly the JSON the CLI does.
 //! - [`cancel`] — the flag a served request watches, so abandoning a call
 //!   stops the work rather than only the waiting (DEC-031).
+//! - [`profile`] — where the wall clock went, for `--profile`.
 
 pub mod cancel;
 pub mod canonical;
@@ -44,6 +45,7 @@ pub mod index;
 pub mod mcp;
 pub mod near;
 pub mod paths;
+pub mod profile;
 pub mod ruby;
 pub mod rust;
 pub mod scan;

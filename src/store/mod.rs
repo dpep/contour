@@ -112,6 +112,7 @@ impl Store {
     /// purchased one attached: a contour that speaks a different derived version
     /// builds its own file and neither can wipe or be refused by the other's.
     pub fn open(path: &Path) -> Result<Store> {
+        let _span = crate::profile::span("store open");
         let derived = schema::derived_file(path);
         let conn = Connection::open(&derived)?;
         // SQLite opens lazily, so the first statement is what discovers a file
@@ -367,6 +368,7 @@ impl Store {
     /// layer-1 contract paying off: one blob's units are stored once however
     /// many paths point at it.
     pub fn units(&self, root: &str) -> Result<Vec<Located>> {
+        let mut span = crate::profile::span("read units");
         let mut stmt = self.conn.prepare(
             "SELECT f.path, u.lang, u.name, u.owner, u.singleton, u.params, u.via,
                     u.line, u.end_line, u.norm_hash, u.nodes, u.visibility
@@ -405,7 +407,10 @@ impl Store {
             crate::paths::qualify(&path, &mut unit);
             Ok(Located { path, unit })
         })?;
-        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+        let units = rows.collect::<rusqlite::Result<Vec<_>>>()?;
+        span.note(|| format!("{} rows, whole checkout", units.len()));
+        crate::profile::count("unit rows read", units.len() as u64);
+        Ok(units)
     }
 
     /// Record one purchased answer. Idempotent: re-running a fill that was
@@ -495,6 +500,7 @@ impl Store {
         if wanted.is_empty() {
             return Ok(HashMap::new());
         }
+        let mut span = crate::profile::span("read vectors");
         let budget = wanted.len().saturating_mul(SCAN_RATIO);
         let mut out = HashMap::with_capacity(wanted.len());
         let mut stmt = self
@@ -506,6 +512,7 @@ impl Store {
             visited += 1;
             if visited > budget {
                 drop(rows);
+                span.note(|| format!("{} wanted, scan abandoned after {visited}", wanted.len()));
                 return self.vectors_by_key(config_key, wanted);
             }
             let key = row.get::<_, i64>(0)? as u64;
@@ -513,6 +520,14 @@ impl Store {
                 out.insert(key, decode_vector(&row.get::<_, Vec<u8>>(1)?));
             }
         }
+        span.note(|| {
+            format!(
+                "{} wanted, {visited} rows scanned, {} found",
+                wanted.len(),
+                out.len()
+            )
+        });
+        crate::profile::count("vector rows read", visited as u64);
         Ok(out)
     }
 
@@ -542,6 +557,7 @@ impl Store {
                 out.insert(key, decode_vector(&bytes));
             }
         }
+        crate::profile::count("vector rows read", out.len() as u64);
         Ok(out)
     }
 
@@ -575,6 +591,7 @@ impl Store {
     /// One query rather than a probe per unit — at 50k units the probe is 50k
     /// round trips, which is the same mistake `known` exists to avoid.
     pub fn all_summaries(&self) -> Result<HashMap<(u64, u64), Summary>> {
+        let mut span = crate::profile::span("read summaries");
         let mut stmt = self.conn.prepare(
             "SELECT norm_hash, ctx_hash, json FROM purchased.summary
               WHERE variant = 'body' AND level = 'unit'
@@ -592,6 +609,8 @@ impl Store {
             let (norm_hash, ctx_hash, json) = row?;
             out.insert((norm_hash, ctx_hash), serde_json::from_str(&json)?);
         }
+        span.note(|| format!("{} rows, whole store", out.len()));
+        crate::profile::count("summary rows read", out.len() as u64);
         Ok(out)
     }
 
@@ -600,6 +619,7 @@ impl Store {
     /// Loaded whole, like `vectors`: the near tier's inverted index needs all
     /// of it, and one query beats a probe per body.
     pub fn signatures(&self) -> Result<HashMap<u64, Vec<crate::core::Subtree>>> {
+        let mut span = crate::profile::span("read signatures");
         let mut stmt = self
             .conn
             .prepare("SELECT norm_hash, subtree_hash, nodes, parent_hash FROM signature")?;
@@ -618,6 +638,7 @@ impl Store {
             let (norm_hash, subtree) = row?;
             out.entry(norm_hash).or_default().push(subtree);
         }
+        span.note(|| format!("{} bodies, whole store", out.len()));
         Ok(out)
     }
 

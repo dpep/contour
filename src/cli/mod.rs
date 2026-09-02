@@ -49,6 +49,17 @@ pub struct Cli {
     #[arg(short = 'J', long, global = true)]
     ndjson: bool,
 
+    /// Report on stderr where this run's wall clock went, by phase.
+    ///
+    /// Global, and on every command, because "which phase is slow" is not a
+    /// question one surface gets to answer. Goes to stderr rather than into
+    /// the answer: a measurement of a run is not part of what the run found,
+    /// and putting it in the object would change every command's output shape
+    /// for a flag most callers never pass. `--json`/`--ndjson` make it one
+    /// compact object there instead of a table.
+    #[arg(long, global = true)]
+    profile: bool,
+
     /// Print a shell completion script and exit.
     #[arg(long, value_name = "SHELL")]
     completions: Option<clap_complete::Shell>,
@@ -297,7 +308,23 @@ const MISS: i32 = 1;
 
 pub fn run() -> i32 {
     let cli = Cli::parse();
-    match dispatch(&cli) {
+    crate::profile::enable_from(cli.profile);
+    let started = std::time::Instant::now();
+    let result = dispatch(&cli);
+    // Printed for a failed run too: a command that took ninety seconds to
+    // refuse is exactly the run somebody wants the phases for.
+    if crate::profile::enabled() {
+        let total = started.elapsed();
+        match (cli.json, cli.ndjson) {
+            (false, false) => {
+                for line in crate::profile::report(total) {
+                    eprintln!("{line}");
+                }
+            }
+            _ => eprintln!("{}", crate::profile::json(total)),
+        }
+    }
+    match result {
         Ok(code) => code,
         Err(err) => {
             eprintln!("contour: {err:#}");
@@ -315,6 +342,12 @@ fn dispatch(cli: &Cli) -> Result<i32> {
             &mut std::io::stdout(),
         );
         return Ok(HIT);
+    }
+    // A profile describes one run. The server answers many, on four worker
+    // threads at once (DEC-031), so its phases would overlap each other and
+    // the shares would not mean anything. Refused rather than quietly ignored.
+    if cli.profile && matches!(cli.command, Some(Command::Mcp)) {
+        bail!("--profile measures one run; `mcp` answers many, concurrently");
     }
     let format = match (cli.json, cli.ndjson) {
         (true, true) => bail!("--json and --ndjson are two answers to one question"),
@@ -943,6 +976,7 @@ fn search(
         },
     )?;
 
+    let _render = crate::profile::span("render");
     match format {
         Format::Human => {
             for hit in &answer.hits {
@@ -1060,6 +1094,7 @@ fn similar(
         &classes,
     )?;
 
+    let _render = crate::profile::span("render");
     match format {
         Format::Human => {
             for n in &neighbors.neighbors {

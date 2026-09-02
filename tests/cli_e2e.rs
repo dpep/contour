@@ -1812,3 +1812,62 @@ fn a_filled_scope_answers_the_query_it_refused_cold() {
     assert_eq!(code, 2, "{err}");
     assert!(err.contains("more than zero"), "{err:?}");
 }
+
+/// `--profile` is an instrument, so what it must never do is change the
+/// answer: the phases go to stderr, stdout stays exactly the data, and the
+/// exit code is the one the run earned.
+///
+/// The field report that asked for this had to attach an OS stack sampler to a
+/// release binary to learn where a query's time went. What it needed was for
+/// the reads to be named and for the part nobody had named to be visible,
+/// which is what `unaccounted` is.
+#[test]
+fn profile_reports_phases_on_stderr_without_touching_the_answer() {
+    let (repo, _) = searchable("profile-phases");
+
+    let (plain, code) = repo.run(&["search", "unpaid", "--json"]);
+    let (out, err, profiled) = repo.run_in(
+        &repo.dir.clone(),
+        &["search", "unpaid", "--json", "--profile"],
+    );
+    assert_eq!(out, plain, "the profile must not reach stdout");
+    assert_eq!(profiled, code, "nor change the exit code");
+
+    // With a JSON format asked for, the profile is one compact object.
+    let report: serde_json::Value =
+        serde_json::from_str(err.lines().last().unwrap()).expect("a JSON profile on stderr");
+    assert!(report["total_ms"].as_f64().unwrap() > 0.0);
+    assert!(report["unaccounted_ms"].is_number());
+    let named: Vec<&str> = report["phases"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|p| p["name"].as_str().unwrap())
+        .collect();
+    for phase in ["store open", "read units", "score", "render"] {
+        assert!(named.contains(&phase), "{phase} missing from {named:?}");
+    }
+    assert!(report["counters"]["unit rows read"].as_u64().unwrap() > 0);
+
+    // Human format gets the table, and it accounts for the whole run.
+    let (_, human, _) = repo.run_in(&repo.dir.clone(), &["search", "unpaid", "--profile"]);
+    assert!(human.contains("unaccounted"), "{human}");
+    assert!(human.contains("total"), "{human}");
+
+    // Off by default: no phase table, no JSON object.
+    let (_, quiet, _) = repo.run_in(&repo.dir.clone(), &["search", "unpaid"]);
+    assert!(!quiet.contains("unaccounted"), "{quiet}");
+}
+
+/// A profile describes one run, and the server answers many at once — so the
+/// combination is refused rather than printing shares that overlap.
+#[test]
+fn profile_is_refused_for_the_server() {
+    let repo = Repo::new(
+        "profile-mcp",
+        &[("a.rb", "class A\n  def b\n    1\n  end\nend\n")],
+    );
+    let (_, err, code) = repo.run_in(&repo.dir.clone(), &["mcp", "--profile"]);
+    assert_eq!(code, 2);
+    assert!(err.contains("one run"), "{err}");
+}

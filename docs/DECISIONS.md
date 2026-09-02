@@ -1491,3 +1491,50 @@ shipping a fill command would be exactly the kind of key-adjacent change
 DEC-016 warns about. But **the next `VERSION` bump should not be taken as free
 without reading this**, and the honest options are two: move the table, or make
 the bump say what it is about to throw away.
+
+
+## DEC-035 — `--profile` names the phases, and the part nobody named
+
+A field report on a ~2M-unit monorepo could only answer "where does a scoped
+query's time go?" by attaching an OS stack sampler to a release binary. It
+found about a third of the main thread blocked in single-page read syscalls —
+a true and unactionable answer, because nothing in it says *which* read. The
+flag is the answer from the inside, and it is the same flag rq and trekr carry,
+so a session that has met one can predict this one.
+
+**As built.** `crate::profile`, vendored from rq's module of the same name and
+trimmed: a phase is a named span, spans accumulate by name, and `report`/`json`
+print them with each one's share of the total. `--profile` is global, so every
+command has it.
+
+### Three choices worth stating
+
+**It goes to stderr, not into the answer.** The house rule is that any command
+that prints output honors `--json`, and the tempting reading of it here is a
+`profile` key on the answer object. That would change every command's output
+shape for a flag most callers never pass, and it would put a measurement of a
+run inside what the run *found*. So stdout stays exactly the data — a profiled
+run is safe to pipe — and `--json`/`--ndjson` make the stderr report one
+compact object instead of a table.
+
+**Phases do not nest, and what they miss is a row.** Each span times one
+segment of a mostly sequential pipeline; a span inside a span would
+double-count and the table would stop adding up. The consequence is that some
+work belongs to no phase, and the honest thing is to say how much: the
+`unaccounted` row is why the first profile of a warm scoped query was worth
+reading at all — 24% of it was the ONNX session load, which nothing had named
+and which is now its own phase.
+
+**A phase is a category, not an occurrence.** Two spans with one name sum into
+one row carrying `xN`. That is what turned "read units 121 ms, read units 122
+ms" into `read units  243 ms  41%  x2`, which is a *finding* — the query was
+reading the whole checkout's unit table twice — rather than two forgettable
+rows. See DEC-036.
+
+### Refused for `mcp`, rather than quietly ignored
+
+The server answers many requests at once on four worker threads (DEC-031), so
+its phases would overlap each other and the shares would be arithmetic about
+nothing. `contour mcp --profile` is an error. `CONTOUR_PROFILE` in the
+environment enables the flag for a binary something else invokes — a script, a
+Makefile, an editor — which is the affordance rq's `RQ_PROFILE` gives.

@@ -84,6 +84,11 @@ pub const BUILD: &str =
 /// fallback. Callers never branch on which one they got — they read `kind()`
 /// and disclose it.
 pub fn default_embedder(model: Option<&str>, workload: Workload) -> Box<dyn Embedder> {
+    // Loading an ONNX session is a fixed cost every command pays before it
+    // reads a row, and on a warm scoped query it is a fifth of the wall clock.
+    // Named rather than left in the remainder, because a fixed cost that big
+    // is a design fact, not noise.
+    let _span = crate::profile::span("embedder load");
     #[cfg(feature = "_semantic")]
     if let Some(embedder) = onnx::OnnxEmbedder::load(model, workload.into()) {
         return Box::new(embedder);
@@ -227,6 +232,9 @@ pub fn embed_all(spec: Option<&str>, texts: &[String]) -> Vec<Vec<f32>> {
     // (`crate::cancel`). This is the loop that burns every core on a cold
     // corpus, so it is the one that has to stop.
     let cancel = crate::cancel::current();
+    let mut span = crate::profile::span("embed");
+    span.note(|| format!("{} text(s)", texts.len()));
+    crate::profile::count("texts embedded", texts.len() as u64);
     // `spec` is constant for a process, so every worker resolves the same
     // embedder kind and no run can mix onnx and hash vectors into one index.
     texts

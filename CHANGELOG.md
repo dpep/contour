@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+- **`--profile` says where a run's wall clock went**, on every command, in the
+  spirit of the same flag on the other tools in this toolbox. A table on stderr
+  names each phase — store open, refresh, the index reads, embedding, scoring,
+  rendering — with its share of the total, the counts that explain it (rows
+  read, texts embedded), and an **`unaccounted`** row for everything no phase
+  claimed. `--json`/`--ndjson` make it one compact object on stderr instead;
+  stdout stays exactly the answer, so a profiled run is safe to pipe.
+  `CONTOUR_PROFILE` in the environment turns it on for a binary somebody else
+  invokes. **Nothing to do** — it is off by default and costs an atomic load
+  when off. Refused on `contour mcp`, which answers many runs at once. It exists
+  because a field report had to attach an OS stack sampler to a release binary
+  to learn that a third of a scoped query was blocked in page reads. DEC-035.
+
 ## 0.3.0 — 2026-09-01
 
 - **`contour embed [SCOPE]` pays the embedding bill on purpose.** A query
