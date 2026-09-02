@@ -1044,6 +1044,126 @@ units; the combinatorial half was never stretched. **A real monorepo has ~2M
 distinct bodies, and nothing here says what `near::pairs` costs on that.** It
 is the one part of the field report this measurement does not answer.
 
+## Where a warm scoped query's time goes, named from the inside
+
+The second field report profiled a scoped, warm, already-summarized `similar`
+on a ~2M-unit monorepo with an OS stack sampler and found **about 36% of the
+main thread blocked in single-page read syscalls**. True, and unactionable: it
+names no read. `--profile` (DEC-035) is the same question answered from
+inside, and its first run on the synthetic corpus said more than the sampler
+could.
+
+**Method.** The corpus rebuilt to the recipe above at one and two copies
+(132,534 and 256,402 units), fully embedded with `contour embed` so every query
+is warm. Release build with the ONNX embedder, 8 cores, quiet machine. The
+scope is one directory — `rails/activejob/lib`, 48 files, 365 units. Wall and
+RSS are the median of five runs with a sixth, cold-cache run discarded; the
+phase tables are one representative run.
+
+```text
+0.3.0                                    after
+  store open        0.5ms   0%             store open        0.6ms   0%
+  refresh         114.0ms  19%             refresh         113.2ms  25%
+                                           embedder load    80.4ms  18%
+  read units      242.7ms  41%  x2         read units      120.5ms  26%
+  read summaries    0.1ms   0%             read summaries    0.1ms   0%
+  read vectors      6.6ms   1%             read vectors      6.1ms   1%
+  score             0.2ms   0%             score             0.2ms   0%
+  read signatures  88.8ms  15%             read signatures  88.7ms  19%
+  render            0.0ms   0%             render            0.0ms   0%
+  unaccounted     144.5ms  24%             unaccounted      47.4ms  10%
+  total           597.4ms                  total           457.2ms
+```
+
+**Index I/O is 57% of the warm query, and the sampler's 36% is reproduced and
+then some.** Three things fell out of that first table that no external sampler
+could have said:
+
+- **`read units  x2`.** The query read the whole checkout's unit table twice —
+  once for the units it ranks, once inside the near tier. DEC-036 removed the
+  second, which is a quarter of the wall clock.
+- **The vector table is 1% of it.** DEC-033 had already made that read
+  scope-sized, and it is now the cheapest read on the page. Any proposal aimed
+  at the vectors is aimed at 1%; see DEC-038.
+- **24% belonged to no phase at all**, and most of it was loading the ONNX
+  session — a fixed 80 ms every command pays before it reads a row. Named now.
+
+| warm scoped `similar` | 132,534 units | | 256,402 units | |
+| --- | ---: | ---: | ---: | ---: |
+| | wall | peak RSS | wall | peak RSS |
+| 0.3.0 | 0.60 s | 230 MB | 0.96 s | 301 MB |
+| after DEC-036 + DEC-037 | **0.45 s** | **200 MB** | **0.69 s** | **247 MB** |
+
+**One caveat that runs the wrong way, and it matters.** This corpus has no
+summaries, so `read summaries` is 0 rows where the reporting corpus has a
+fourth **unscoped whole-table** read there. The I/O share above is therefore an
+under-estimate of theirs, not an over-estimate.
+
+## The mmap arc, ruled by measurement
+
+The direction was to lean into memory-mapping the index. Two candidates, both
+measured before either was chosen, and **neither ships**. The reasoning is
+recorded rather than the conclusion alone, because "map the index" is the kind
+of idea that comes back.
+
+### `PRAGMA mmap_size`, measured at two sizes and rejected
+
+Same corpora and method. "Cold" means the page cache was evicted before the run
+by writing and reading back 20 GB of ballast; each cold figure is the median of
+three trials alternated between the two binaries. The two builds differ in one
+constant.
+
+| | 132,534 units | | 256,402 units | |
+| --- | ---: | ---: | ---: | ---: |
+| | wall | peak RSS | wall | peak RSS |
+| warm, no mmap | 0.46 s | 200 MB | 0.69 s | 247 MB |
+| warm, mmap | 0.45 s | 292 MB | 0.68 s | 369 MB |
+| cold, no mmap | **1.83 s** | 207 MB | **2.13 s** | 258 MB |
+| cold, mmap | 1.93 s | 305 MB | 2.58 s | 386 MB |
+
+**It buys nothing and costs half again as much memory.** Warm it is inside the
+run-to-run spread; cold it is a wash at 132k and 21% *slower* at 256k, while
+peak RSS is 45–50% higher at every size.
+
+The per-phase split says why, and it is the part worth keeping:
+
+| cold phase, 256k | no mmap | mmap |
+| --- | ---: | ---: |
+| `read units` (sequential, 265k rows) | 763 ms | **526 ms** |
+| `read signatures` (sequential, 71k bodies) | 287 ms | **135 ms** |
+| `read vectors` (323 random key lookups) | **541 ms** | 1,238 ms |
+
+**Mapping helps a sequential table scan and hurts a random key lookup**, and
+contour's warm path is two sequential scans plus a few hundred seeks. The
+sequential win is real and grows with the corpus; the seek loss grows with it
+too — 981 ms at 132k, 1,238 ms at 256k for the same 323 keys — which was the
+prediction that killed the idea. It had been predicted the other way: that the
+seek cost was a property of the *scope* and would stay flat while the scans
+doubled. It is not, and a deeper b-tree over a larger file is the obvious
+reason in hindsight.
+
+**DEC-033's abandon threshold, revisited under the map and unchanged.** A
+mapped file was expected to make reading the vector table through cheaper than
+looking each key up. It does the opposite: with the read-through never
+abandoned, the cold vector read is **2,919 ms against 981 ms** and peak RSS is
+785 MB against 305 MB. `SCAN_RATIO` stays at 3.
+
+### The flat memory-mapped vector file: not yet earned
+
+The structural candidate — a sorted `keys[]` + `vecs[]` file beside the
+database, built when `embed` completes, swapped in by rename, mmap'd read-only
+— is a real design and it addresses **the wrong 1%**. On a warm scoped query
+the vector read is 6.1 ms of 457 ms. Its whole opportunity is the cold read
+(541 ms of 2.13 s at 256k), which is paid once per corpus per boot, against a
+new on-disk artifact with a version stamp, a staleness rule, a rebuild path, an
+alignment constraint and its own tests.
+
+What would change the ruling: the vector read becoming a large share of a
+**warm** query. It is 1%, and DEC-033 is why. The next floor is `read units`
+and `read signatures` — the two unscoped whole-table reads that are now 45% of
+a warm scoped query between them, and the honest next thing to attack
+(DEC-038).
+
 ## Non-goals (for now)
 
 - Languages beyond Ruby and Rust (the extractor seam is pluggable; rq shows

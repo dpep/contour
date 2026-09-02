@@ -1636,3 +1636,69 @@ probe meaningless in any process where another test has touched rayon — and
 cargo runs a file's tests as threads in one process — so it lives alone in
 `tests/pool_lazy.rs`, with the cold index (which really does parse blobs) run
 as a subprocess.
+
+
+## DEC-038 — The index is not memory-mapped, and the measurement is why
+
+A field report stack-sampled a warm scoped `similar` on a ~2M-unit monorepo and
+found about a third of the main thread blocked in single-page reads. The
+direction was to lean into memory-mapping. Two candidates were measured;
+**neither ships**, and the reasoning is recorded because "map the index" is an
+idea that comes back.
+
+### `PRAGMA mmap_size` — rejected
+
+One line, and it was measured at two corpus sizes, warm and with the page cache
+evicted (`docs/PLAN.md` has the tables and the method). Warm it is inside the
+run-to-run spread. Cold it is a wash at 132k units and **21% slower** at 256k.
+Peak RSS is **45–50% higher** at every size.
+
+The per-phase split is the part to keep: **mapping helps a sequential table
+scan and hurts a random key lookup.** At 256k, cold, `read units` goes 763 →
+526 ms and `read signatures` 287 → 135 ms, while `read vectors` — 323 key
+lookups — goes 541 → 1,238 ms. contour's warm path is two sequential scans plus
+a few hundred seeks, and the seek loss grew *with the corpus* (981 ms at 132k,
+1,238 ms at 256k for the same 323 keys) where it had been predicted to stay
+flat. A deeper b-tree over a larger file is the reason, and predicting
+otherwise is what the measurement caught.
+
+The pragma also carries a cost that never appeared on the clock: an I/O error
+on a mapped page arrives as a signal rather than an error code. That would have
+been acceptable for a derived file that rebuilds in seconds. It is not
+something to accept for nothing.
+
+### DEC-033's abandon threshold, re-asked under the map
+
+The read-through/per-key crossover was measured before mmap, so a mapped file
+had to be assumed to move it — cheaper to read through, so abandon later. It
+moves the other way. With the read-through never abandoned, the cold vector
+read is **2,919 ms against 981 ms** and peak RSS **785 MB against 305 MB**.
+`SCAN_RATIO` stays at 3.
+
+### The flat memory-mapped vector file — not yet earned
+
+The structural candidate: a file beside the database holding a header, sorted
+`keys[]` and `vecs[]` of dims×f32, built when `embed` completes, swapped in by
+atomic rename, mmap'd read-only, binary-searched, cosine run over the slices in
+place. Derived and rebuildable, stamped so a mismatch means rebuild — DEC-016's
+rule, correctly applied.
+
+It is a real design and it addresses **1%**. `--profile` on a warm scoped query
+over 132k units puts the vector read at **6.1 ms of 457 ms**, because DEC-033
+already made it scope-sized. Its whole opportunity is the cold read — 541 ms of
+2.13 s at 256k, paid once per corpus per boot — bought with a new on-disk
+artifact, a version stamp, a staleness rule, a rebuild path, an alignment
+constraint and its own tests. That is a cathedral over a puddle.
+
+**What would change this ruling**, stated so it is falsifiable rather than
+permanent: the vector read becoming a large share of a *warm* query. It is 1%.
+
+### What was actually costing the time, and what is next
+
+The reads that matter are the two nobody had named: `Store::units` and
+`Store::signatures`, both **unscoped whole-table** reads, together 45% of a
+warm scoped query after DEC-036. `read summaries` is a third, invisible in the
+measurement here only because the synthetic corpus has no summaries — the
+reporting corpus does. Scoping those the way DEC-033 scoped the vectors is the
+next floor, and it is the same trade DEC-033 declined to make blind: it means
+writing `paths::under`'s rule a second time in SQL.
