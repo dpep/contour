@@ -2,7 +2,7 @@
 # `contour` is taken on crates.io. The binary, the lib and the tool are all
 # still `contour` — only the package someone types `cargo install` at differs.
 name = "contour-index"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2024"
 description = "A multi-resolution semantic index of source code: search, navigation, and duplicate detection over intent rather than syntax."
 license = "MIT"

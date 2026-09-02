@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.4.0 — 2026-09-01
 
 - **`contour duplicates` is `contour dupes`**, spelled out. An alias, not a
   rename: `dupes` is still what the README, the skill and the MCP tool say, and
