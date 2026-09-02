@@ -845,7 +845,11 @@ fn near_sweep(store: &Store, root: &str, labels: &Labels) -> Result<Vec<NearPoin
 
     // Threshold 0: every candidate pair, scored, so the sweep can be taken
     // over the result rather than by re-running the tier per threshold.
-    let (pairs, _) = crate::near::pairs(&store.signatures()?, 0.0);
+    // The corpus's own bodies, not the machine's: the sweep scores what this
+    // checkout holds, and another checkout's shapes were candidate pairs that
+    // no label could ever name.
+    let bodies = units.iter().filter_map(|u| u.unit.norm_hash).collect();
+    let (pairs, _) = crate::near::pairs(&store.signatures(&bodies)?, 0.0);
     let mut scores: HashMap<(u64, u64), Scored> = HashMap::new();
     for pair in &pairs {
         let scored = Scored {

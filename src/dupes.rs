@@ -297,11 +297,7 @@ pub fn find_near(
 
     // Only bodies actually present in this scope, so a pair cannot be reported
     // between two methods the caller cannot see.
-    let signatures: std::collections::HashMap<u64, Vec<crate::core::Subtree>> = store
-        .signatures()?
-        .into_iter()
-        .filter(|(norm_hash, _)| by_hash.contains_key(norm_hash))
-        .collect();
+    let signatures = store.signatures(&by_hash.keys().copied().collect())?;
     let (pairs, mut stats) = crate::near::pairs(&signatures, threshold);
     // `pairs` returns what it had rather than what it would have found, so the
     // refusal has to happen here or an abandoned run reports a short list as a

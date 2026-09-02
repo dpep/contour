@@ -339,7 +339,12 @@ pub fn neighbors(
     let Some(norm_hash) = unit.unit.norm_hash else {
         return Ok(Vec::new());
     };
-    let signatures = store.signatures()?;
+    // The bodies this can possibly answer about: the candidates', plus the
+    // target's own, which the scope need not contain (DEC-030). Everything
+    // else in the table was scored and then dropped by the filter below.
+    let mut wanted: HashSet<u64> = candidates.iter().filter_map(|l| l.unit.norm_hash).collect();
+    wanted.insert(norm_hash);
+    let signatures = store.signatures(&wanted)?;
     let Some(mine) = signatures.get(&norm_hash) else {
         return Ok(Vec::new());
     };

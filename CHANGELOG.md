@@ -17,6 +17,13 @@
   and every message is the one it was, including the ambiguous-name refusal and
   the "did you mean" suggestion. DEC-040.
 
+- **The near-structural tier no longer loads every body on the machine.** It
+  used to score the whole signature table and then discard all but the ones in
+  scope; it now asks for the bodies it can answer about. **Nothing to do**, and
+  no answer moves. One side effect worth knowing: `contour eval`'s near sweep is
+  now scored over the corpus's own bodies rather than everything indexed on the
+  machine, so a run is reproducible whatever else you have indexed. DEC-040.
+
 ## 0.4.0 — 2026-09-01
 
 - **`contour duplicates` is `contour dupes`**, spelled out. An alias, not a

@@ -631,31 +631,57 @@ impl Store {
         Ok(out)
     }
 
-    /// Every stored signature, as `norm_hash -> its sub-shapes`.
+    /// The sub-shapes of the bodies asked for, as `norm_hash -> its
+    /// sub-shapes`.
     ///
-    /// Loaded whole, like `vectors`: the near tier's inverted index needs all
-    /// of it, and one query beats a probe per body.
-    pub fn signatures(&self) -> Result<HashMap<u64, Vec<crate::core::Subtree>>> {
+    /// **`wanted` is the scope, in the only vocabulary this table has.** A
+    /// signature is keyed by the normalized body it came from, not by a unit
+    /// or a path, so a caller resolves its scope to the bodies in it and asks
+    /// for exactly those — the same move DEC-033 made for the vectors, and for
+    /// the same reason: this table holds every checkout on the machine, and
+    /// reading it through was a floor no scope could lower. It was 89 ms of a
+    /// 457 ms warm scoped query (DEC-040).
+    ///
+    /// Chunked at 900, because SQLite binds at most 999 parameters per
+    /// statement. Unlike [`Store::vectors`] there is no read-through to
+    /// abandon back to: the only caller that asks for most of the table is
+    /// `dupes --near`, where a seek per body costs about 0.1 s against a run
+    /// whose real cost is the combinatorics, so one strategy is enough.
+    pub fn signatures(
+        &self,
+        wanted: &HashSet<u64>,
+    ) -> Result<HashMap<u64, Vec<crate::core::Subtree>>> {
         let mut span = crate::profile::span("read signatures");
-        let mut stmt = self
-            .conn
-            .prepare("SELECT norm_hash, subtree_hash, nodes, parent_hash FROM signature")?;
-        let rows = stmt.query_map([], |r| {
-            Ok((
-                r.get::<_, i64>(0)? as u64,
-                crate::core::Subtree {
-                    hash: r.get::<_, i64>(1)? as u64,
-                    nodes: r.get(2)?,
-                    parent: r.get::<_, i64>(3)? as u64,
-                },
-            ))
-        })?;
         let mut out: HashMap<u64, Vec<crate::core::Subtree>> = HashMap::new();
-        for row in rows {
-            let (norm_hash, subtree) = row?;
-            out.entry(norm_hash).or_default().push(subtree);
+        let keys: Vec<u64> = wanted.iter().copied().collect();
+        for chunk in keys.chunks(900) {
+            let places = std::iter::repeat_n("?", chunk.len())
+                .collect::<Vec<_>>()
+                .join(",");
+            let mut stmt = self.conn.prepare_cached(&format!(
+                "SELECT norm_hash, subtree_hash, nodes, parent_hash
+                   FROM signature WHERE norm_hash IN ({places})"
+            ))?;
+            let rows = stmt.query_map(
+                rusqlite::params_from_iter(chunk.iter().map(|k| *k as i64)),
+                |r| {
+                    Ok((
+                        r.get::<_, i64>(0)? as u64,
+                        crate::core::Subtree {
+                            hash: r.get::<_, i64>(1)? as u64,
+                            nodes: r.get(2)?,
+                            parent: r.get::<_, i64>(3)? as u64,
+                        },
+                    ))
+                },
+            )?;
+            for row in rows {
+                let (norm_hash, subtree) = row?;
+                out.entry(norm_hash).or_default().push(subtree);
+            }
         }
-        span.note(|| format!("{} bodies, whole store", out.len()));
+        span.note(|| format!("{} of {} bodies asked for", out.len(), wanted.len()));
+        crate::profile::count("signature bodies read", out.len() as u64);
         Ok(out)
     }
 

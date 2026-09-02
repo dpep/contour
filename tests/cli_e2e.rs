@@ -1921,6 +1921,50 @@ fn similar_reads_the_unit_table_once() {
     assert_eq!(answer["unit"], "Invoice#settle!", "{answer}");
 }
 
+/// The near-structural tier reads the scope's sub-shapes, not the machine's.
+///
+/// `signature` is keyed by normalized body and holds every checkout on this
+/// machine, so reading it through was a floor no scope could lower — 89 ms of
+/// a 457 ms warm scoped query on a monorepo. The tier scored every body in the
+/// table and then dropped all but the candidates', which is work with no
+/// possible effect on the answer, so the claim is pinned on the profile's
+/// counter (DEC-040).
+#[test]
+fn a_scoped_similar_reads_only_its_scopes_signatures() {
+    let body = |name: &str, extra: &str| {
+        format!(
+            "class {name}\n  def save(a)\n    b = a.check\n    {extra}\n    persist(b)\n    b\n  end\nend\n"
+        )
+    };
+    let repo = Repo::new(
+        "scoped-signatures",
+        &[
+            ("a/one.rb", body("Widget", "b.touch").as_str()),
+            ("b/two.rb", body("Gadget", "b.mark").as_str()),
+            ("c/three.rb", body("Doodad", "b.stamp").as_str()),
+        ],
+    );
+    repo.run(&["index"]);
+
+    // Three bodies in the checkout, and each has sub-shapes to compare.
+    let (_, err, _) = repo.run_in(
+        &repo.dir.clone(),
+        &["similar", "Widget#save", "--json", "--profile"],
+    );
+    let report: serde_json::Value =
+        serde_json::from_str(err.lines().last().unwrap()).expect("a JSON profile on stderr");
+    assert_eq!(report["counters"]["signature bodies read"], 3, "{report}");
+
+    // Scoped to one of them: its body and the target's, and nothing else.
+    let (_, err, _) = repo.run_in(
+        &repo.dir.clone(),
+        &["similar", "Widget#save", "b", "--json", "--profile"],
+    );
+    let report: serde_json::Value =
+        serde_json::from_str(err.lines().last().unwrap()).expect("a JSON profile on stderr");
+    assert_eq!(report["counters"]["signature bodies read"], 2, "{report}");
+}
+
 /// A scoped question reads the scope, not the checkout.
 ///
 /// The path filter used to run in Rust over rows the database had already

@@ -1873,6 +1873,31 @@ the scope, and appends the target if the scope does not hold it — three lines
 where there was an index-rewriting loop, and one less place that spells "is
 this path in scope".
 
+### The signature table gets DEC-033's treatment, not a path predicate
+
+`Store::signatures` read the machine's whole signature table, and its stated
+reason — "the near tier's inverted index needs all of it" — had stopped being
+true. DEC-036 handed the tier its candidates; since then it scored every body
+in the table and then dropped all but the candidates' in the filter on the way
+out, which is work that cannot change an answer.
+
+No SQL predicate is involved, and that is the point: a signature is keyed by
+the normalized body it came from, not by a unit or a path (DEC-003), so there
+is no path to filter on and the scope is expressed in the only vocabulary the
+table has — a set of `norm_hash`. `near::neighbors` asks for its candidates'
+bodies plus the target's; `dupes::find_near` asks for the bodies it already
+grouped, which is exactly what its post-read filter used to keep; `eval`'s near
+sweep asks for the corpus's bodies, which also makes it independent of whatever
+else this machine has indexed.
+
+**No read-through to abandon back to, unlike [`Store::vectors`].** The crossover
+DEC-033 needed exists because a whole-checkout vector request is most of the
+query. Here the caller that asks for most of the table is `dupes --near`:
+measured on the 132k-unit corpus, a seek per body over all 77k of them costs
+about 0.1 s of SQLite time against a read-through of 7 ms, and `dupes --near`
+takes 10.7 s. One percent of a run whose real cost is the combinatorics does not
+buy a second strategy and the constant that chooses between them.
+
 ### Which callers stay unscoped, deliberately
 
 The whole-checkout readers pass `None` and get the query they always had:
