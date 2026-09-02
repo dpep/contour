@@ -15,8 +15,8 @@
 //!
 //! **Why not a size threshold, which is the obvious next step.** Measured
 //! before being written: building the pool costs about 0.4 ms on 8 cores (50
-//! warm scoped queries, 6.17 s against 6.15 s, and 194 involuntary context
-//! switches against 114), while one blob parse costs about 0.3 ms of CPU
+//! warm scoped queries, 6.15 s against 6.13 s, and 132-162 involuntary context
+//! switches against 111-119), while one blob parse costs about 0.3 ms of CPU
 //! (17,639 blobs, 5.26 s of user time). A pool that fixed therefore pays for
 //! itself at about **two** items, so any threshold worth naming would make
 //! real work serial to save a fraction of a millisecond. The one workload with
