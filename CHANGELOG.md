@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- **A one- or two-letter word in a question no longer decides the ranking.**
+  `lexical_score` gave any query token half credit for prefix-matching a name,
+  so the word `a` in *prevent a change once something is finalized* matched
+  `add_parcel` and beat the guard clause that answered the question. Three
+  letters is where the half credit's own evidence starts (`pay` / `payroll`);
+  an exact match is still exact at any length. **Nothing to do** — no reindex,
+  no re-embed; some rankings move. Scored on every eval set that runs without
+  an API key: 45 top-1 to 56 of 111, none lost, every gain on the band that
+  phrases questions the way people type them.
+
 - **A command with nothing to parse no longer starts a thread per core.** Every
   command refreshes the index on the way in, and on a warm checkout that
   refresh had nothing to do — but the empty parallel map still built a

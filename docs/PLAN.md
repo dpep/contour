@@ -1044,6 +1044,54 @@ units; the combinatorial half was never stretched. **A real monorepo has ~2M
 distinct bodies, and nothing here says what `near::pairs` costs on that.** It
 is the one part of the field report this measurement does not answer.
 
+## The guard-clause case, scored and half of it shipped
+
+The second field report reproduces the first one's ranking complaint on 0.3.0:
+a question about *preventing an action once a resource is already finalized*
+put the one guard-clause method that implements exactly that check at **rank 17
+(cosine 0.44)**, behind nine methods that merely call it, with `--floor 0
+--limit 30` — so not a cutoff artefact. That is mechanism **B** above at field
+scale, and the two mechanisms were finally scored rather than argued.
+
+**What the ranking was not.** It is tempting to read "nine callers above the
+implementation" as the fusion weighting the two halves wrongly. It is not: all
+ten of those units are answered for by the same tier — a summary vector — so no
+identifier/summary weight separates them, and in the fixture repro the guard
+ranks fourth **with no lexical hit anywhere on the page**. There is no weight to
+change here, which is why no reweighting was measured. M12b's lesson is that a
+weight change needs the whole eval set to say yes; this one does not even have a
+hypothesis.
+
+### A. No prefix credit for a one- or two-letter query token — SHIPPED
+
+One line, and it attacks the trigger: `lexical_score` gave a prefix half credit
+to any token, so the word `a` in *prevent a change once …* matched `add_parcel`
+and bought it a second term in the fusion that `ensure_open!` did not have.
+
+**Scored on every set that runs without an API key** — the fixture set, the
+seven Rust sets, and berater; rails, discourse and mastodon need bought
+summaries and could not be run. Release build with the ONNX embedder, same
+corpora and same labels before and after:
+
+| row | before | after |
+| --- | ------ | ----- |
+| `fixture` / `contour` | 10 top-1, 22 top-5 | **14 top-1, 23 top-5** |
+| `fixture` / `contour:identifier` | 8 top-1, 14 top-5 | **12 top-1, 16 top-5** |
+| `fixture` / `contour:natural` | 17 top-1, 23 top-5 | **20 top-1, 23 top-5** |
+| all eight sets, every `contour*` row | 45 top-1, 77 top-5 of 111 | **56 top-1, 80 top-5** |
+
+**Eleven top-1s gained and none lost.** Every set other than `fixture` scored
+byte-identically, which is the honest reading of the win as well as its size:
+the Rust sets and berater are *silent* here rather than confirming, because
+their labeled queries contain no one- or two-letter token to withdraw credit
+from. The whole effect lives on the band that phrases questions the way people
+type them, which is exactly where DEC-027 said the case would be found and
+where the eval had no coverage until M12b built one.
+
+The field case itself cannot join the eval set — the corpus is private — so its
+*shape* is mirrored in `tests/cli_e2e.rs` instead: a guard and a caller whose
+name begins with the query's `a`, asserting that no hit claims a lexical half.
+
 ## Where a warm scoped query's time goes, named from the inside
 
 The second field report profiled a scoped, warm, already-summarized `similar`

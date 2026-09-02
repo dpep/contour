@@ -837,6 +837,17 @@ fn common_prefix(a: &str, b: &str) -> usize {
     a.bytes().zip(b.bytes()).take_while(|(x, y)| x == y).count()
 }
 
+/// Query tokens this short buy no prefix credit.
+///
+/// `pay` matching `payroll` is the evidence the half credit was written for.
+/// `a` matching `add` is not — and it was enough to decide a ranking: on the
+/// guard-clause repro (PLAN.md), the single word "a" in *prevent a change once
+/// something has been finalized* prefix-matched `add_parcel`, which bought it a
+/// second term in the fusion that the only unit answering the question did not
+/// have, and the two tied at 0.0164 with the wrong one on top. An exact match
+/// is still an exact match at any length: `id` matching `id` is the word.
+const MIN_PREFIX: usize = 2;
+
 /// How much of a query a unit's humanized name accounts for, 0 to 1.
 ///
 /// Deliberately simple. RRF consumes a *ranking*, not a calibrated score, so
@@ -862,7 +873,9 @@ fn lexical_score(query: &str, id: &str) -> f64 {
     for term in &query {
         if name.iter().any(|w| w == term) {
             score += 1.0;
-        } else if name.iter().any(|w| w.starts_with(term.as_str())) {
+        } else if term.chars().count() > MIN_PREFIX
+            && name.iter().any(|w| w.starts_with(term.as_str()))
+        {
             // A prefix is real evidence but weaker: `pay` matching `payroll`
             // should not outrank `payroll` matching `payroll`.
             score += 0.5;
@@ -1183,6 +1196,21 @@ mod tests {
         assert!(exact > prefix, "{exact} should beat {prefix}");
         assert!(prefix > 0.0);
         assert_eq!(lexical_score("payroll", "Invoice#unpaid_for"), 0.0);
+    }
+
+    /// One or two letters is not a prefix match, and the guard-clause case is
+    /// why: `a` prefix-matching `add` bought `add_parcel` a second term in the
+    /// fusion, and beat the only unit that answered the question.
+    #[test]
+    fn a_very_short_query_word_buys_no_prefix_credit() {
+        assert_eq!(lexical_score("a", "Shipment#add_parcel"), 0.0);
+        assert_eq!(
+            lexical_score("is", "Shipment#is_open"),
+            1.0,
+            "exact is exact"
+        );
+        // Three letters is where the half credit's own evidence starts.
+        assert!(lexical_score("pay", "Invoice#payroll") > 0.0);
     }
 
     /// Every query term has to pull its weight: a query that matches one of

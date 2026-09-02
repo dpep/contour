@@ -1899,3 +1899,55 @@ fn similar_reads_the_unit_table_once() {
     // Three units in the fixture, read once — not six.
     assert_eq!(report["counters"]["unit rows read"], 3, "{report}");
 }
+
+/// The field case's shape, mirrored: a one-letter word in the question must
+/// not decide the ranking.
+///
+/// The corpus it was reported on is private, so what is pinned here is the
+/// mechanism rather than the case — a guard clause and a method that calls it,
+/// where the caller's name begins with the query's `a`. Prefix credit for that
+/// `a` used to buy the caller a second term in the fusion, which the guard did
+/// not have, and it won on the tie.
+#[test]
+fn a_one_letter_query_word_does_not_decide_the_ranking() {
+    let repo = Repo::new(
+        "short-token",
+        &[(
+            "shipping.rb",
+            "class Shipment\n\
+             \x20 def ensure_open!\n\
+             \x20   raise Frozen unless open?\n\
+             \x20 end\n\n\
+             \x20 def add_parcel(parcel)\n\
+             \x20   ensure_open!\n\
+             \x20   parcels << parcel\n\
+             \x20 end\n\
+             end\n",
+        )],
+    );
+    let fixtures = repo.dir.join("f.json");
+    std::fs::write(
+        &fixtures,
+        r#"{
+          "Shipment#ensure_open!": {"summary":"Refuses any change to a shipment that has already been finalized.",
+            "primary_purpose":"finalized shipment guard","secondary_concerns":[],
+            "side_effects":["raises"],"domain":"shipping","patterns":["guard clause"]},
+          "Shipment#add_parcel": {"summary":"Adds a parcel to a shipment, refusing once the shipment has been finalized.",
+            "primary_purpose":"parcel addition","secondary_concerns":["guarding"],
+            "side_effects":["mutates"],"domain":"shipping","patterns":[]}
+        }"#,
+    )
+    .unwrap();
+    repo.run(&["index"]);
+    repo.run(&["summarize", "--fixtures", fixtures.to_str().unwrap()]);
+
+    let answer = repo.json(&["search", "prevent a change once finalized", "--json"]);
+    // The mechanism, not just the outcome: nothing in this question matches a
+    // name, so no hit may claim a lexical half at all. Before the fix
+    // `add_parcel` claimed one, on the strength of `a`.
+    for hit in answer["hits"].as_array().unwrap() {
+        assert!(hit["lexical"].is_null(), "{hit}");
+        assert_eq!(hit["how"], "semantic", "{hit}");
+    }
+    assert_eq!(answer["hits"][0]["id"], "Shipment#ensure_open!", "{answer}");
+}
