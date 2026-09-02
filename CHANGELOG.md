@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- **A scoped query no longer pays for the whole corpus.** The rule that decides
+  what is in scope now runs in the database, where it can skip rows, instead of
+  over rows the database had already handed back — so `search`, `dupes`,
+  `embed`, `summarize` and `pending` on one directory read that directory's
+  units rather than the checkout's. **Nothing to do:** no reindex, no re-embed,
+  and every answer is the one it was. A whole-checkout question costs what it
+  always did, which is what a scope is for. DEC-040.
+
 ## 0.4.0 — 2026-09-01
 
 - **`contour duplicates` is `contour dupes`**, spelled out. An alias, not a

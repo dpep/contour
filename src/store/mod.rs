@@ -362,23 +362,40 @@ impl Store {
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
     }
 
-    /// Every unit in a checkout, with the path it currently lives at.
+    /// The units of a checkout that lie in `scope`, with the path each
+    /// currently lives at. `None` is the whole checkout.
     ///
     /// The path comes from the file map rather than the unit, which is the
     /// layer-1 contract paying off: one blob's units are stored once however
     /// many paths point at it.
-    pub fn units(&self, root: &str) -> Result<Vec<Located>> {
+    ///
+    /// **The scope is applied by the database.** `paths::under_sql` is the
+    /// twin of the Rust rule every caller used to filter with afterwards, and
+    /// the filter belongs here because the cost of not doing it is the whole
+    /// checkout: on a monorepo a question about one directory materialized
+    /// every unit on the way to discarding all but a few hundred of them. It
+    /// goes on `file`, not on the units — one row per path, and the primary
+    /// key `(checkout_id, path)` is already the index the range wants
+    /// (DEC-040).
+    pub fn units(&self, root: &str, scope: Option<&str>) -> Result<Vec<Located>> {
         let mut span = crate::profile::span("read units");
-        let mut stmt = self.conn.prepare(
+        let scope = scope.and_then(crate::paths::under_sql);
+        let sql = format!(
             "SELECT f.path, u.lang, u.name, u.owner, u.singleton, u.params, u.via,
                     u.line, u.end_line, u.norm_hash, u.nodes, u.visibility
                FROM checkout c
                JOIN file f ON f.checkout_id = c.id
                JOIN unit u ON u.blob_id = f.blob_id
-              WHERE c.root = ?1
+              WHERE c.root = ?1{}
               ORDER BY f.path, u.line",
-        )?;
-        let rows = stmt.query_map(params![root], |r| {
+            scope.map_or(String::new(), |(predicate, _)| format!(" AND {predicate}"))
+        );
+        let binds: Vec<&dyn rusqlite::ToSql> = match &scope {
+            Some((_, prefix)) => vec![&root, prefix],
+            None => vec![&root],
+        };
+        let mut stmt = self.conn.prepare(&sql)?;
+        let rows = stmt.query_map(binds.as_slice(), |r| {
             let path: String = r.get(0)?;
             let mut unit = Unit {
                 // An unknown language means the row was written by a
@@ -408,7 +425,8 @@ impl Store {
             Ok(Located { path, unit })
         })?;
         let units = rows.collect::<rusqlite::Result<Vec<_>>>()?;
-        span.note(|| format!("{} rows, whole checkout", units.len()));
+        let where_ = scope.map_or("whole checkout", |(_, prefix)| prefix);
+        span.note(|| format!("{} rows, {where_}", units.len()));
         crate::profile::count("unit rows read", units.len() as u64);
         Ok(units)
     }
@@ -984,8 +1002,11 @@ mod tests {
         // A second worktree offers the same OID, so nothing is re-parsed.
         let second = store.write("/two", &files, vec![]).unwrap();
         assert_eq!(second.parsed, 0);
-        assert_eq!(store.units("/two").unwrap().len(), 1);
-        assert_eq!(store.units("/one").unwrap()[0].unit.id(), "Widget#save");
+        assert_eq!(store.units("/two", None).unwrap().len(), 1);
+        assert_eq!(
+            store.units("/one", None).unwrap()[0].unit.id(),
+            "Widget#save"
+        );
     }
 
     /// A no-op reindex must not double the unit rows, and must not rewrite the
@@ -1000,7 +1021,7 @@ mod tests {
             .write("/r", &files, vec![(oid.clone(), parsed)])
             .unwrap();
         store.write("/r", &files, vec![]).unwrap();
-        assert_eq!(store.units("/r").unwrap().len(), 2);
+        assert_eq!(store.units("/r", None).unwrap().len(), 2);
         assert_eq!(store.status().unwrap()[0].units, 2);
     }
 
@@ -1022,7 +1043,7 @@ end
         store.write("/r", &files, vec![(oid, parsed)]).unwrap();
 
         let seen: Vec<(String, &str)> = store
-            .units("/r")
+            .units("/r", None)
             .unwrap()
             .iter()
             .map(|l| (l.unit.id(), l.unit.visibility.as_str()))
@@ -1048,7 +1069,7 @@ end
 
         let counts = store.write("/r", &files, vec![(oid, parsed)]).unwrap();
         assert_eq!((counts.files, counts.blobs, counts.parsed), (2, 1, 1));
-        let located = store.units("/r").unwrap();
+        let located = store.units("/r", None).unwrap();
         assert_eq!(located.len(), 2);
         assert_eq!(located[0].path, "a.rb");
         assert_eq!(located[1].path, "b/a.rb");

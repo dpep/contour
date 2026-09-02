@@ -92,10 +92,7 @@ pub fn fill(
     // makes what this buys the thing that gets looked up.
     let mut keys: HashSet<u64> = HashSet::new();
     let mut texts: Vec<(u64, String)> = Vec::new();
-    for located in store.units(root)? {
-        if !scope.is_none_or(|s| crate::paths::under(&located.path, s)) {
-            continue;
-        }
+    for located in store.units(root, scope)? {
         counts.units += 1;
         let summary = located.unit.norm_hash.and_then(|norm_hash| {
             let ctx = crate::summary::Context::of(&located.unit).hash();

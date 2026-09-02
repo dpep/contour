@@ -369,11 +369,10 @@ fn candidates(
     min_lines: u32,
 ) -> Result<Vec<Located>> {
     let mut out: Vec<Located> = store
-        .units(root)?
+        .units(root, scope)?
         .into_iter()
         .filter(|l| l.unit.norm_hash.is_some())
         .filter(|l| l.unit.end_line + 1 - l.unit.line >= min_lines)
-        .filter(|l| scope.is_none_or(|s| crate::paths::under(&l.path, s)))
         .collect();
     out.sort_by(|a, b| {
         (&a.path, a.unit.line, a.unit.norm_hash).cmp(&(&b.path, b.unit.line, b.unit.norm_hash))

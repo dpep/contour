@@ -72,13 +72,10 @@ pub fn fill(
     // before spending is the dedup DEC-003 promises: an exact clone in
     // identical context is one call, however many places it appears.
     let mut wanted: HashMap<(u64, u64), Vec<Located>> = HashMap::new();
-    for located in store.units(&root_str)? {
+    for located in store.units(&root_str, scope)? {
         let Some(norm_hash) = located.unit.norm_hash else {
             continue;
         };
-        if !scope.is_none_or(|s| crate::paths::under(&located.path, s)) {
-            continue;
-        }
         let context = Context::of(&located.unit);
         wanted
             .entry((norm_hash, context.hash()))
@@ -192,13 +189,10 @@ pub fn pending(
 
     let mut seen: HashSet<(u64, u64)> = HashSet::new();
     let mut out = Vec::new();
-    for located in store.units(&root_str)? {
+    for located in store.units(&root_str, scope)? {
         let Some(norm_hash) = located.unit.norm_hash else {
             continue;
         };
-        if !scope.is_none_or(|s| crate::paths::under(&located.path, s)) {
-            continue;
-        }
         let context = Context::of(&located.unit);
         let key = (norm_hash, context.hash());
         if have_api.contains(&key) || have_mcp.contains(&key) || !seen.insert(key) {
@@ -245,7 +239,7 @@ pub fn coverage(store: &Store, root: &str, model: &str, via: &str) -> Result<Cov
     };
     let have = store.have_summaries(prompt, model, via)?;
     let mut counts = Coverage::default();
-    for located in store.units(root)? {
+    for located in store.units(root, None)? {
         let Some(norm_hash) = located.unit.norm_hash else {
             continue;
         };
@@ -265,7 +259,7 @@ pub fn coverage(store: &Store, root: &str, model: &str, via: &str) -> Result<Cov
 pub fn answerable(store: &Store, root: &str) -> Result<Coverage> {
     let stored = store.all_summaries()?;
     let mut counts = Coverage::default();
-    for located in store.units(root)? {
+    for located in store.units(root, None)? {
         let Some(norm_hash) = located.unit.norm_hash else {
             continue;
         };

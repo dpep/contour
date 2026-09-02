@@ -124,7 +124,7 @@ pub fn store(
 
     let root_str = root.to_string_lossy().into_owned();
     let mut matches: Vec<crate::store::Located> = store
-        .units(&root_str)?
+        .units(&root_str, None)?
         .into_iter()
         .filter(|l| l.unit.id() == unit_id)
         .filter(|l| path_hint.is_none_or(|p| l.path == p))

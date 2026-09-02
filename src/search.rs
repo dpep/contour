@@ -282,7 +282,7 @@ pub fn search(
         prefer,
         classes,
     } = options;
-    let units = in_scope(store, root, scope)?;
+    let units = store.units(root, scope)?;
     // Per unit, not per path: Rust's tests live inside the file they test, and
     // the discount has to reach them (see `Classes::of_unit`).
     let class_of: Vec<crate::paths::Class> = units
@@ -552,7 +552,7 @@ pub fn similar(
     limit: usize,
     classes: &crate::paths::Classes,
 ) -> Result<Neighbors> {
-    let mut units = in_scope(store, root, None)?;
+    let mut units = store.units(root, None)?;
     let mut target = resolve(&units, id)?;
     // Narrowed after resolution rather than before it, so a scope that
     // excludes the unit asked about is a smaller search and not a "no such
@@ -997,14 +997,6 @@ fn centroid(
         *x /= n;
     }
     Some(sum)
-}
-
-fn in_scope(store: &Store, root: &str, scope: Option<&str>) -> Result<Vec<Located>> {
-    Ok(store
-        .units(root)?
-        .into_iter()
-        .filter(|l| scope.is_none_or(|s| crate::paths::under(&l.path, s)))
-        .collect())
 }
 
 /// The summaries and vectors for a set of units, embedding whatever is missing.

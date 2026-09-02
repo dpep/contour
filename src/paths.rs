@@ -66,11 +66,50 @@ pub fn within<'a>(root: &str, path: &'a str) -> &'a str {
 /// One implementation, because a scope must mean the same thing to `dupes`,
 /// `search`, `similar` and `summarize` — two would eventually disagree.
 pub fn under(path: &str, prefix: &str) -> bool {
-    let prefix = prefix.trim_end_matches('/');
-    if prefix.is_empty() || prefix == "." {
+    let Some(prefix) = named(prefix) else {
         return true;
-    }
+    };
     path == prefix || (path.starts_with(prefix) && path.as_bytes().get(prefix.len()) == Some(&b'/'))
+}
+
+/// The predicate half of [`under_sql`]: constrains `f.path`, binds the prefix
+/// as `?2`.
+///
+/// A range rather than a `LIKE`. `LIKE` would have to escape `%` and `_`,
+/// which a real path may contain, and an `ESCAPE` clause turns SQLite's
+/// LIKE-to-range optimization off outright — so the escaped spelling could
+/// only ever scan.
+///
+/// The first line is the range the index can seek; the second is what makes it
+/// exact. Both are needed and neither is redundant: a disjunction alone leaves
+/// the planner with `checkout_id=?` and a scan of every file row in the
+/// checkout, while the bounds alone would also admit `p.rb` and `p-old`,
+/// because every byte below `/` (0x2f) sorts between `p` and `p‖'/'`. Within
+/// the bounds the residual is exact, since `/` and `0` (0x30) are adjacent:
+/// the strings beginning `p/` are precisely those in `[p‖'/', p‖'0')`.
+const UNDER_SQL: &str = "(f.path >= ?2 AND f.path < ?2 || '0'\
+                         \n              AND (f.path = ?2 OR f.path >= ?2 || '/'))";
+
+/// [`under`]'s rule, as SQL — its twin, so a scope can be applied by the
+/// database instead of after it.
+///
+/// Returns the predicate and the value to bind as `?2`, or `None` when the
+/// scope is everything and there is no predicate to add. The two spellings
+/// share this function's decision about what "everything" is, and a test
+/// (`the_sql_twin_partitions_paths_the_way_rust_does`) drives a set of tricky
+/// paths through both and asserts they keep the same rows — which is the only
+/// thing that makes a second spelling safe to have.
+pub fn under_sql(prefix: &str) -> Option<(&'static str, &str)> {
+    named(prefix).map(|prefix| (UNDER_SQL, prefix))
+}
+
+/// The prefix a scope actually names, or `None` for "everything".
+///
+/// The one place empty and `.` are decided, so the Rust and SQL spellings
+/// cannot disagree about the case neither of them filters.
+fn named(prefix: &str) -> Option<&str> {
+    let prefix = prefix.trim_end_matches('/');
+    (!prefix.is_empty() && prefix != ".").then_some(prefix)
 }
 
 /// What kind of file a path names (DEC-022).
@@ -818,6 +857,84 @@ mod tests {
         assert!(under("app/models/widget.rb", "app/models/widget.rb"));
         assert!(!under("app/models2/widget.rb", "app/models"));
         assert!(under("anything", "."));
+    }
+
+    /// Two spellings of "is this path in scope" that agree today is the shape
+    /// of a bug that arrives later, so the agreement is a test rather than a
+    /// promise: every path below is partitioned by both, and the partitions
+    /// have to be identical for every prefix.
+    ///
+    /// The SQL is the shipping string, aliased `f` against a scratch table, so
+    /// the test cannot drift from the predicate `Store::units` actually runs.
+    #[test]
+    fn the_sql_twin_partitions_paths_the_way_rust_does() {
+        // Boundary prefixes and shared stems, `%` and `_` (both LIKE
+        // wildcards, both legal in a path), a `.` in a directory name, nesting,
+        // and the neighbours of `/` in byte order — `.` (0x2e) and `0` (0x30)
+        // sit either side of it, which is what the range bounds rest on.
+        let paths = [
+            "app",
+            "app.rb",
+            "app0",
+            "app.old/widget.rb",
+            "app/models",
+            "app/models.rb",
+            "app/models/widget.rb",
+            "app/models/deep/nested/widget.rb",
+            "app/models2/widget.rb",
+            "apple/widget.rb",
+            "a%b/widget.rb",
+            "a%bc/widget.rb",
+            "a_b/widget.rb",
+            "axb/widget.rb",
+            "100%/widget.rb",
+            "lib/a b/widget.rb",
+            "lib/A/widget.rb",
+            "lib/a/widget.rb",
+        ];
+        let prefixes = [
+            "",
+            ".",
+            "./",
+            "app",
+            "app/",
+            "app/models",
+            "app/models/widget.rb",
+            "app/models2",
+            "a%b",
+            "a_b",
+            "100%",
+            "lib/a b",
+            "lib/a",
+            "lib/A",
+            "nothing",
+        ];
+
+        let db = rusqlite::Connection::open_in_memory().unwrap();
+        db.execute("CREATE TABLE scratch (path TEXT NOT NULL)", [])
+            .unwrap();
+        for path in paths {
+            db.execute("INSERT INTO scratch (path) VALUES (?1)", [path])
+                .unwrap();
+        }
+
+        for prefix in prefixes {
+            let rust: Vec<&str> = paths.iter().copied().filter(|p| under(p, prefix)).collect();
+            // `?1` is unused here and bound anyway, so the shipping predicate's
+            // `?2` needs no rewriting to run.
+            let sql = match under_sql(prefix) {
+                Some((predicate, _)) => format!("SELECT path FROM scratch f WHERE {predicate}"),
+                None => "SELECT path FROM scratch f WHERE ?2 IS NULL".to_string(),
+            };
+            let bound = under_sql(prefix).map(|(_, p)| p);
+            let mut stmt = db.prepare(&sql).unwrap();
+            let sqlite: Vec<String> = stmt
+                .query_map(rusqlite::params![Option::<&str>::None, bound], |r| r.get(0))
+                .unwrap()
+                .map(|r| r.unwrap())
+                .collect();
+            assert_eq!(rust, sqlite, "scope `{prefix}` partitions differently");
+        }
     }
 
     #[test]

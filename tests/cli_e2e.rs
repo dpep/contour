@@ -1900,6 +1900,44 @@ fn similar_reads_the_unit_table_once() {
     assert_eq!(report["counters"]["unit rows read"], 3, "{report}");
 }
 
+/// A scoped question reads the scope, not the checkout.
+///
+/// The path filter used to run in Rust over rows the database had already
+/// materialized, so a question about one directory of a monorepo paid for
+/// every unit in it. The claim is structural — the answer is the same either
+/// way — so it is pinned on the profile's row counter, the way DEC-036's was.
+///
+/// `app2` is the case a prefix match gets wrong: it shares `app`'s first three
+/// bytes and is not under it, and it is here so this pins the boundary rule
+/// end to end rather than only in `paths`.
+#[test]
+fn a_scoped_search_reads_only_the_scope() {
+    let body = "class Widget\n  def save\n    write\n  end\nend\n";
+    let repo = Repo::new(
+        "scoped-read",
+        &[
+            ("app/one.rb", body),
+            ("app2/two.rb", body),
+            ("lib/three.rb", body),
+        ],
+    );
+    let (_, err, _) = repo.run_in(
+        &repo.dir.join("app"),
+        &["search", "save", "--json", "--profile"],
+    );
+    let report: serde_json::Value =
+        serde_json::from_str(err.lines().last().unwrap()).expect("a JSON profile on stderr");
+    assert_eq!(report["counters"]["unit rows read"], 1, "{report}");
+
+    let (_, err, _) = repo.run_in(
+        &repo.dir.clone(),
+        &["search", "save", "--json", "--profile"],
+    );
+    let report: serde_json::Value =
+        serde_json::from_str(err.lines().last().unwrap()).expect("a JSON profile on stderr");
+    assert_eq!(report["counters"]["unit rows read"], 3, "{report}");
+}
+
 /// The field case's shape, mirrored: a one-letter word in the question must
 /// not decide the ranking.
 ///

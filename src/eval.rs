@@ -494,7 +494,7 @@ pub fn run(
     // The corpus's own path policy, defaults included: the eval scores what a
     // user of this checkout would actually be shown (DEC-022).
     let classes = crate::paths::Classes::load(root)?;
-    let units = store.units(&root_str)?;
+    let units = store.units(&root_str, None)?;
     let by_id: HashMap<String, usize> = units
         .iter()
         .enumerate()
@@ -786,8 +786,11 @@ fn score_dupes(
         min_lines,
         ..Dupes::default()
     };
-    let known: std::collections::HashSet<String> =
-        store.units(root)?.iter().map(|u| u.unit.id()).collect();
+    let known: std::collections::HashSet<String> = store
+        .units(root, None)?
+        .iter()
+        .map(|u| u.unit.id())
+        .collect();
 
     for pair in &labels.pairs {
         if !known.contains(&pair.a) || !known.contains(&pair.b) {
@@ -828,7 +831,7 @@ fn score_dupes(
 /// separate knob with its own evidence, and which would otherwise silently
 /// remove the very band this is here to measure.
 fn near_sweep(store: &Store, root: &str, labels: &Labels) -> Result<Vec<NearPoint>> {
-    let units = store.units(root)?;
+    let units = store.units(root, None)?;
     let mut by_id: HashMap<&str, u64> = HashMap::new();
     let ids: Vec<(String, Option<u64>)> = units
         .iter()
@@ -939,8 +942,11 @@ fn score_near(
         reported.insert((b.id.as_str(), a.id.as_str()), lines);
     }
 
-    let known: std::collections::HashSet<String> =
-        store.units(root)?.iter().map(|u| u.unit.id()).collect();
+    let known: std::collections::HashSet<String> = store
+        .units(root, None)?
+        .iter()
+        .map(|u| u.unit.id())
+        .collect();
     let mut out = Dupes {
         min_lines,
         ..Dupes::default()
