@@ -76,7 +76,11 @@ enum Command {
     // Negative numbers reach the value parser instead of being read as flags,
     // so `--near-threshold -1` is answered by the rule it broke rather than by
     // clap's tip about quoting it.
-    #[command(allow_negative_numbers = true)]
+    //
+    // `duplicates` spells out what `dupes` abbreviates. Asked for by a field
+    // report that kept typing it; an alias rather than a rename, because
+    // `dupes` is what the docs, the MCP tool and every existing script say.
+    #[command(allow_negative_numbers = true, alias = "duplicates")]
     Dupes {
         /// A file or directory to limit the report to. Defaults to the
         /// working directory, which scopes it — name the checkout root for

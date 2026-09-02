@@ -23,6 +23,7 @@ is a deliberately degraded tier (a comment-stripped token stream, disclosed as
 ```sh
 contour index [PATH]     # scan a checkout, index every callable in it
 contour dupes [SCOPE]    # identical bodies; --near for nearly-identical ones
+                         # `duplicates` is the same command, spelled out
                          # --canonical names the likely original, with the basis
 contour embed [SCOPE] [--budget SEC]   # fill embeddings, so queries answer warm
 contour summarize [SCOPE] --budget N   # fill LLM summaries, on demand

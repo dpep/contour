@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **`contour duplicates` is `contour dupes`**, spelled out. An alias, not a
+  rename: `dupes` is still what the README, the skill and the MCP tool say, and
+  it stays the name. Deliberately *not* added to the MCP surface — a model picks
+  from `tools/list`, so a second name there is one more thing to choose between
+  and nothing a client could have typed.
+
 - **The summarizer is told to describe a guard by what it refuses**, not by how
   its check is spelled — "refuses any change to a shipment that has already
   been finalized" rather than "signals an error unless the shipment is still

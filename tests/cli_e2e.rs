@@ -1951,3 +1951,24 @@ fn a_one_letter_query_word_does_not_decide_the_ranking() {
     }
     assert_eq!(answer["hits"][0]["id"], "Shipment#ensure_open!", "{answer}");
 }
+
+/// `duplicates` is the same command as `dupes`, spelled out.
+///
+/// An alias rather than a rename: `dupes` is what the README, the skill and
+/// the MCP tool all say, and two names that mean two things is the cost of
+/// getting that wrong. Not added to the MCP surface — a model picks from
+/// `tools/list`, so a second name there is one more thing to choose between
+/// and nothing a client could have typed.
+#[test]
+fn duplicates_is_the_long_spelling_of_dupes() {
+    let body =
+        "class Widget\n  def save\n    a = compute\n    b = a + 1\n    persist(b)\n  end\nend\n";
+    let twin = body.replace("Widget", "Gadget").replace("save", "store");
+    let repo = Repo::new("dupes-alias", &[("a.rb", body), ("b.rb", &twin)]);
+    repo.run(&["index"]);
+
+    let short = repo.json(&["dupes", "--min-lines", "1", "--json"]);
+    let long = repo.json(&["duplicates", "--min-lines", "1", "--json"]);
+    assert_eq!(short, long);
+    assert_eq!(short["groups"].as_array().map(Vec::len), Some(1), "{short}");
+}
