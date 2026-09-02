@@ -1092,6 +1092,42 @@ The field case itself cannot join the eval set — the corpus is private — so 
 *shape* is mirrored in `tests/cli_e2e.rs` instead: a guard and a caller whose
 name begins with the query's `a`, asserting that no hit claims a lexical half.
 
+### B. The summarizer says what a guard refuses — SHIPPED, and it repairs nothing already stored
+
+Rewriting only the guard's summary — "signals an error unless the shipment is
+still open" to "refuses any change to a shipment that has already been
+finalized" — moved it from 4th to 1st on the fixture, cosine 0.28 to 0.39. Both
+are accurate; the first describes how the check is spelled and the second what
+the caller is prevented from doing, and a guard clause is exactly the shape
+where those diverge. The callers state the contract in passing, which is how
+they come to out-score the guard that states its mechanism — and it is the
+field case's rank 17 behind nine callers, at scale.
+
+So the lever is a line in the instructions, not in the scorer, and it now sits
+in **both** places a summary is written from: `summary::prompt::SYSTEM` (the
+API path, `PROMPT_VERSION` v2 → v3) and the skill's "rules that make a summary
+worth storing" (the contributed path). `CONTRIBUTED_PROMPT_VERSION` does not
+move with it, by the rule that version already carries: it moves when the
+*schema* moves, never when the prose is clarified, because every wording fix
+would otherwise strand summaries a session already paid for.
+
+**Two things it deliberately does not do, and both matter.**
+
+It **cannot be scored on this machine.** Confirming a prompt change needs a
+real summarizer over a real corpus, which is an API bill this session did not
+have. What is on the record is the 4th → 1st sensitivity above, measured on
+hand-authored fixture text, which `tests/eval/README.md` already flags as an
+authored input rather than evidence about ranking. That is why this half ships
+as guidance and the scoring half (A) ships as a scored change.
+
+And it **repairs nothing already summarized.** A corpus whose guards were
+described by their mechanism keeps those summaries until something re-writes
+them, and `pending` will not offer them again, because the contributed version
+did not move. The reporting corpus therefore does not improve on upgrade — only
+on re-summarizing. Bumping the contributed version to force that was considered
+and refused: stranding every paid summary on every machine to re-buy one shape
+is a worse trade than the shape is worth. DEC-039.
+
 ## Where a warm scoped query's time goes, named from the inside
 
 The second field report profiled a scoped, warm, already-summarized `similar`

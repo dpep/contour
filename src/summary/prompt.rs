@@ -14,7 +14,11 @@
 /// languages that return their errors. Free to take now and not later: no API
 /// fill has ever run, so no purchased answer is keyed under v1 (DEC-017's
 /// reasoning, at its own moment).
-pub const PROMPT_VERSION: &str = "v2";
+///
+/// v3 tells the model to describe a guard by what it refuses. Same freedom,
+/// same reason, and it is the one that finally has a measurement behind it —
+/// see DEC-039.
+pub const PROMPT_VERSION: &str = "v3";
 
 /// Thinking depth. A per-method summary is a bounded, well-specified task, and
 /// this is the dominant cost lever after model choice — 54k methods times a
@@ -44,6 +48,11 @@ A concern is secondary when the method would still make sense without it: \
 pagination inside a payroll query is secondary, the payroll is primary.
 - domain is the business area in the codebase's own vocabulary, lowercase. Use \
 \"unknown\" when the method is generic plumbing with no domain.
+- A method whose job is to **refuse** — a guard, a check, a validation — is \
+described by what it prevents or guarantees for its caller, never by how the \
+check is spelled. \"Signals an error unless the shipment is still open\" is the \
+mechanism; \"refuses any change to a shipment that has already been finalized\" \
+is the contract, and only the second one answers the question somebody asks.
 - Judge only from what you are shown. Do not guess at what the methods it \
 calls do; if a name is opaque, say what the method does with the result.";
 
@@ -137,7 +146,7 @@ mod tests {
         h = fnv1a(h, schema().to_string().as_bytes());
         assert_eq!(
             (PROMPT_VERSION, h),
-            ("v2", 0x337f_f7d8_f2c2_7717),
+            ("v3", 0x8248_58dc_eebe_a55d),
             "the request shape changed; bump PROMPT_VERSION with it"
         );
     }

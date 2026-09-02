@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- **The summarizer is told to describe a guard by what it refuses**, not by how
+  its check is spelled — "refuses any change to a shipment that has already
+  been finalized" rather than "signals an error unless the shipment is still
+  open". On the fixture that one rewrite moves the guard from 4th to 1st, which
+  is the field-reported case of an implementation ranking behind nine of its own
+  callers. The rule is in both the API prompt (`PROMPT_VERSION` v2 → v3) and the
+  contour skill. **What you must do to get it:** nothing changes for summaries
+  you already have — they keep answering, and `pending` will not offer those
+  units again. A guard only improves once something re-summarizes it. DEC-039.
+
 - **A one- or two-letter word in a question no longer decides the ranking.**
   `lexical_score` gave any query token half credit for prefix-matching a name,
   so the word `a` in *prevent a change once something is finalized* matched

@@ -256,6 +256,13 @@ Rules that make a summary worth storing:
   "Returns the unpaid invoices for a customer, newest first" is the job.
 - **Do not name local variables**, and write for someone who cannot see the
   code.
+- **A method whose job is to refuse** — a guard, a check, a validation — is
+  described by what it *prevents or guarantees for its caller*, never by how
+  the check is spelled. "Signals an error unless the shipment is still open" is
+  the mechanism; "refuses any change to a shipment that has already been
+  finalized" is the contract, and only the second one answers the question
+  somebody asks. This is the single wording rule with a measurement behind it:
+  the two summaries above put the same guard 4th and 1st.
 - `primary_purpose` is exactly one thing. A concern is *secondary* when the
   method would still make sense without it — pagination inside a payroll query
   is secondary, the payroll is primary.

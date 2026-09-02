@@ -1702,3 +1702,60 @@ measurement here only because the synthetic corpus has no summaries — the
 reporting corpus does. Scoping those the way DEC-033 scoped the vectors is the
 next floor, and it is the same trade DEC-033 declined to make blind: it means
 writing `paths::under`'s rule a second time in SQL.
+
+
+## DEC-039 — A guard is summarized by what it refuses, not by how it checks
+
+The field report's ranking complaint, twice: a question about *preventing an
+action once a resource is finalized* put the one guard-clause method that
+implements exactly that check at rank 17, behind nine methods that merely call
+it. PLAN.md reproduced it on the fixture and separated two mechanisms. This is
+the second one, and it is not the scorer's.
+
+**The evidence.** Rewriting only the guard's summary, changing nothing else:
+
+| the guard's summary | rank | cosine |
+| ------------------- | ---: | -----: |
+| "Signals an error unless the shipment is still open, so that nothing may change once it has been finalized." | 4th | 0.28 |
+| "Refuses any change to a shipment that has already been finalized." | **1st** | **0.39** |
+
+Both are accurate. The first says how the check is spelled, the second what the
+caller is prevented from doing — and a guard clause is precisely the shape where
+those diverge, because its implementation is a negation of a negation while its
+contract is a plain refusal. The methods that call it state the contract in
+passing, so they win against a guard that states its mechanism.
+
+**As built: one rule, in both places a summary is written from.** The API
+prompt (`summary::prompt::SYSTEM`) and the skill's "rules that make a summary
+worth storing", worded the same and carrying the same worked example.
+
+### Only one of the two versions moves, and that is the existing rule
+
+`PROMPT_VERSION` goes v2 → v3, because its frozen test says any change to that
+file does — and it is free for the same reason v2 was: no API fill has ever
+run, so nothing is keyed under v2.
+
+`CONTRIBUTED_PROMPT_VERSION` does **not** move, and that is not an oversight.
+Its own pinning test already settled which side of the line prose is on: the
+version moves when the *schema* moves — a field, a vocabulary word, something
+newly refused — and never when the skill's prose is clarified, because every
+wording fix would otherwise strand summaries a session already paid for. A
+guidance line is prose.
+
+### What this therefore does not fix, said plainly
+
+**It repairs nothing already summarized.** A corpus whose guards were described
+by their mechanism keeps those summaries, `pending` will not offer them again,
+and the reporting corpus does not improve on upgrade — only on re-summarizing.
+Forcing that by bumping the contributed version was considered and refused:
+stranding every paid summary on every machine, to re-buy one shape, is a worse
+trade than the shape is worth.
+
+### And it is the one change here that could not be scored
+
+Confirming a prompt change needs a real summarizer over a real corpus, which is
+an API bill this session did not have. The 4th → 1st above is measured on
+hand-authored fixture text, which `tests/eval/README.md` already flags as an
+authored input rather than as evidence about ranking. It ships as *guidance*
+for that reason, where the scoring half of the same case (PLAN.md's mechanism
+A) shipped as a scored change with eleven top-1s and no losses behind it.
