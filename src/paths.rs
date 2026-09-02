@@ -80,15 +80,16 @@ pub fn under(path: &str, prefix: &str) -> bool {
 /// LIKE-to-range optimization off outright — so the escaped spelling could
 /// only ever scan.
 ///
-/// The first line is the range the index can seek; the second is what makes it
-/// exact. Both are needed and neither is redundant: a disjunction alone leaves
-/// the planner with `checkout_id=?` and a scan of every file row in the
-/// checkout, while the bounds alone would also admit `p.rb` and `p-old`,
-/// because every byte below `/` (0x2f) sorts between `p` and `p‖'/'`. Within
-/// the bounds the residual is exact, since `/` and `0` (0x30) are adjacent:
-/// the strings beginning `p/` are precisely those in `[p‖'/', p‖'0')`.
-const UNDER_SQL: &str = "(f.path >= ?2 AND f.path < ?2 || '0'\
-                         \n              AND (f.path = ?2 OR f.path >= ?2 || '/'))";
+/// The bounds are the range the index can seek; the residual after them is
+/// what makes it exact. Both are needed and neither is redundant: a
+/// disjunction alone leaves the planner with `checkout_id=?` and a scan of
+/// every file row in the checkout, while the bounds alone would also admit
+/// `p.rb` and `p-old`, because every byte below `/` (0x2f) sorts between `p`
+/// and `p‖'/'`. Within the bounds the residual is exact, since `/` and `0`
+/// (0x30) are adjacent: the strings beginning `p/` are precisely those in
+/// `[p‖'/', p‖'0')`.
+const UNDER_SQL: &str =
+    "(f.path >= ?2 AND f.path < ?2 || '0' AND (f.path = ?2 OR f.path >= ?2 || '/'))";
 
 /// [`under`]'s rule, as SQL — its twin, so a scope can be applied by the
 /// database instead of after it.
