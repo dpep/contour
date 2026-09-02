@@ -1583,3 +1583,56 @@ The answer never changed, so no behavioural assertion can see this. The e2e
 case reads `--profile`'s own counter and pins that the phase fired **once**.
 That is the instrument from DEC-035 doing the second job it was built for:
 making a structural claim checkable.
+
+
+## DEC-037 — Never hand rayon nothing
+
+The field report's third finding: *"a full CPU-sized worker pool gets spawned on
+every invocation regardless of workload size, including this trivial
+single-file case… parked in a condition-variable wait for the entire run."*
+
+Reproduced, and the mechanism is one line. rayon's global pool is lazy, but it
+is built by whatever touches it first — and here that was a `par_iter` over an
+**empty** list. Every command opens the index, opening it refreshes it
+(DEC-018), and on a checkout where nothing moved there is nothing to parse. So
+every warm command built a thread per core, parked them, and tore them down.
+
+**As built: `crate::pool::map`, which returns early for an empty slice** and is
+otherwise the same `par_iter` over the same one global pool. Two call sites —
+the parse loop and `embed_all`. DEC-031's worker bound is untouched: the heavy
+work still goes to one shared pool, so N server workers still do not become N
+pools.
+
+### The threshold this deliberately does not have
+
+The obvious next step is a size below which work runs inline, and the
+measurement refused it. On 8 cores, building the pool costs about **0.4 ms**
+(50 warm scoped queries in 6.17 s against 6.15 s, and 194 involuntary context
+switches against 114), while one blob parse costs about **0.3 ms** of CPU
+(17,639 blobs, 5.26 s of user time). A fixed cost that small pays for itself at
+about **two** items, so any threshold worth naming would make real work serial
+to save a fraction of a millisecond — a bigger regression than the fix.
+
+The one loop with a genuinely large crossover is embedding, where each worker
+loads its own ONNX session; `embed::embed_all` already carries that measurement
+(529 units: 3.7 s serial against 3.9 s pooled) and its own decision, and nothing
+here changes it. One rule, no number to keep calibrated.
+
+### What this finding was *not*, said plainly
+
+The report paired the idle pool with "`sys` ran about 2× `user`" and read the
+two as one cause. On this machine they are not: a trivial warm scoped query is
+0.12 s user against 0.02 s sys, and removing the pool moves the wall clock by
+0.4 ms of 123 ms — about 0.3%. The parked threads were real and are gone, but
+**the system time on a monorepo is the page reads of finding 1, not thread
+creation** (DEC-036, DEC-038). Worth recording, because "we fixed the pool" is
+otherwise an answer somebody could mistake for an explanation.
+
+### Testable, in its own test binary
+
+`ThreadPoolBuilder::build_global` succeeds exactly once per process, which is
+the only way to assert from inside that nothing built a pool. That makes the
+probe meaningless in any process where another test has touched rayon — and
+cargo runs a file's tests as threads in one process — so it lives alone in
+`tests/pool_lazy.rs`, with the cold index (which really does parse blobs) run
+as a subprocess.

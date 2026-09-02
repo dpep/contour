@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- **A command with nothing to parse no longer starts a thread per core.** Every
+  command refreshes the index on the way in, and on a warm checkout that
+  refresh had nothing to do — but the empty parallel map still built a
+  CPU-sized pool, parked it and tore it down, which a field report watched
+  through a stack sampler. **Nothing to do.** It is worth about 0.4 ms of a
+  123 ms query on 8 cores, and the same report's "sys ran 2x user" is *not*
+  this: that is the index reads. DEC-037.
+
 - **A scoped `similar` is about a quarter faster**, because it no longer reads
   the checkout's unit table twice. The near-structural tier fetched and
   re-filtered the very rows its caller was already holding; it now takes them.

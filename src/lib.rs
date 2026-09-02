@@ -31,6 +31,7 @@
 //! - [`cancel`] — the flag a served request watches, so abandoning a call
 //!   stops the work rather than only the waiting (DEC-031).
 //! - [`profile`] — where the wall clock went, for `--profile`.
+//! - [`pool`] — the one place work is handed to rayon, and never for nothing.
 
 pub mod cancel;
 pub mod canonical;
@@ -45,6 +46,7 @@ pub mod index;
 pub mod mcp;
 pub mod near;
 pub mod paths;
+pub(crate) mod pool;
 pub mod profile;
 pub mod ruby;
 pub mod rust;

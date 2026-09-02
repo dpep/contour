@@ -7,7 +7,6 @@ use crate::core::{Blob, Lang, Oid};
 use crate::scan;
 use crate::store::{Indexed, Store};
 use anyhow::Result;
-use rayon::prelude::*;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
@@ -112,20 +111,17 @@ pub fn index(store: &mut Store, path: &Path) -> Result<(String, Indexed)> {
         .map(|(oid, path)| (*oid, *path))
         .collect();
 
-    let read: Vec<(Oid, Option<Blob>)> = todo
-        .par_iter()
-        .map(|(oid, path)| {
-            // The extractor is chosen by the path, but reads only bytes — so
-            // the same blob still yields the same units wherever it sits, and
-            // the layer-1 contract holds.
-            let blob = std::fs::read(root.join(path))
-                .ok()
-                // `language` already said yes, or this path would not be in
-                // the map at all.
-                .and_then(|bytes| units_at(path, &bytes));
-            ((*oid).clone(), blob)
-        })
-        .collect();
+    let read: Vec<(Oid, Option<Blob>)> = crate::pool::map(&todo, |(oid, path)| {
+        // The extractor is chosen by the path, but reads only bytes — so
+        // the same blob still yields the same units wherever it sits, and
+        // the layer-1 contract holds.
+        let blob = std::fs::read(root.join(path))
+            .ok()
+            // `language` already said yes, or this path would not be in
+            // the map at all.
+            .and_then(|bytes| units_at(path, &bytes));
+        ((*oid).clone(), blob)
+    });
 
     // A file deleted between the scan and the read leaves the map pointing at
     // a blob nothing can produce. Drop those entries rather than teach the

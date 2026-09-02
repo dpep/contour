@@ -221,7 +221,6 @@ pub(crate) fn about(seconds: f64) -> String {
 ///
 /// Order-preserving, so the result stays index-aligned with `texts`.
 pub fn embed_all(spec: Option<&str>, texts: &[String]) -> Vec<Vec<f32>> {
-    use rayon::prelude::*;
     use std::cell::RefCell;
 
     thread_local! {
@@ -237,23 +236,20 @@ pub fn embed_all(spec: Option<&str>, texts: &[String]) -> Vec<Vec<f32>> {
     crate::profile::count("texts embedded", texts.len() as u64);
     // `spec` is constant for a process, so every worker resolves the same
     // embedder kind and no run can mix onnx and hash vectors into one index.
-    texts
-        .par_iter()
-        .map(|text| {
-            // Not an early exit — rayon has no break — but each remaining item
-            // becomes O(1), so the pool drains in about the time one embedding
-            // takes. The caller must treat the result as void, which is what
-            // `cancel.check()` beside every call site does.
-            if cancel.cancelled() {
-                return Vec::new();
-            }
-            LOCAL.with(|cell| {
-                let mut slot = cell.borrow_mut();
-                let embedder = slot.get_or_insert_with(|| default_embedder(spec, Workload::Bulk));
-                mrl::compress_matryoshka_vector(&embedder.embed(text))
-            })
+    crate::pool::map(texts, |text| {
+        // Not an early exit — rayon has no break — but each remaining item
+        // becomes O(1), so the pool drains in about the time one embedding
+        // takes. The caller must treat the result as void, which is what
+        // `cancel.check()` beside every call site does.
+        if cancel.cancelled() {
+            return Vec::new();
+        }
+        LOCAL.with(|cell| {
+            let mut slot = cell.borrow_mut();
+            let embedder = slot.get_or_insert_with(|| default_embedder(spec, Workload::Bulk));
+            mrl::compress_matryoshka_vector(&embedder.embed(text))
         })
-        .collect()
+    })
 }
 
 /// Deterministic embedder via signed feature hashing over word tokens.
