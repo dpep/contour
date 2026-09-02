@@ -644,9 +644,10 @@ impl Store {
     ///
     /// Chunked at 900, because SQLite binds at most 999 parameters per
     /// statement. Unlike [`Store::vectors`] there is no read-through to
-    /// abandon back to: the only caller that asks for most of the table is
-    /// `dupes --near`, where a seek per body costs about 0.1 s against a run
-    /// whose real cost is the combinatorics, so one strategy is enough.
+    /// abandon back to, and that is a priced decision rather than an oversight:
+    /// a request for most of the table — which an *unscoped* query is — costs
+    /// about 60 ms more than reading it through, and DEC-040 has the crossover
+    /// and why a second strategy was not bought with it.
     pub fn signatures(
         &self,
         wanted: &HashSet<u64>,

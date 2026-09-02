@@ -1012,7 +1012,9 @@ have cost.
 query still grows with the corpus — 0.36 s to 0.59 s for the same 391 units —
 because `Store::units` reads every unit in the checkout and filters by path in
 Rust. That is now the floor, and moving it means writing `paths::under`'s rule a
-second time in SQL, which is the trade DEC-033 declines to make blind. And the
+second time in SQL, which is the trade DEC-033 declines to make blind. *(Taken
+later, with a test that forces the two spellings to agree — see "The floor under
+a scoped query, removed and measured" below.)* And the
 whole-checkout row is what it always was: an unscoped query on a monorepo is
 expensive because it is unscoped, which is the case DEC-030 and DEC-032 exist to
 steer away from.
@@ -1247,6 +1249,98 @@ What would change the ruling: the vector read becoming a large share of a
 and `read signatures` — the two unscoped whole-table reads that are now 45% of
 a warm scoped query between them, and the honest next thing to attack
 (DEC-038).
+
+## The floor under a scoped query, removed and measured
+
+DEC-038 ended by naming what was left: `Store::units` and `Store::signatures`,
+two **unscoped whole-table** reads that were 45% of a warm scoped query between
+them, on a cost that grew with the corpus rather than with the question — the
+same 365-unit query was 0.46 s at 132k units and 0.69 s at 265k. Both are now
+scope-sized (DEC-040). **The prediction under test:** a warm scoped query comes
+to cost what its scope costs, and is nearly flat across corpus sizes, while
+whole-checkout queries are unchanged. One half of that held and one half did
+not.
+
+**Method.** The same synthetic corpus, rebuilt to the recipe above at one and
+two copies. The recipe reproduces exactly: 132,534 and 265,068 units, 622 MB
+and 1,140 MB of derived database, and a `read units` phase of 120.5 ms at 132k
+against the 120.5 ms recorded before. Fully embedded with `contour embed` and
+the ONNX embedder, so every query below is warm. Release build, 8 cores, quiet
+machine, `/usr/bin/time -l`. Each figure is the median of five runs with a
+sixth, cold-cache run discarded; the two binaries are the commit before the
+change and the commit after it, run against the same database. The scope is one
+directory — `rails/activejob/lib`, 48 files, 365 units. Every answer was
+compared before and after: **byte-identical at both sizes and both scopes.**
+
+| warm, one directory | 132,534 units | | 265,068 units | |
+| --- | ---: | ---: | ---: | ---: |
+| | wall | peak RSS | wall | peak RSS |
+| `similar`, before | 0.47 s | 200 MB | 0.71 s | 251 MB |
+| `similar`, after | **0.22 s** | **125 MB** | **0.32 s** | **133 MB** |
+| `search`, before | 0.35 s | 184 MB | 0.59 s | 253 MB |
+| `search`, after | **0.22 s** | **127 MB** | **0.32 s** | **135 MB** |
+
+| warm, whole checkout | 132,534 units | | 265,068 units | |
+| --- | ---: | ---: | ---: | ---: |
+| | wall | peak RSS | wall | peak RSS |
+| `similar`, before | 0.92 s | 479 MB | 1.65 s | 776 MB |
+| `similar`, after | 0.98 s | 478 MB | 1.66 s | 774 MB |
+| `search`, before | 1.00 s | 465 MB | 1.89 s | 776 MB |
+| `search`, after | 1.01 s | 463 MB | 1.91 s | 775 MB |
+| `dupes --near`, before | 8.8 s | 227 MB | | |
+| `dupes --near`, after | 8.6 s | 224 MB | | |
+
+**A scoped answer costs less than half what it did and holds about half the
+memory**, at both sizes, and the two query surfaces converge on the same floor —
+0.22 s and 0.32 s whichever one you ask. The whole-checkout rows are unchanged
+except for `similar` and `search`, which pay about **60 ms more**; that is the
+signature read asking for most of the table one body at a time, it is priced in
+DEC-040, and it was not bought back.
+
+**The phase table, at 132k units:**
+
+```text
+before                                   after
+  store open        0.5ms   0%             store open        0.5ms   0%
+  refresh         113.1ms  25%             refresh         113.2ms  54%
+  embedder load    79.4ms  17%             embedder load    79.2ms  38%
+                                           resolve unit      0.1ms   0%
+  read units      120.5ms  26%  132534 r   read units        0.5ms   0%  365 rows
+  read summaries    0.1ms   0%             read summaries    0.0ms   0%
+  read vectors      6.1ms   1%             read vectors      6.1ms   3%
+  score             0.2ms   0%             score             0.2ms   0%
+  read signatures  88.7ms  19%  70793 b    read signatures   0.7ms   0%  187 bodies
+  render            0.0ms   0%             render            0.0ms   0%
+  unaccounted      51.7ms  11%             unaccounted       9.2ms   4%
+  total           460.4ms                  total           209.7ms
+```
+
+**Index I/O was 46% of the warm query and is now 3.5%.** The four reads
+together are 7.4 ms at 132k units and 8.2 ms at 265k — flat, which is the half
+of the prediction that held, and `unaccounted` fell with them because most of
+it was the allocation those reads were doing.
+
+**The half that did not hold: a scoped query still grows, 0.22 s → 0.32 s.**
+Every remaining millisecond of that is `refresh`, which goes 113 ms → 205 ms
+because it is a `git ls-files` and a map-key fold over 17,721 files and then
+35,442. That grows with the **checkout**, not with the corpus of units, and it
+is the price of DEC-018's promise that an answer is never silently stale. With
+`refresh` and the fixed 80 ms ONNX session load set aside — the two the brief
+allowed to remain — a scoped query is 16 ms at 132k units and 18 ms at 265k.
+
+**What is now the largest phase of a warm scoped query is not a read at all.**
+It is `refresh` at 54%, and the ONNX load at 38%. The index reads are together
+smaller than the rounding on either.
+
+**One whole-store read is left**, and it is named rather than fixed:
+`Store::all_summaries` reads every summary on the machine. It is invisible in
+every table here because the synthetic corpus has no summaries — the reporting
+corpus does, and its share of a warm query is therefore larger than anything
+above. Scoping it is the same reorder DEC-033 made for the vectors and
+`search::vectors_for` already performs (decide every unit's key, then ask for
+those keys), but it could not be *measured* in this session, and shipping an
+unmeasured performance change is the thing this project does not do. What would
+measure it: a corpus with a real summary fill.
 
 ## Non-goals (for now)
 

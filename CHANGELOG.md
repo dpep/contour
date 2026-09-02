@@ -20,9 +20,12 @@
 - **The near-structural tier no longer loads every body on the machine.** It
   used to score the whole signature table and then discard all but the ones in
   scope; it now asks for the bodies it can answer about. **Nothing to do**, and
-  no answer moves. One side effect worth knowing: `contour eval`'s near sweep is
-  now scored over the corpus's own bodies rather than everything indexed on the
-  machine, so a run is reproducible whatever else you have indexed. DEC-040.
+  no answer moves. Two things worth knowing: an *unscoped* `search` or `similar`
+  is slightly slower, because asking for most of a table one key at a time costs
+  more than reading it through — a scoped one is the case this is for, and it is
+  the case that got faster. And `contour eval`'s near sweep is now scored over
+  the corpus's own bodies rather than everything indexed on the machine, so a
+  run is reproducible whatever else you have indexed. DEC-040.
 
 ## 0.4.0 — 2026-09-01
 
