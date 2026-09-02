@@ -321,13 +321,20 @@ pub struct Neighbor {
     pub similarity: f32,
 }
 
-/// Near-structural neighbours of one unit, within a checkout.
+/// Near-structural neighbours of one unit, among `candidates`.
+///
+/// **The caller supplies the population.** This used to read the checkout's
+/// units itself and filter them by `scope` — a second whole-checkout table
+/// read, of exactly the rows its one caller was already holding, and on a
+/// monorepo the single largest phase of a scoped `similar` was that read
+/// happening twice (`--profile` says so in one line). Taking the units removes
+/// the read, and with it the second place that spelled "is this path in
+/// scope"; `search::similar` has already narrowed them.
 pub fn neighbors(
     store: &Store,
-    root: &str,
+    candidates: &[Located],
     unit: &Located,
     threshold: f32,
-    scope: Option<&str>,
 ) -> Result<Vec<Neighbor>> {
     let Some(norm_hash) = unit.unit.norm_hash else {
         return Ok(Vec::new());
@@ -357,15 +364,13 @@ pub fn neighbors(
         }
     }
 
-    let mut out: Vec<Neighbor> = store
-        .units(root)?
-        .into_iter()
-        .filter(|l| scope.is_none_or(|s| crate::paths::under(&l.path, s)))
+    let mut out: Vec<Neighbor> = candidates
+        .iter()
         .filter_map(|l| {
             let similarity = *scored.get(&l.unit.norm_hash?)?;
             Some(Neighbor {
                 id: l.unit.id(),
-                path: l.path,
+                path: l.path.clone(),
                 line: l.unit.line,
                 end_line: l.unit.end_line,
                 similarity,

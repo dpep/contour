@@ -1871,3 +1871,31 @@ fn profile_is_refused_for_the_server() {
     assert_eq!(code, 2);
     assert!(err.contains("one run"), "{err}");
 }
+
+/// `similar` reads the checkout's unit table once.
+///
+/// It used to read it twice — once for the units it ranks, once inside the
+/// near-structural tier, which fetched and re-filtered the rows its only
+/// caller was already holding. On a monorepo that second read was the single
+/// largest phase of a warm scoped query. The assertion is on the profile
+/// counter rather than on the answer, because the answer never changed: this
+/// is the one claim a behavioural test cannot make.
+#[test]
+fn similar_reads_the_unit_table_once() {
+    let (repo, _) = searchable("similar-one-read");
+    let (_, err, _) = repo.run_in(
+        &repo.dir.clone(),
+        &["similar", "Invoice#settle!", "--json", "--profile"],
+    );
+    let report: serde_json::Value =
+        serde_json::from_str(err.lines().last().unwrap()).expect("a JSON profile on stderr");
+    let reads = report["phases"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|p| p["name"] == "read units")
+        .expect("the unit read is a phase");
+    assert_eq!(reads["times"], 1, "{report}");
+    // Three units in the fixture, read once — not six.
+    assert_eq!(report["counters"]["unit rows read"], 3, "{report}");
+}

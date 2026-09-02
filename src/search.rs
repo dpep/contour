@@ -621,7 +621,7 @@ pub fn similar(
     // meaning. Runs before the semantic tier so a reader sees the cheaper,
     // sharper evidence first.
     {
-        for near in crate::near::neighbors(store, root, here, crate::near::NEAR_THRESHOLD, scope)? {
+        for near in crate::near::neighbors(store, &units, here, crate::near::NEAR_THRESHOLD)? {
             let index = units
                 .iter()
                 .position(|u| u.path == near.path && u.unit.line == near.line);

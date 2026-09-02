@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **A scoped `similar` is about a quarter faster**, because it no longer reads
+  the checkout's unit table twice. The near-structural tier fetched and
+  re-filtered the very rows its caller was already holding; it now takes them.
+  **Nothing to do** — same answers, no reindex. Measured on a synthetic
+  132,534-unit corpus, warm and scoped: 0.60 s to 0.45 s. DEC-036.
+
 - **`--profile` says where a run's wall clock went**, on every command, in the
   spirit of the same flag on the other tools in this toolbox. A table on stderr
   names each phase — store open, refresh, the index reads, embedding, scoring,

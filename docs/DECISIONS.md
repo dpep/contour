@@ -1538,3 +1538,48 @@ its phases would overlap each other and the shares would be arithmetic about
 nothing. `contour mcp --profile` is an error. `CONTOUR_PROFILE` in the
 environment enables the flag for a binary something else invokes — a script, a
 Makefile, an editor — which is the affordance rq's `RQ_PROFILE` gives.
+
+
+## DEC-036 — The near tier takes its candidates, it does not fetch them
+
+`--profile`'s first run on a warm scoped `similar` over a 132k-unit corpus
+printed one line that was the whole finding:
+
+```
+  read units        242.7ms    41%  x2  132534 rows, whole checkout
+```
+
+`near::neighbors` read `store.units(root)` and filtered it by `scope` — the
+same whole-checkout read, of exactly the rows its one and only caller was
+already holding, narrowed by exactly the rule that caller had already applied.
+Two whole-table reads where the query needs one.
+
+**As built: `neighbors(store, candidates, unit, threshold)`.** The caller hands
+over the units; the `root` and `scope` parameters are gone with the read.
+`search::similar` has already resolved the target and narrowed to the scope, so
+there is nothing left for the tier to decide about *which* units — only about
+which of them are near-structural neighbours, which is its job.
+
+### Why the answers cannot move
+
+The candidate lists differ in exactly one unit: `similar` keeps the target even
+when the scope excludes it (that is DEC-030's rule — the target is the query,
+never an answer), where the old read did not. It cannot matter, because the
+scoring loop already drops every body whose `norm_hash` equals the target's,
+and the target's does.
+
+### What it bought, measured
+
+Warm scoped `similar` on the synthetic corpus (132,534 units, release, 8 cores,
+quiet machine, median of five with a cold run discarded): **0.60 s → 0.45 s, a
+quarter of the wall clock**, and `read units` from 243 ms to 115 ms. No memory
+cost, one parameter fewer, and one fewer place that spells "is this path in
+scope" — which is the same argument DEC-033 made for not writing that rule a
+second time in SQL.
+
+### The test is on the profile, not on the answer
+
+The answer never changed, so no behavioural assertion can see this. The e2e
+case reads `--profile`'s own counter and pins that the phase fired **once**.
+That is the instrument from DEC-035 doing the second job it was built for:
+making a structural claim checkable.
