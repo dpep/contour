@@ -1176,7 +1176,7 @@ could have said:
 | --- | ---: | ---: | ---: | ---: |
 | | wall | peak RSS | wall | peak RSS |
 | 0.3.0 | 0.60 s | 230 MB | 0.96 s | 301 MB |
-| after DEC-036 + DEC-037 | **0.45 s** | **200 MB** | **0.69 s** | **247 MB** |
+| after DEC-036 + DEC-037 | **0.46 s** | **200 MB** | **0.69 s** | **251 MB** |
 
 **One caveat that runs the wrong way, and it matters.** This corpus has no
 summaries, so `read summaries` is 0 rows where the reporting corpus has a

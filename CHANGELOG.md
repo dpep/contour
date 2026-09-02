@@ -40,7 +40,8 @@
   the checkout's unit table twice. The near-structural tier fetched and
   re-filtered the very rows its caller was already holding; it now takes them.
   **Nothing to do** — same answers, no reindex. Measured on a synthetic
-  132,534-unit corpus, warm and scoped: 0.60 s to 0.45 s. DEC-036.
+  132,534-unit corpus, warm and scoped: 0.60 s to 0.46 s, and 0.96 s to 0.69 s
+  at 256,402. DEC-036.
 
 - **`--profile` says where a run's wall clock went**, on every command, in the
   spirit of the same flag on the other tools in this toolbox. A table on stderr

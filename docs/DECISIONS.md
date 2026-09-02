@@ -1571,8 +1571,8 @@ and the target's does.
 ### What it bought, measured
 
 Warm scoped `similar` on the synthetic corpus (132,534 units, release, 8 cores,
-quiet machine, median of five with a cold run discarded): **0.60 s → 0.45 s, a
-quarter of the wall clock**, and `read units` from 243 ms to 115 ms. No memory
+quiet machine, median of five with a cold run discarded): **0.60 s → 0.46 s, a
+quarter of the wall clock**, and `read units` from 243 ms to 120 ms. No memory
 cost, one parameter fewer, and one fewer place that spells "is this path in
 scope" — which is the same argument DEC-033 made for not writing that rule a
 second time in SQL.
