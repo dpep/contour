@@ -167,14 +167,28 @@ pub fn report(total: Duration) -> Vec<String> {
             .to_string()
         })
         .collect();
-    let rest = total.saturating_sub(measured);
-    out.push(format!(
-        "  {:<w$}  {:>8}  {:>5}",
-        "unaccounted",
-        ms(rest),
-        share(rest, total),
-        w = w
-    ));
+    // Phases that add to more than the run are phases that nested, which is
+    // the one way this table can lie. Say so rather than clamping the
+    // remainder to zero and looking complete — that is how it hid the first
+    // time, when a per-worker embedder load was timed inside `embed`.
+    match measured > total {
+        true => out.push(format!(
+            "  {:<w$}  {:>8}         phases overlap; some span nests",
+            "OVERLAP",
+            ms(measured - total),
+            w = w
+        )),
+        false => {
+            let rest = total - measured;
+            out.push(format!(
+                "  {:<w$}  {:>8}  {:>5}",
+                "unaccounted",
+                ms(rest),
+                share(rest, total),
+                w = w
+            ));
+        }
+    }
     out.push(format!("  {:<w$}  {:>8}", "total", ms(total), w = w));
     for (name, v) in &counters {
         out.push(format!("  {name:<w$}  {v:>8}", w = w));
@@ -320,6 +334,54 @@ mod tests {
         );
         let rest = lines.iter().find(|l| l.contains("unaccounted")).unwrap();
         assert!(rest.contains("75%"), "{rest}");
+        ENABLED.store(false, Ordering::Relaxed);
+    }
+
+    /// Only the embedder a *caller* builds is a phase. `embed::embed_all`
+    /// builds one per rayon worker, inside the `embed` phase and on every core
+    /// at once, and timing those nested a phase inside a phase — the first
+    /// real profile of a search reported shares adding to 142% of the run.
+    #[test]
+    fn only_the_query_embedder_is_a_phase() {
+        let _guard = serial();
+        enable_from(true);
+        let _ = (phases(), counters());
+
+        drop(crate::embed::default_embedder(
+            None,
+            crate::embed::Workload::Bulk,
+        ));
+        assert!(phases().is_empty(), "a worker's embedder is not a phase");
+
+        drop(crate::embed::default_embedder(
+            None,
+            crate::embed::Workload::Query,
+        ));
+        let recorded = phases();
+        assert_eq!(recorded.len(), 1);
+        assert_eq!(recorded[0].name, "embedder load");
+        ENABLED.store(false, Ordering::Relaxed);
+    }
+
+    /// The one way this table can lie: phases that nested, so they add to more
+    /// than the run and the remainder clamps to a reassuring zero.
+    #[test]
+    fn phases_adding_to_more_than_the_run_say_so() {
+        let _guard = serial();
+        enable_from(true);
+        let _ = (phases(), counters());
+        PHASES.lock().unwrap().push(Phase {
+            name: "nested",
+            elapsed: Duration::from_millis(150),
+            times: 2,
+            note: None,
+        });
+        let lines = report(Duration::from_millis(100));
+        assert!(lines.iter().any(|l| l.contains("OVERLAP")), "{lines:?}");
+        assert!(
+            !lines.iter().any(|l| l.contains("unaccounted")),
+            "{lines:?}"
+        );
         ENABLED.store(false, Ordering::Relaxed);
     }
 

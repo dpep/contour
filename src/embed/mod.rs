@@ -88,7 +88,15 @@ pub fn default_embedder(model: Option<&str>, workload: Workload) -> Box<dyn Embe
     // reads a row, and on a warm scoped query it is a fifth of the wall clock.
     // Named rather than left in the remainder, because a fixed cost that big
     // is a design fact, not noise.
-    let _span = crate::profile::span("embedder load");
+    //
+    // **Only the query embedder.** `embed_all` builds one of these per rayon
+    // worker, inside the `embed` phase and on eight threads at once — timing
+    // those would nest a phase inside a phase and report shares that add to
+    // more than the run. `Workload` already tells the two apart.
+    let _span = match workload {
+        Workload::Query => Some(crate::profile::span("embedder load")),
+        Workload::Bulk => None,
+    };
     #[cfg(feature = "_semantic")]
     if let Some(embedder) = onnx::OnnxEmbedder::load(model, workload.into()) {
         return Box::new(embedder);

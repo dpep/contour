@@ -1519,7 +1519,12 @@ compact object instead of a table.
 
 **Phases do not nest, and what they miss is a row.** Each span times one
 segment of a mostly sequential pipeline; a span inside a span would
-double-count and the table would stop adding up. The consequence is that some
+double-count and the table would stop adding up. That is not hypothetical —
+the first real profile of a search reported shares adding to **142%** of the
+run, because `embed_all` builds an ONNX session per rayon worker and the span
+that timed the caller's embedder was timing those too. Only the *query*
+embedder is a phase now, and a report whose phases exceed its total prints
+`OVERLAP` rather than clamping the remainder to a reassuring zero. The consequence is that some
 work belongs to no phase, and the honest thing is to say how much: the
 `unaccounted` row is why the first profile of a warm scoped query was worth
 reading at all — 24% of it was the ONNX session load, which nothing had named
