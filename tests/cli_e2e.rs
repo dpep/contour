@@ -1967,8 +1967,11 @@ fn duplicates_is_the_long_spelling_of_dupes() {
     let repo = Repo::new("dupes-alias", &[("a.rb", body), ("b.rb", &twin)]);
     repo.run(&["index"]);
 
-    let short = repo.json(&["dupes", "--min-lines", "1", "--json"]);
-    let long = repo.json(&["duplicates", "--min-lines", "1", "--json"]);
+    let mut short = repo.json(&["dupes", "--min-lines", "1", "--json"]);
+    let mut long = repo.json(&["duplicates", "--min-lines", "1", "--json"]);
+    // The one field allowed to differ between the two runs is a wall clock.
+    short["constant_stats"]["millis"] = serde_json::Value::Null;
+    long["constant_stats"]["millis"] = serde_json::Value::Null;
     assert_eq!(short, long);
     assert_eq!(short["groups"].as_array().map(Vec::len), Some(1), "{short}");
 }
