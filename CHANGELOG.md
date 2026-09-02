@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.4.1 — 2026-09-01
 
 - **A scoped query no longer pays for the whole corpus.** The rule that decides
   what is in scope now runs in the database, where it can skip rows, instead of
