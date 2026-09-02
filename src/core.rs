@@ -263,6 +263,23 @@ pub fn id(lang: Lang, owner: &str, name: &str, singleton: bool) -> String {
     }
 }
 
+/// The name half of an id, for a lookup that has only the id.
+///
+/// Beside [`id`] so the two cannot drift: every separator that function can
+/// emit is one this one splits on, and a name carries none of them — Ruby's
+/// operator methods (`<=>`, `[]=`, `==`) included.
+///
+/// It is deliberately *not* a full parse of an id. The owner is not recovered,
+/// because a Rust unit's owner is completed from its path (DEC-026) and cannot
+/// be read back out of the string; the caller narrows on the name and compares
+/// whole ids.
+pub fn name_in(id: &str) -> &str {
+    match id.rfind(['#', '.', ':']) {
+        Some(at) => &id[at + 1..],
+        None => id,
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct Param {
     pub kind: ParamKind,

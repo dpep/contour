@@ -552,23 +552,21 @@ pub fn similar(
     limit: usize,
     classes: &crate::paths::Classes,
 ) -> Result<Neighbors> {
-    let mut units = store.units(root, None)?;
-    let mut target = resolve(&units, id)?;
-    // Narrowed after resolution rather than before it, so a scope that
-    // excludes the unit asked about is a smaller search and not a "no such
-    // unit" — the target is the query, never one of the answers.
-    if let Some(scope) = scope {
-        let mut kept = Vec::new();
-        for (i, unit) in units.into_iter().enumerate() {
-            if i == target || crate::paths::under(&unit.path, scope) {
-                if i == target {
-                    target = kept.len();
-                }
-                kept.push(unit);
-            }
+    let here = resolve(store, root, id)?;
+    let mut units = store.units(root, scope)?;
+    // Resolved against the checkout and then carried into the scope, so a
+    // scope that excludes the unit asked about is a smaller search and not a
+    // "no such unit" — the target is the query, never one of the answers.
+    let target = match units
+        .iter()
+        .position(|u| u.path == here.path && u.unit.line == here.unit.line)
+    {
+        Some(i) => i,
+        None => {
+            units.push(here);
+            units.len() - 1
         }
-        units = kept;
-    }
+    };
     let summaries = vectors_for(store, &units, embedder, Prefer::Best)?;
     let here = &units[target];
     let floor = relevance_floor(embedder.kind());
@@ -754,43 +752,48 @@ pub struct Neighbors {
 /// gives ambiguity its own status rather than a quiet resolution, and this is
 /// the same medicine a canonical pick needed: identify a unit by where it is,
 /// not only by what it is called.
-fn resolve(units: &[Located], target: &str) -> Result<usize> {
+/// **Resolved by asking for the unit, not by reading the checkout.** The
+/// checkout is still what it is resolved *against* — that is the rule above,
+/// and it does not move — but a `path:line` names one file and a name is what
+/// the store's `unit_name` index seeks on, so neither costs a monorepo. The
+/// whole checkout is read on exactly one path: the miss, where the suggestion
+/// needs every alternative and the query has already failed (DEC-040).
+fn resolve(store: &Store, root: &str, target: &str) -> Result<Located> {
     // `path:line` first: it is unambiguous by construction, and a filename
     // cannot collide with a unit id because ids carry no colon-then-digits.
     if let Some((path, line)) = target.rsplit_once(':')
         && let Ok(line) = line.parse::<u32>()
     {
-        return units
-            .iter()
-            .position(|u| u.path == path && u.unit.line == line)
+        return store
+            .units(root, Some(path))?
+            .into_iter()
+            // The scope of one file also admits a directory of that name, so
+            // the path is still compared: `lib:3` must not answer with
+            // whatever `lib/` holds at line 3.
+            .find(|u| u.path == path && u.unit.line == line)
             .ok_or_else(|| anyhow::anyhow!("no unit at {target} in this checkout"));
     }
 
-    let matches: Vec<usize> = units
-        .iter()
-        .enumerate()
-        .filter(|(_, u)| u.unit.id() == target)
-        .map(|(i, _)| i)
-        .collect();
-    match matches.as_slice() {
-        [] => match nearest(units, target) {
+    let mut matches = store.units_named(root, crate::core::name_in(target))?;
+    matches.retain(|u| u.unit.id() == target);
+    match matches.len() {
+        0 => match nearest(&store.units(root, None)?, target) {
             // A typo is the likeliest reason a name misses, and the index
             // already holds every alternative. Offering three costs one pass.
             Some(near) => bail!("no unit named `{target}` in this checkout. Did you mean:\n{near}"),
             None => bail!("no unit named `{target}` in this checkout"),
         },
-        [only] => Ok(*only),
+        1 => Ok(matches.remove(0)),
         many => {
             // Bare locations, not `contour similar …`: this message is shared
             // with the MCP tool, where CLI syntax is the wrong instruction and
             // `path:line` is what both surfaces accept as the unit itself.
-            let listed: Vec<String> = many
+            let listed: Vec<String> = matches
                 .iter()
-                .map(|i| format!("  {}:{}", units[*i].path, units[*i].unit.line))
+                .map(|u| format!("  {}:{}", u.path, u.unit.line))
                 .collect();
             bail!(
-                "`{target}` names {} units in this checkout; ask for one by location:\n{}",
-                many.len(),
+                "`{target}` names {many} units in this checkout; ask for one by location:\n{}",
                 listed.join("\n")
             )
         }

@@ -395,38 +395,37 @@ impl Store {
             None => vec![&root],
         };
         let mut stmt = self.conn.prepare(&sql)?;
-        let rows = stmt.query_map(binds.as_slice(), |r| {
-            let path: String = r.get(0)?;
-            let mut unit = Unit {
-                // An unknown language means the row was written by a
-                // newer contour; treat it as Ruby rather than dropping a
-                // unit, since every field but rendering is neutral.
-                lang: Lang::parse(&r.get::<_, String>(1)?).unwrap_or(Lang::Ruby),
-                name: r.get(2)?,
-                owner: r.get(3)?,
-                singleton: r.get::<_, i64>(4)? != 0,
-                params: decode_params(&r.get::<_, String>(5)?),
-                via: r.get(6)?,
-                line: r.get(7)?,
-                end_line: r.get(8)?,
-                norm_hash: r.get::<_, Option<i64>>(9)?.map(|h| h as u64),
-                nodes: r.get::<_, Option<i64>>(10)?.map(|n| n as u32),
-                // An unrecognized word means a newer contour wrote the row.
-                // Public is the reading that hides nothing, which is the safe
-                // direction for a field whose only consumer nominates.
-                visibility: crate::core::Visibility::parse(&r.get::<_, String>(11)?)
-                    .unwrap_or_default(),
-            };
-            // The file layer, doing the one job DEC-021 reserves for it: the
-            // row holds the bare lexical owner, and the path says which module
-            // it is in. Written back is not an option — that would make layer 1
-            // depend on where a blob happens to sit.
-            crate::paths::qualify(&path, &mut unit);
-            Ok(Located { path, unit })
-        })?;
+        let rows = stmt.query_map(binds.as_slice(), located)?;
         let units = rows.collect::<rusqlite::Result<Vec<_>>>()?;
         let where_ = scope.map_or("whole checkout", |(_, prefix)| prefix);
         span.note(|| format!("{} rows, {where_}", units.len()));
+        crate::profile::count("unit rows read", units.len() as u64);
+        Ok(units)
+    }
+
+    /// The units of a checkout with a given bare `name`, anywhere in it.
+    ///
+    /// The one read that answers "which unit did the caller mean" without
+    /// materializing the checkout to find out. A unit id is `Owner#name` and
+    /// the name is the part the `unit_name` index can seek on, so the
+    /// candidates come back in a handful of rows and the id rule
+    /// ([`crate::core::id`]) picks among them in Rust — which it has to,
+    /// because a Rust unit's owner is only complete once the path has
+    /// qualified it (DEC-026) and the stored `owner` column is the bare one.
+    pub fn units_named(&self, root: &str, name: &str) -> Result<Vec<Located>> {
+        let mut span = crate::profile::span("resolve unit");
+        let mut stmt = self.conn.prepare_cached(
+            "SELECT f.path, u.lang, u.name, u.owner, u.singleton, u.params, u.via,
+                    u.line, u.end_line, u.norm_hash, u.nodes, u.visibility
+               FROM checkout c
+               JOIN file f ON f.checkout_id = c.id
+               JOIN unit u ON u.blob_id = f.blob_id
+              WHERE c.root = ?1 AND u.name = ?2
+              ORDER BY f.path, u.line",
+        )?;
+        let rows = stmt.query_map(params![root, name], located)?;
+        let units = rows.collect::<rusqlite::Result<Vec<_>>>()?;
+        span.note(|| format!("{} row(s) named `{name}`", units.len()));
         crate::profile::count("unit rows read", units.len() as u64);
         Ok(units)
     }
@@ -712,6 +711,37 @@ pub struct Located {
     pub path: String,
     #[serde(flatten)]
     pub unit: Unit,
+}
+
+/// One row of the unit-with-path select, in the column order every query that
+/// returns [`Located`] uses.
+fn located(r: &rusqlite::Row<'_>) -> rusqlite::Result<Located> {
+    let path: String = r.get(0)?;
+    let mut unit = Unit {
+        // An unknown language means the row was written by a newer contour;
+        // treat it as Ruby rather than dropping a unit, since every field but
+        // rendering is neutral.
+        lang: Lang::parse(&r.get::<_, String>(1)?).unwrap_or(Lang::Ruby),
+        name: r.get(2)?,
+        owner: r.get(3)?,
+        singleton: r.get::<_, i64>(4)? != 0,
+        params: decode_params(&r.get::<_, String>(5)?),
+        via: r.get(6)?,
+        line: r.get(7)?,
+        end_line: r.get(8)?,
+        norm_hash: r.get::<_, Option<i64>>(9)?.map(|h| h as u64),
+        nodes: r.get::<_, Option<i64>>(10)?.map(|n| n as u32),
+        // An unrecognized word means a newer contour wrote the row. Public is
+        // the reading that hides nothing, which is the safe direction for a
+        // field whose only consumer nominates.
+        visibility: crate::core::Visibility::parse(&r.get::<_, String>(11)?).unwrap_or_default(),
+    };
+    // The file layer, doing the one job DEC-021 reserves for it: the row holds
+    // the bare lexical owner, and the path says which module it is in. Written
+    // back is not an option — that would make layer 1 depend on where a blob
+    // happens to sit.
+    crate::paths::qualify(&path, &mut unit);
+    Ok(Located { path, unit })
 }
 
 fn insert_blob(tx: &rusqlite::Transaction<'_>, oid: &Oid, blob: &Blob) -> rusqlite::Result<()> {

@@ -10,6 +10,13 @@
   and every answer is the one it was. A whole-checkout question costs what it
   always did, which is what a scope is for. DEC-040.
 
+- **A scoped `similar` no longer reads the whole checkout to find the unit you
+  asked about.** The unit is still resolved against the whole checkout — a
+  scope narrows the answer, never the question — but by a lookup on its name
+  rather than by materializing every unit in the repository. **Nothing to do**,
+  and every message is the one it was, including the ambiguous-name refusal and
+  the "did you mean" suggestion. DEC-040.
+
 ## 0.4.0 — 2026-09-01
 
 - **`contour duplicates` is `contour dupes`**, spelled out. An alias, not a

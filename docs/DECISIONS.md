@@ -1848,6 +1848,31 @@ the shipping string, aliased `f`, so the test cannot drift from what
 `Store::units` runs. Each of the three ways this was got wrong on the way in
 (unboundaried `LIKE`, unescaped `LIKE`, bounds without the residual) fails it.
 
+### `similar` resolves its target by asking for it
+
+Scoping the read was not enough for `similar`, and the reason is the rule
+DEC-030 wrote: *the scope narrows the answer, never the question*, so the unit
+asked about is resolved against the whole checkout and only then carried into
+the scope. That was implemented by reading the whole checkout — which put every
+unit in memory for a question about one directory, whatever the scope said.
+
+The rule is kept and the read is not. A `path:line` is a scope of one file, so
+it goes through the same `units` call. A name is what `unit`'s existing
+`unit_name` index seeks on, so `Store::units_named` returns the handful of rows
+that share the target's bare name and the id rule picks among them —
+`core::name_in` is the name half of `core::id`, and sits beside it so the two
+cannot drift. The comparison stays on whole ids in Rust because a Rust unit's
+owner is completed from its path (DEC-026) and is not in the stored column.
+
+**One path still reads the checkout, on purpose:** the miss. "Did you mean" is
+scored over every id in the index, and a query that has already failed can
+afford the read that makes its error message useful.
+
+The narrowing loop went with it. `similar` now asks for the target, asks for
+the scope, and appends the target if the scope does not hold it — three lines
+where there was an index-rewriting loop, and one less place that spells "is
+this path in scope".
+
 ### Which callers stay unscoped, deliberately
 
 The whole-checkout readers pass `None` and get the query they always had:

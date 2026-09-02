@@ -1872,14 +1872,16 @@ fn profile_is_refused_for_the_server() {
     assert!(err.contains("one run"), "{err}");
 }
 
-/// `similar` reads the checkout's unit table once.
+/// `similar` reads the checkout's unit table once, and only for the scope.
 ///
 /// It used to read it twice — once for the units it ranks, once inside the
 /// near-structural tier, which fetched and re-filtered the rows its only
-/// caller was already holding. On a monorepo that second read was the single
-/// largest phase of a warm scoped query. The assertion is on the profile
-/// counter rather than on the answer, because the answer never changed: this
-/// is the one claim a behavioural test cannot make.
+/// caller was already holding (DEC-036). It then still read the *whole*
+/// checkout for the one it ranks, because that was how the unit asked about
+/// got resolved; the resolution is now a lookup by name (DEC-040). The
+/// assertions are on the profile counters rather than on the answer, because
+/// the answer never changed: this is the one claim a behavioural test cannot
+/// make.
 #[test]
 fn similar_reads_the_unit_table_once() {
     let (repo, _) = searchable("similar-one-read");
@@ -1896,8 +1898,27 @@ fn similar_reads_the_unit_table_once() {
         .find(|p| p["name"] == "read units")
         .expect("the unit read is a phase");
     assert_eq!(reads["times"], 1, "{report}");
-    // Three units in the fixture, read once — not six.
-    assert_eq!(report["counters"]["unit rows read"], 3, "{report}");
+    // Three units in the fixture read once — not six — plus the one row the
+    // name lookup returns to say which of them was asked about.
+    assert_eq!(report["counters"]["unit rows read"], 4, "{report}");
+
+    // Scoped to the other file, the ranked read is that file's one unit. The
+    // target is still resolved, and still from outside the scope.
+    let (out, err, _) = repo.run_in(
+        &repo.dir.clone(),
+        &[
+            "similar",
+            "Invoice#settle!",
+            "geometry.rb",
+            "--json",
+            "--profile",
+        ],
+    );
+    let report: serde_json::Value =
+        serde_json::from_str(err.lines().last().unwrap()).expect("a JSON profile on stderr");
+    assert_eq!(report["counters"]["unit rows read"], 2, "{report}");
+    let answer: serde_json::Value = serde_json::from_str(&out).unwrap();
+    assert_eq!(answer["unit"], "Invoice#settle!", "{answer}");
 }
 
 /// A scoped question reads the scope, not the checkout.
