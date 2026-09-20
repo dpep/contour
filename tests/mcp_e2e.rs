@@ -17,6 +17,10 @@ struct Session {
     #[allow(dead_code)]
     dir: PathBuf,
     db: PathBuf,
+    /// Notifications the server volunteered, in the order they arrived. A
+    /// reply is matched by id, so anything unsolicited lands here instead of
+    /// being mistaken for one.
+    volunteered: Vec<serde_json::Value>,
 }
 
 impl Session {
@@ -98,22 +102,45 @@ impl Session {
             stdout,
             dir,
             db,
+            volunteered: Vec::new(),
         }
     }
 
     /// Send a request and read its reply. Notifications use `notify`.
     fn request(&mut self, id: u32, method: &str, params: serde_json::Value) -> serde_json::Value {
         self.send(id, method, params);
-        let reply = self.read_line();
-        assert_eq!(reply["jsonrpc"], "2.0");
-        assert_eq!(reply["id"], id, "replies must match their request");
-        reply
+        self.reply(id)
     }
 
-    /// Write a request without waiting for it. Only the restart case needs the
-    /// two halves apart, and it needs them apart for a reason: a test that
-    /// blocks reading a line the server was supposed to volunteer fails by
-    /// hanging, which says nothing and costs a CI slot.
+    /// The reply to `id`, matched by id like a client matches one.
+    ///
+    /// A server may volunteer a notification at any moment — this one does,
+    /// after a restart — so "the next line is the reply" is a race rather than
+    /// a contract. Reading until the id matches is what makes the restart
+    /// tests deterministic: it stops mattering whether the notification lands
+    /// before or after the reply to the request that ran alongside the install.
+    fn reply(&mut self, id: u32) -> serde_json::Value {
+        loop {
+            let line = self.read_line();
+            assert_eq!(line["jsonrpc"], "2.0");
+            if line["id"].is_null() {
+                self.volunteered.push(line);
+                continue;
+            }
+            assert_eq!(line["id"], id, "replies must match their request");
+            return line;
+        }
+    }
+
+    /// Whether the server has volunteered this notification so far.
+    fn was_volunteered(&self, method: &str) -> bool {
+        self.volunteered.iter().any(|n| n["method"] == method)
+    }
+
+    /// Write a request without waiting for it. The two halves are apart for
+    /// the tests that assert on the *order* two replies come back in: they
+    /// pair the lines themselves with [`Session::read_line`], because that
+    /// ordering is the thing under test.
     fn send(&mut self, id: u32, method: &str, params: serde_json::Value) {
         let message =
             serde_json::json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params});
@@ -626,8 +653,10 @@ fn a_server_restarts_into_a_contour_installed_underneath_it() {
     install(&installed, &program, |staged| {
         std::fs::copy(env!("CARGO_BIN_EXE_contour"), staged).unwrap();
     });
-    // One last answer from the build that started the session — it owes this
-    // request a reply — and the restart happens after that reply goes out.
+    // One more answer over the same pipes. *Which* build serves it is not
+    // fixed: the reader restats after every line, so the exec lands either
+    // side of this request depending on how the install raced that stat.
+    // Either way the request is owed a reply and gets one.
     let still_ours = mcp.tool(
         3,
         "symbols",
@@ -635,16 +664,14 @@ fn a_server_restarts_into_a_contour_installed_underneath_it() {
     );
     assert_eq!(still_ours["units"].as_array().map(Vec::len), Some(1));
 
-    // Asked before read, so a notification that never comes fails on the wrong
-    // line instead of blocking on one that will never arrive.
-    mcp.send(4, "ping", serde_json::json!({}));
-    assert_eq!(
-        mcp.read_line()["method"],
-        "notifications/tools/list_changed",
+    // Still serving, on the same pid and the same pipes — and asked rather
+    // than read for, so a notification that never comes fails on its own
+    // assertion instead of blocking on a line that will never arrive.
+    mcp.request(4, "ping", serde_json::json!({}));
+    assert!(
+        mcp.was_volunteered("notifications/tools/list_changed"),
         "the restarted build should tell the client to re-read its tools"
     );
-    // Still serving, on the same pid and the same pipes.
-    assert_eq!(mcp.read_line()["id"], 4);
     let across = mcp.tool(
         5,
         "symbols",
@@ -657,10 +684,19 @@ fn a_server_restarts_into_a_contour_installed_underneath_it() {
     // is that the process becomes whatever is at that path, which a copy of the
     // same code cannot show — and that the restart marker crosses the exec.
     install(&installed, &program, |staged| {
+        // It answers under the id it was asked under, because which request
+        // reaches it is not ours to decide: the reader restats the binary
+        // after every line, so the exec lands either side of the next request
+        // depending on how the install raced that stat. A stand-in with a
+        // hard-coded id turns that scheduling detail into a failed assertion.
         std::fs::write(
             staged,
-            "#!/bin/sh\nwhile read -r _; do\n  printf '%s\\n' \
-             '{\"jsonrpc\":\"2.0\",\"id\":7,\"result\":{\"restarted\":\"'\"$CONTOUR_MCP_RESTARTED\"'\"}}'\ndone\n",
+            r#"#!/bin/sh
+while read -r line; do
+  id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9]*\).*/\1/p')
+  printf '{"jsonrpc":"2.0","id":%s,"result":{"restarted":"%s"}}\n' "$id" "$CONTOUR_MCP_RESTARTED"
+done
+"#,
         )
         .unwrap();
     });
