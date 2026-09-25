@@ -1,1 +1,5 @@
 /target
+
+# Local release config: machine-specific paths, and it names a private
+# marketplace. `release` sources it from the repo root; it is not shipped.
+.release.conf
