@@ -742,6 +742,17 @@ that owns stdio and proxies to a restartable child. That is genuinely more
 robust and it is a second component, a second process, and a protocol between
 them. Recorded as the fallback if self-exec meets a platform edge.
 
+That fallback has since been built, in a sibling project, because an `rmcp`
+server left no choice: exec needs an instant where the process provably holds
+no stdin bytes, and contour has one only because its reader is a single thread
+doing blocking reads between dispatch and the next read. Three exec placements
+were measured against `rmcp` and all of them lose requests — after the flush,
+3 of 32 runs; at the pending read, 20 of 20, because tokio parks the read on a
+pool thread that exec destroys. So the choice is not a preference: a
+synchronous reader can exec, an async one needs the parent. contour keeps
+exec, whose residual edge is the pipelined batch above and which no measurement
+here has shown to bite.
+
 Two edges are known, both about *how* an installer writes:
 
 - **An installer must rename over the path, not truncate it.** Truncating the
@@ -749,11 +760,24 @@ Two edges are known, both about *how* an installer writes:
   install` and `brew` both stage and rename, so this is not a limitation in
   practice — it is how a live run of this feature first failed, by simulating an
   install with a plain copy, and both tests now model the rename.
-- **An install that replaces a *symlink* rather than the file `current_exe`
-  resolves to** leaves the stamp unmoved, so nothing is detected. A Homebrew
-  upgrade relinks the Cellar; `cargo install` writes the file. Measured on the
-  `cargo install` path, which is how contour is installed today; the day it
-  ships through the tap, this is the thing to re-measure.
+- **An install that replaces a *symlink* rather than the file** — FIXED, and
+  the trigger it was waiting on has fired. contour ships through the tap now,
+  and `brew upgrade` is exactly this shape: a new Cellar directory, the old
+  file left alone, `bin/contour` re-pointed at it.
+
+  Re-measured on both platforms rather than reasoned about. `current_exe()` is
+  not the same thing twice: macOS returns the path as invoked, so the link was
+  restatted and the relink *was* caught; Linux reads `/proc/self/exe`, which
+  resolves through the link, so the watched path never moved and the session
+  served the old build until it ended. The stamp now follows `launch_path()` —
+  argv[0], PATH-resolved when bare — so both platforms watch the name rather
+  than whatever it resolved to at startup. `stamp_of` still follows the link,
+  which is the point: a rebuild and a relink become one event, because either
+  way the name comes to rest on a different inode.
+
+  Pinned by `a_server_restarts_when_the_symlink_moves_under_it`, which asserts
+  the behaviour and not the platform — it fails against a canonicalized path
+  and passes against the launch path, so a regression shows up on either OS.
 
 ### The other way to define this out of existence — APPROVED AND BUILT
 

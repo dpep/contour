@@ -322,7 +322,45 @@ struct Stamp {
 /// What the binary this process was launched from looks like on disk. `None`
 /// when the path cannot be read at all.
 fn stamp() -> Option<Stamp> {
-    stamp_of(std::env::current_exe().ok()?)
+    stamp_of(launch_path()?)
+}
+
+/// The path to watch: the name this process was launched *as*, rather than the
+/// file that name resolves to right now.
+///
+/// `current_exe()` is the obvious source and misses an upgrade that moves a
+/// symlink instead of the file under it — the edge this decision recorded as
+/// "re-measure the day it ships through the tap." It ships through the tap now,
+/// and `brew upgrade` is exactly that shape: a new Cellar directory, the old
+/// file left alone, and `bin/contour` re-pointed at it.
+///
+/// On macOS `current_exe()` already reports the unresolved path, so the relink
+/// was caught; on Linux it reads `/proc/self/exe`, which resolves through the
+/// symlink, so the watched path never moved and the session served the old
+/// build until it ended. Both measured. Reading argv[0] makes the two agree.
+///
+/// [`stamp_of`] still follows the symlink, which is the point: a rebuild and a
+/// relink become one event, because either way the stable name comes to rest on
+/// a different inode than the one being served.
+fn launch_path() -> Option<PathBuf> {
+    let argv0 = PathBuf::from(std::env::args_os().next()?);
+    if argv0.as_os_str().is_empty() {
+        return None;
+    }
+    if argv0.components().count() > 1 {
+        // Already a path — absolute, or relative to the directory we started in.
+        return match argv0.is_absolute() {
+            true => Some(argv0),
+            false => Some(std::env::current_dir().ok()?.join(argv0)),
+        };
+    }
+    // A bare name, which is how a tap install is invoked: resolve it the way
+    // the spawning process did, falling back to the resolved path so a stamp
+    // is never lost to an odd argv[0].
+    std::env::split_paths(&std::env::var_os("PATH")?)
+        .map(|dir| dir.join(&argv0))
+        .find(|candidate| candidate.is_file())
+        .or_else(|| std::env::current_exe().ok())
 }
 
 /// The same, for the path this process launched from — asked once, then
