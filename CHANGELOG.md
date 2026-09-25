@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.4.2 — 2026-09-25
 
 - **A `brew upgrade` mid-session now reaches the running MCP server.** The
   server replaces itself when the binary it was launched from moves, but it
