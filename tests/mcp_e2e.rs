@@ -710,6 +710,83 @@ done
     let _ = std::fs::remove_dir_all(&installed);
 }
 
+/// A tap install is a symlink — `bin/contour` points into a versioned Cellar
+/// directory — and `brew upgrade` writes a *new* directory and re-points the
+/// link, leaving the old file exactly where it was. Watching the resolved path
+/// sees nothing move; only watching the link does.
+///
+/// This is the edge DEC-025 recorded as "re-measure the day it ships through
+/// the tap." It ships through the tap now. macOS reported the unresolved path
+/// and so caught it by luck; Linux resolves `/proc/self/exe` and did not.
+#[test]
+fn a_server_restarts_when_the_symlink_moves_under_it() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let root = std::env::temp_dir().join(format!("contour-relink-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    let (old, new, bin) = (root.join("v1"), root.join("v2"), root.join("bin"));
+    for dir in [&old, &new, &bin] {
+        std::fs::create_dir_all(dir).unwrap();
+    }
+
+    let was = old.join("contour");
+    std::fs::copy(env!("CARGO_BIN_EXE_contour"), &was).unwrap();
+    // A stand-in rather than contour again: what needs proving is that the
+    // process becomes whatever the *link* names, which a copy of the same code
+    // cannot show. It answers under the id it was asked under, because which
+    // request reaches it depends on how the relink raced the reader's stat.
+    let becomes = new.join("contour");
+    std::fs::write(
+        &becomes,
+        r#"#!/bin/sh
+while read -r line; do
+  id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9]*\).*/\1/p')
+  printf '{"jsonrpc":"2.0","id":%s,"result":{"restarted":"%s"}}\n' "$id" "$CONTOUR_MCP_RESTARTED"
+done
+"#,
+    )
+    .unwrap();
+    std::fs::set_permissions(&becomes, PermissionsExt::from_mode(0o755)).unwrap();
+
+    let launch = bin.join("contour");
+    std::os::unix::fs::symlink(&was, &launch).unwrap();
+
+    let mut mcp = Session::start_using("relink", &corpus(), &launch, &[]);
+    mcp.request(
+        1,
+        "initialize",
+        serde_json::json!({"protocolVersion": "2025-06-18", "capabilities": {}}),
+    );
+    mcp.notify("notifications/initialized");
+    // Healthy first, so a later failure cannot be blamed on a session that
+    // never worked.
+    let outline = mcp.tool(
+        2,
+        "symbols",
+        serde_json::json!({"file": mcp.dir.join("billing.rb").to_string_lossy()}),
+    );
+    assert_eq!(outline["units"].as_array().map(Vec::len), Some(2));
+
+    // The relink, staged and renamed the way an installer moves a link, so the
+    // name never resolves to nothing.
+    let staged = bin.join("contour.new");
+    std::os::unix::fs::symlink(&becomes, &staged).unwrap();
+    std::fs::rename(&staged, &launch).unwrap();
+    assert!(
+        was.exists(),
+        "a relink must leave the old build in place, or this is testing a rebuild"
+    );
+
+    mcp.request(3, "ping", serde_json::json!({}));
+    let after = mcp.request(4, "tools/list", serde_json::json!({}));
+    assert_eq!(
+        after["result"]["restarted"], "1",
+        "the build the link now names should be answering: {after}"
+    );
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
 /// Put a program at `program`, the way an installer does: staged beside it and
 /// **renamed** over. Truncating the running binary in place instead kills the
 /// process before it can exec anything — a fact about installers rather than

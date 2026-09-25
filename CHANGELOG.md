@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+- **A `brew upgrade` mid-session now reaches the running MCP server.** The
+  server replaces itself when the binary it was launched from moves, but it
+  watched the *resolved* path — and a tap upgrade moves the symlink, writing a
+  new Cellar directory and leaving the old file alone. On Linux nothing it
+  watched had changed, so the session kept serving the old build until it
+  ended; macOS caught it already. It now watches the name it was launched as,
+  so a rebuild and a relink are the same event on both platforms. **Nothing to
+  do.** DEC-025.
+
 ## 0.4.1 — 2026-09-01
 
 - **A scoped query no longer pays for the whole corpus.** The rule that decides
