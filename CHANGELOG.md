@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.4.3 — 2026-10-05
 
 - **The duplicate-constant check runs again.** contour asked rq with
   `--no-record`, a flag rq 0.52.0 removed, so every probe was refused and each
