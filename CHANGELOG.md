@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- **The duplicate-constant check runs again.** contour asked rq with
+  `--no-record`, a flag rq 0.52.0 removed, so every probe was refused and each
+  report said the check could not run. It no longer passes the flag, and when
+  rq refuses a call the report now carries rq's own reason. **Nothing to do.**
+
 ## 0.4.2 — 2026-09-25
 
 - **A `brew upgrade` mid-session now reaches the running MCP server.** The

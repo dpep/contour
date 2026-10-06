@@ -223,26 +223,33 @@ enum Definitions {
 fn definitions(root: &Path, name: &str) -> Definitions {
     let binary = std::env::var("CONTOUR_RQ").unwrap_or_else(|_| "rq".to_string());
     let out = match Command::new(&binary)
-        // `-l 0` because the question is how many, not which is best; and
-        // `--no-record` so a report does not teach rq's ranking that a human
-        // searched for this.
-        .args([
-            name,
-            "-j",
-            "-l",
-            "0",
-            "-x",
-            "ruby",
-            "--no-record",
-            "--no-wait",
-        ])
+        // `-l 0` because the question is how many, not which is best.
+        .args([name, "-j", "-l", "0", "-x", "ruby", "--no-wait"])
         .current_dir(root)
         .output()
     {
         Ok(out) => out,
         Err(_) => return Definitions::Unavailable(format!("`{binary}` is not installed")),
     };
-    count_nestings(&out.stdout, name, &binary)
+    match count_nestings(&out.stdout, name, &binary) {
+        // A refused call (a flag rq no longer takes) answers on stderr only;
+        // without it the reason reads as "no answer" and the cause is lost.
+        Definitions::Unavailable(why) if out.stdout.is_empty() => {
+            Definitions::Unavailable(with_stderr(why, &out.stderr))
+        }
+        answer => answer,
+    }
+}
+
+/// `why`, plus the first line rq wrote to stderr, when it wrote one.
+fn with_stderr(why: String, stderr: &[u8]) -> String {
+    match String::from_utf8_lossy(stderr)
+        .lines()
+        .find(|l| !l.trim().is_empty())
+    {
+        Some(line) => format!("{why}: {}", line.trim()),
+        None => why,
+    }
 }
 
 /// The parsing, apart from the process, because it is the half that can be
@@ -362,5 +369,16 @@ mod tests {
             count("not json at all"),
             Definitions::Unavailable(_)
         ));
+    }
+
+    /// A call rq refuses says why, not just that there was no answer.
+    #[test]
+    fn a_refused_probe_carries_rqs_reason() {
+        let stderr = b"\nerror: unexpected argument '--gone' found\n\nUsage: rq\n";
+        assert_eq!(
+            with_stderr("`rq` returned no answer".into(), stderr),
+            "`rq` returned no answer: error: unexpected argument '--gone' found"
+        );
+        assert_eq!(with_stderr("no answer".into(), b""), "no answer");
     }
 }
